@@ -598,8 +598,20 @@ Done when:
   - **Exploded:** a slider over the 3D view spreads the layers by up to 28 mm each.
   - **2D tab:** a stacked render with drop shadows, plus a glow when backlit.
   - **Sheets tab:** the packed sheets exactly as exported, through the same `sheet_drawings` the export uses, laid out only while the tab is open.
+- 2026-11-06, slice 7 done: SVG import, and stage caches.
+  - **Reader:** pure JS (no DOMParser), so it runs in the worker and in Node tests. A small XML reader copes with Illustrator's DOCTYPE subset, comments and CDATA.
+  - **Paths:** all commands, with arcs whose flags run together, are parsed and flattened at 0.02 mm *after* transforming to mm.
+  - **Shapes and transforms:** rect (rounded too), circle, ellipse and polygon, under nested transforms. Open paths, lines and texts are counted and ignored.
+  - **Units:** mm, cm, in, pt, pc and px. A px is 1/96 in, or 1/72 in in Illustrator files.
+  - **Layering:**
+    - Several files give one layer each, front first by natural name order.
+    - One file with two or more top-level groups gives one layer per group, the last drawn in front.
+    - One plain file goes onto the selected layer.
+  - **Outline and holes:** the union silhouette becomes a custom outline. Holes follow even-odd by default (the cut-file convention), with non-zero as a per-layer choice.
+  - **Purchased mandala (private fixture):** imports at 290.88 x 290.85 mm, which resolves assumption 4. Its contour counts match the files (62, 245, 425, 473, 393, 281, 1), and it builds with no islands and no fatal finding. Its ornate front leaves no shared material for dowels, which W-05 reports.
+  - **Caches:** per-layer geometry, stack registration and per-layer slow checks are cached by their inputs. On the mandala, a colour or gap edit went from about 850 ms to 7 ms, with slow checks from 590 ms to 0. A cold build of heavy imported art is still about 0.85 s (1.9 s in headless Edge).
+  - **Bundler fix:** the bundler took a line such as `import_svg,` for an import statement. Fixed, and covered by a test.
 - Next slices:
-  7. SVG import.
   8. Calibrate panel.
   9. Performance and golden designs.
 
@@ -658,7 +670,7 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 
    Still to verify with the first test card: SVG import scale in Illustrator, the hairline threshold, and the RGB colour mapping.
 3. Resolved 2026-11-06: there is no job time limit, so the cut-time warning was dropped.
-4. That the purchased mandala's SVG px are 72 DPI points (it should import at about 291 mm).
+4. Resolved 2026-11-06: the purchased mandala's px are 72-per-inch points. It imports at 290.88 mm, against 218 mm at 96 per inch.
 5. Resolved 2026-11-06: clipper2-ts 2.0.1-18 is BSL-1.0 (from its package metadata and LICENSE file).
 6. Resolved 2026-11-06: tenebrae concatenates classic scripts. Lamina uses its own ES-module bundler instead (section 13.2).
 7. Determinism across browser engines.
