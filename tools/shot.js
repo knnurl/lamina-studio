@@ -6,7 +6,7 @@
 // No dependencies: Node 22+ has fetch and WebSocket built in.
 //
 // Usage: node tools/shot.js [out.png] [--light] [--size=1400x860] [--timeout=20000]
-//                           [--click=<css selector>] [--eval=<js expression>]
+//                           [--click=<css selector>] [--eval=<js expression>] [--eval-file=<path>]
 // --eval prints the JSON value of an expression evaluated in the page once it is ready.
 // Set LAMINA_BROWSER to a browser executable to override the search.
 import { spawn } from 'node:child_process';
@@ -37,7 +37,8 @@ const [width, height] = flag('size', '1400x860').split('x').map(Number);
 const timeout_ms = Number(flag('timeout', '20000'));
 const light = args.includes('--light');
 const click = flag('click', null);
-const evaluate = flag('eval', null);
+const eval_file = flag('eval-file', null);
+const evaluate = eval_file ? fs.readFileSync(eval_file, 'utf8') : flag('eval', null);
 const download_dir = path.join(path.dirname(out_png), 'downloads');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
