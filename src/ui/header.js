@@ -27,8 +27,8 @@ export function build_header(app) {
     const next = button('→', 'Next seed', () => app.set_seed(app.design.seed + 1));
     const randomise = button(
         'Randomise',
-        'New pattern from a random seed. Locked values and kept layers stay.',
-        () => app.set_seed(Math.floor(Math.random() * 1e6)),
+        'New pattern from a random seed; tries up to 10 and keeps the first with no fatal problem. Locked values and kept layers stay.',
+        () => app.randomise(),
         'btn',
     );
     const undo = button('↶', 'Undo (Ctrl+Z)', () => app.undo());

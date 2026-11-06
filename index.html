@@ -463,7 +463,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 26 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 27 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -3093,6 +3093,144 @@ function import_svg_files(files) {
 }
 return { parse_xml, read_svg, import_svg_files };
 })();
+// src/core/generate.js
+const __m_core_generate_js = (function () {
+const { rng_for } = __m_core_rng_js;
+const { rotation_order } = __m_geom_symmetry_js;
+// Seeded pattern generator for primitive pieces (M1). It picks a centre opening and a few concentric
+// bands, each with one motif type, and repeats them through the stack. Openings shrink from front
+// to back and alternate layers turn half a step, so looking into the piece reads as depth: the
+// orb references' nested look, made from primitives. The back layer stays solid.
+// Generated layers are island-free by construction (arc slots always keep a tie), and opening sizes
+// are capped against their neighbours so webs stay well above the minimum.
+
+
+
+// How far from the centre bands may reach. Circles and polygons fill their circumradius (polygon
+// corners clip the outer band); rectangles and arches reach towards their far corners, so the
+// whole outline carries pattern and the frame ring clips the outer bands.
+function pattern_radius_mm(outline) {
+    switch (outline.kind) {
+        case 'rect':
+            return Math.hypot(outline.w_mm, outline.h_mm) * 0.46;
+        case 'arch':
+            return Math.hypot(outline.w_mm / 2, outline.h_mm - outline.w_mm / 2) * 0.92;
+        default:
+            return outline.w_mm / 2;
+    }
+}
+
+const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
+const r1 = v => Math.round(v * 10) / 10;
+
+function make_bands(rng, inner_mm, from_mm, count, types) {
+    const weights = Array.from({ length: count }, () => rng.range(0.7, 1.3));
+    const total = weights.reduce((a, b) => a + b, 0);
+    const span_all = inner_mm * 0.97 - from_mm;
+    let r = from_mm;
+    return weights.map(w => {
+        const span = (span_all * w) / total;
+        const band = {
+            r0: r,
+            r1: r + span,
+            type: rng.pick(types),
+            sides: rng.pick([0, 3, 4, 4, 6, 8]),
+            rot: rng.pick([0, 0, 45, 90]),
+            mult: rng.pick([1, 1, 1, 2]),
+            alternate: rng.chance(0.5),
+            reach: rng.range(0.45, 1.0), // deepest layer (0 front .. 1 back) the band reaches
+            tie_mm: rng.range(2.5, 6),
+            taper: rng.range(0, 0.6),
+        };
+        r += span;
+        return band;
+    });
+}
+
+function band_motif(band, n, depth, k) {
+    const span = band.r1 - band.r0;
+    const rc = (band.r0 + band.r1) / 2;
+    const copies = n * band.mult;
+    const arc = (2 * Math.PI * rc) / copies;
+    const s = 1 - 0.55 * depth;
+    const angle_deg = band.alternate && k % 2 ? r1(180 / copies) : 0;
+    const common = { mult: band.mult, angle_deg };
+    switch (band.type) {
+        case 'window':
+            return {
+                type: 'window',
+                r_mm: r1(rc),
+                size_mm: r1(Math.min(span * 0.8, arc * 0.75) * s),
+                sides: band.sides,
+                rot_deg: band.rot,
+                ...common,
+            };
+        case 'petal': {
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            return {
+                type: 'petal',
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * 0.6, length * 0.55) * s),
+                ...common,
+            };
+        }
+        case 'ring':
+            return {
+                type: 'ring',
+                r_mm: r1(rc),
+                w_mm: r1(span * 0.6 * s),
+                tie_mm: r1(band.tie_mm * (1 + depth)),
+                ...common,
+            };
+        case 'ray': {
+            const w1 = arc * 0.45 * s;
+            return {
+                type: 'ray',
+                r0_mm: r1(band.r0 + span * 0.1),
+                r1_mm: r1(band.r1 - span * 0.05),
+                w0_mm: r1(w1 * band.taper),
+                w1_mm: r1(w1),
+                ...common,
+            };
+        }
+        default:
+            throw new Error(`unknown band type "${band.type}"`);
+    }
+}
+
+// Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
+// symmetry repeat count; options.types limits the motif types used.
+function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
+    const rng = rng_for(seed, 'stack');
+    const sym = design.piece.symmetry;
+    if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([6, 8, 8, 10, 12, 12, 16]);
+    const n = rotation_order(sym);
+    const ring0 = design.layers[0].frame_ring_mm;
+    const inner = pattern_radius_mm(design.piece.outline) - ring0;
+    const disc_frac = rng.range(0.16, 0.36);
+    const bands = make_bands(rng, inner, inner * (disc_frac + 0.08), rng.int(2, 4), types);
+    // Frame rings widen towards the back, so the border steps inwards like a stacked mandala.
+    const ring_step = rng.range(0, 0.035) * inner;
+
+    const count = design.layers.length;
+    const patterned = count > 1 ? count - 1 : 1;
+    design.layers.forEach((layer, k) => {
+        if (layer.locked || layer.source.kind !== 'primitive') return; // imported artwork is kept
+        layer.frame_ring_mm = r1(ring0 + k * ring_step);
+        if (k >= patterned) {
+            layer.source.motifs = [];
+            return;
+        }
+        const depth = patterned > 1 ? k / (patterned - 1) : 0;
+        const motifs = [{ type: 'disc', d_mm: r1(2 * inner * disc_frac * (1 - 0.55 * depth)) }];
+        for (const band of bands) if (depth <= band.reach) motifs.push(band_motif(band, n, depth, k));
+        layer.source.motifs = motifs;
+    });
+    design.seed = seed >>> 0;
+}
+return { generate_stack };
+})();
 // src/export/drawing.js
 const __m_export_drawing_js = (function () {
 // The drawing the cut-file writers consume (SPEC 9.1): a page in mm and items, each a polyline in
@@ -4123,6 +4261,7 @@ const { slow_checks } = __m_pipeline_checks_js;
 const { dowel_length_mm } = __m_pipeline_registration_js;
 const { pack_paths, to_flat } = __m_geom_pack_js;
 const { import_svg_files } = __m_sources_svg_import_js;
+const { generate_stack } = __m_core_generate_js;
 const { test_card_zip } = __m_export_test_card_js;
 const { export_design, export_parts, sheet_drawings } = __m_export_export_design_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
@@ -4130,6 +4269,7 @@ const { export_design, export_parts, sheet_drawings } = __m_export_export_design
 // Typed arrays anywhere in a result are transferred, not copied.
 // 'build' is fast and runs on every edit; 'check' runs the slow checks on the last build of the
 // same design (cached by its JSON), so the UI can debounce it.
+
 
 
 
@@ -4213,6 +4353,23 @@ function import_svg({ files }) {
     };
 }
 
+// Randomise with checks (SPEC 7): up to 10 seeds from `seed`, keeping the first variation with no
+// fatal finding (warnings are fine: visual creativity comes first). If none passes, the last is
+// returned and the checks will show why.
+const kRandomiseTries = 10;
+
+function randomise({ design, seed, lock_n }) {
+    let candidate = null;
+    for (let i = 0; i < kRandomiseTries; i++) {
+        candidate = structuredClone(design);
+        generate_stack(candidate, (seed + i * 7919) >>> 0, { lock_n });
+        const built = built_for(candidate);
+        const fatal = [...built.checks, ...slow_checks(candidate, built.layers)].some(c => c.severity === 'fatal' && !c.overridden);
+        if (!fatal) return { design: candidate, tries: i + 1, clean: true };
+    }
+    return { design: candidate, tries: kRandomiseTries, clean: false };
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -4227,6 +4384,7 @@ const kHandlers = {
     export_zip,
     sheets,
     import_svg,
+    randomise,
     test_card_zip,
 };
 
@@ -88900,8 +89058,8 @@ function build_header(app) {
     const next = button('→', 'Next seed', () => app.set_seed(app.design.seed + 1));
     const randomise = button(
         'Randomise',
-        'New pattern from a random seed. Locked values and kept layers stay.',
-        () => app.set_seed(Math.floor(Math.random() * 1e6)),
+        'New pattern from a random seed; tries up to 10 and keeps the first with no fatal problem. Locked values and kept layers stay.',
+        () => app.randomise(),
         'btn',
     );
     const undo = button('↶', 'Undo (Ctrl+Z)', () => app.undo());
@@ -89535,6 +89693,17 @@ function start_app({ worker, preview, stage }) {
                 else islands[island.id] = next;
             });
             set_status('busy', `Island set to ${next}.`);
+        },
+        async randomise() {
+            set_status('busy', 'Randomising');
+            try {
+                const seed = Math.floor(Math.random() * 1e6);
+                const result = await worker.call('randomise', { design: store.design, seed, lock_n: ui.locks.has('symmetry.n') });
+                store.replace(result.design);
+                if (!result.clean) set_status('warn', `No clean variation in ${result.tries} tries; the checks show what to fix.`);
+            } catch (err) {
+                set_status('bad', `Randomise failed: ${err.message}`);
+            }
         },
         toggle_override(key) {
             edit(d => {

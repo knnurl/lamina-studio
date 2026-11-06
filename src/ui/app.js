@@ -281,6 +281,17 @@ export function start_app({ worker, preview, stage }) {
             });
             set_status('busy', `Island set to ${next}.`);
         },
+        async randomise() {
+            set_status('busy', 'Randomising');
+            try {
+                const seed = Math.floor(Math.random() * 1e6);
+                const result = await worker.call('randomise', { design: store.design, seed, lock_n: ui.locks.has('symmetry.n') });
+                store.replace(result.design);
+                if (!result.clean) set_status('warn', `No clean variation in ${result.tries} tries; the checks show what to fix.`);
+            } catch (err) {
+                set_status('bad', `Randomise failed: ${err.message}`);
+            }
+        },
         toggle_override(key) {
             edit(d => {
                 const list = d.check_overrides;

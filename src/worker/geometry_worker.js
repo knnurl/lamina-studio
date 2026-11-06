@@ -8,6 +8,7 @@ import { slow_checks } from '../pipeline/checks.js';
 import { dowel_length_mm } from '../pipeline/registration.js';
 import { pack_paths, to_flat } from '../geom/pack.js';
 import { import_svg_files } from '../sources/svg_import.js';
+import { generate_stack } from '../core/generate.js';
 import { test_card_zip } from '../export/test_card.js';
 import { export_design, export_parts, sheet_drawings } from '../export/export_design.js';
 
@@ -86,6 +87,23 @@ function import_svg({ files }) {
     };
 }
 
+// Randomise with checks (SPEC 7): up to 10 seeds from `seed`, keeping the first variation with no
+// fatal finding (warnings are fine: visual creativity comes first). If none passes, the last is
+// returned and the checks will show why.
+const kRandomiseTries = 10;
+
+function randomise({ design, seed, lock_n }) {
+    let candidate = null;
+    for (let i = 0; i < kRandomiseTries; i++) {
+        candidate = structuredClone(design);
+        generate_stack(candidate, (seed + i * 7919) >>> 0, { lock_n });
+        const built = built_for(candidate);
+        const fatal = [...built.checks, ...slow_checks(candidate, built.layers)].some(c => c.severity === 'fatal' && !c.overridden);
+        if (!fatal) return { design: candidate, tries: i + 1, clean: true };
+    }
+    return { design: candidate, tries: kRandomiseTries, clean: false };
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -100,6 +118,7 @@ const kHandlers = {
     export_zip,
     sheets,
     import_svg,
+    randomise,
     test_card_zip,
 };
 

@@ -30,8 +30,8 @@ function start_worker_bundle() {
     // structuredClone, as postMessage does; it also re-creates the vm realm's objects in this realm,
     // so strict deep equality works.
     const self = { postMessage: msg => replies.push(structuredClone(msg)) };
-    // A worker global has TextEncoder and performance; a bare vm context does not.
-    vm.runInContext(built.worker.code, vm.createContext({ self, TextEncoder, performance }));
+    // A worker global has TextEncoder, performance and structuredClone; a bare vm context does not.
+    vm.runInContext(built.worker.code, vm.createContext({ self, TextEncoder, performance, structuredClone }));
     return {
         call: (type, payload) => {
             self.onmessage({ data: { id: replies.length + 1, type, payload } });
@@ -84,6 +84,17 @@ test('the worker refuses to export while a fatal finding is not allowed', () => 
     const done = worker.call('export_zip', { design });
     assert.equal(done.result.name, 'lamina_orb.zip');
     assert.ok(done.result.bytes instanceof Uint8Array);
+});
+
+test('Randomise keeps the first variation without a fatal finding, deterministically', () => {
+    const worker = start_worker_bundle();
+    const design = preset_by_id('orb');
+    const a = worker.call('randomise', { design, seed: 4242, lock_n: false }).result;
+    const b = worker.call('randomise', { design, seed: 4242, lock_n: false }).result;
+    assert.equal(a.clean, true);
+    assert.ok(a.tries >= 1 && a.tries <= 10);
+    assert.deepEqual(a.design, b.design);
+    assert.notDeepEqual(a.design.layers[0].source.motifs, design.layers[0].source.motifs);
 });
 
 test('the worker reports unknown requests as errors', () => {
