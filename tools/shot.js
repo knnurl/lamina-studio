@@ -167,7 +167,10 @@ async function main() {
                 console.log(`download: ${path.join(download_dir, f)} (${fs.statSync(path.join(download_dir, f)).size} bytes)`);
             }
         }
-        if (evaluate) console.log(`eval: ${JSON.stringify(await read(evaluate))}`);
+        if (evaluate) {
+            console.log(`eval: ${JSON.stringify(await read(evaluate))}`);
+            level = await read_level();
+        }
         const text = await read_text();
         await sleep(200); // let the last frame present
         const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
