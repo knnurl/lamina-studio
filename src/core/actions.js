@@ -20,7 +20,7 @@ export function options_for(entry, design) {
             return Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
         case 'all_material':
         case 'material':
-            return Object.entries(kMaterials).map(([id, m]) => [id, m.label]);
+            return Object.keys({ ...kMaterials, ...design.materials }).map(id => [id, material_of(design, { material: id }).label]);
         case 'sheet_size':
             return Object.entries(kSheetPresets).map(([id, s]) => [id, s.label]);
         default:

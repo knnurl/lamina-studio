@@ -60,8 +60,12 @@ function at(angle_rad, r) {
     return { x: Math.round(r * Math.cos(angle_rad)), y: Math.round(r * Math.sin(angle_rad)) };
 }
 
+// The dowel hole: set explicitly, or the dowel plus the clearance measured for the drilled
+// layers' material (the test card's dowel ladder), or plus 0.1 mm until that is measured.
 export function hole_d_mm(design) {
-    return design.registration.hole_d_mm ?? design.registration.dowel_d_mm + kHoleClearanceMm;
+    const drilled = design.layers[Math.min(1, design.layers.length - 1)];
+    const clearance = drilled ? material_of(design, drilled).dowel_clearance_mm : undefined;
+    return design.registration.hole_d_mm ?? design.registration.dowel_d_mm + (clearance ?? kHoleClearanceMm);
 }
 
 function place_dowels(design, built) {

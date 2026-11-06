@@ -109,6 +109,7 @@ export function base_design(layer_count = 8) {
         name: 'Untitled',
         seed: 1,
         palette: 'orb',
+        materials: {},
         piece: {
             outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
@@ -151,8 +152,9 @@ export function migrate(input) {
     return design;
 }
 
+// The design's own (measured) materials override the built-in table (SPEC 5.1).
 export function material_of(design, layer) {
-    return kMaterials[layer.material] ?? kMaterials.ply3;
+    return design.materials?.[layer.material] ?? kMaterials[layer.material] ?? kMaterials.ply3;
 }
 
 export function layer_thickness_mm(design, layer) {

@@ -11,7 +11,7 @@ import { layer_openings } from '../sources/motifs.js';
 import { mm_to_um } from '../core/units.js';
 import { material_of } from '../core/design.js';
 import { resolve_islands } from './islands.js';
-import { register_geometry, spacer_layout } from './registration.js';
+import { register_geometry, spacer_layout, hole_d_mm } from './registration.js';
 import { hash_str } from '../core/rng.js';
 import { fast_checks } from './checks.js';
 
@@ -89,7 +89,8 @@ export function build_design(design) {
     layers.forEach((l, k) => {
         if (l.parts.length && layers[k + 1]) layers[k + 1].locators.push(...l.parts.map(p => p[0]));
     });
-    const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration));
+    // hole_d_mm follows the measured dowel clearance of the material, so it is part of the key.
+    const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration) + hole_d_mm(design));
     const geo = cached(reg_cache, reg_key, () => register_geometry(design, layers));
     layers.forEach((l, k) => {
         l.material = geo.materials[k];

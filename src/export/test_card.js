@@ -16,19 +16,20 @@ import { text_strokes } from './stroke_font.js';
 import { drawing_to_svg } from './svg.js';
 import { drawing_to_dxf } from './dxf.js';
 import { zip_store } from './zip_store.js';
+import { kLadders } from '../core/calibrate.js';
 
 export const kCard = {
     width_mm: 150,
     height_mm: 100,
     corner_mm: 4,
-    kerf_square: { x_mm: 6, y_mm: 61, size_mm: 20 },
-    web: { x_mm: 33, y_mm: 64, slot_w_mm: 4, slot_h_mm: 14, webs_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5] },
+    kerf_square: { x_mm: 6, y_mm: 61, size_mm: kLadders.kerf_square_mm },
+    web: { x_mm: 33, y_mm: 64, slot_w_mm: 4, slot_h_mm: 14, webs_mm: kLadders.webs_mm },
     key: { x_mm: 81, y_mm: 62, w_mm: 10, h_mm: 16 },
-    dowel: { x_mm: 101, y_mm: 72, pitch_mm: 6.5, holes_mm: [2.9, 2.95, 3.0, 3.05, 3.1, 3.15, 3.2] },
-    bridge: { x_mm: 6, y_mm: 40, pitch_mm: 12, window_mm: 9, island_mm: 5, bridges_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0] },
-    hole: { x_mm: 84, y_mm: 45, pitch_mm: 6, holes_mm: [0.5, 0.8, 1.0, 1.5, 2.0, 3.0] },
+    dowel: { x_mm: 101, y_mm: 72, pitch_mm: 6.5, holes_mm: kLadders.dowel_holes_mm },
+    bridge: { x_mm: 6, y_mm: 40, pitch_mm: 12, window_mm: 9, island_mm: 5, bridges_mm: kLadders.bridges_mm },
+    hole: { x_mm: 84, y_mm: 45, pitch_mm: 6, holes_mm: kLadders.holes_mm },
     ramp: { x_mm: 125, y0_mm: 41, y1_mm: 51, pitch_mm: 4.5, count: 5 },
-    notch: { x_mm: 8, pitch_mm: 16, base_w_mm: 10, depth_mm: 8, clearances_mm: [0, 0.05, 0.1, 0.15, 0.2, 0.25] },
+    notch: { x_mm: 8, pitch_mm: 16, base_w_mm: 10, depth_mm: 8, clearances_mm: kLadders.clearances_mm },
 };
 
 const kHoleTolUm = 5; // fine flattening for holes whose size is being measured
