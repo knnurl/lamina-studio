@@ -233,6 +233,43 @@ button { font: inherit; color: inherit; }
     box-shadow: none;
 }
 
+/* Checks report */
+.checks { display: grid; gap: 6px; }
+.step-note.ok { color: var(--ok); }
+.check-row {
+    display: grid;
+    grid-template-columns: 12px 1fr;
+    gap: 4px 8px;
+    align-items: start;
+    padding: 6px 8px;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--panel-2);
+    font-size: 12.5px;
+    color: var(--ink);
+}
+.check-row .light { margin-top: 4px; }
+.check-actions { grid-column: 2; display: flex; gap: 6px; }
+.tool.small { padding: 2px 8px; font-size: 12px; }
+
+/* Layer view */
+.layer-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+.stage canvas[hidden] { display: none; }
+.layer-legend {
+    position: absolute;
+    left: 12px;
+    bottom: 10px;
+    right: 12px;
+    font-size: 12px;
+    color: var(--ink-2);
+    pointer-events: none;
+}
+.layer-legend[hidden] { display: none; }
+.layer-legend .key { display: inline-block; width: 12px; height: 3px; margin: 0 4px 3px 8px; vertical-align: middle; }
+.layer-legend .key.bridge { background: #b4f03c; }
+.layer-legend .key.glue { background: #46b4ff; }
+.layer-legend .key.drop { background: #8f849f; }
+
 /* Header tools */
 .tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tool {
@@ -377,7 +414,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 15 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 19 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -491,9 +528,9 @@ const kJoin = { round: JoinType.Round, miter: JoinType.Miter, square: JoinType.S
 
 // Grows (delta_um > 0) or shrinks closed regions. Holes move the opposite way, so +kerf/2 on a
 // layer grows its outline and shrinks its openings, which is what kerf compensation needs.
-function offset(paths, delta_um, join = 'round', tol_um = kChordTolUm) {
+function offset(paths, delta_um, join = 'round', tol_um = kChordTolUm, miter_limit = 2.0) {
     if (!(join in kJoin)) throw new Error(`offset: unknown join "${join}"`);
-    return inflatePaths(paths, delta_um, kJoin[join], EndType.Polygon, 2.0, tol_um);
+    return inflatePaths(paths, delta_um, kJoin[join], EndType.Polygon, miter_limit, tol_um);
 }
 
 function area_mm2(paths) {
@@ -856,6 +893,45 @@ const SCHEMA = [
         desc: 'Solid border that holds the pattern together.',
     },
     {
+        id: 'island_policy',
+        scope: 'layer',
+        panel: 'structure',
+        label: 'Islands',
+        type: 'select',
+        options: [
+            ['bridge', 'Bridge them to the layer'],
+            ['glue', 'Cut loose, glue on behind'],
+            ['drop', 'Remove them'],
+        ],
+        tier: 'basic',
+        desc: 'Parts that would fall out when cut. Click one in the Layer view to change just that island.',
+    },
+    {
+        id: 'bridge.w_mm',
+        scope: 'layer',
+        panel: 'structure',
+        label: 'Bridge width',
+        type: 'range',
+        min: 0.5,
+        max: 6,
+        step: 0.1,
+        unit: 'mm',
+        tier: 'basic',
+        desc: 'Starts at the material minimum bridge.',
+    },
+    {
+        id: 'bridge.max',
+        scope: 'layer',
+        panel: 'structure',
+        label: 'Most bridges per island',
+        type: 'range',
+        min: 1,
+        max: 6,
+        step: 1,
+        unit: '',
+        tier: 'advanced',
+    },
+    {
         id: 'lighting.mode',
         scope: 'piece',
         panel: 'light',
@@ -959,7 +1035,10 @@ function ring_path(m, wedge_rad) {
     const r_out = r + w / 2;
     const r_in = Math.max(0, r - w / 2);
     const tie_rad = r > 0 ? mm_to_um(m.tie_mm ?? 0) / r : 0;
-    const half = wedge_rad / 2 - tie_rad / 2;
+    // With no tie, neighbouring sectors would meet edge to edge, and vertex rounding leaves a
+    // micron crack that survives as a hairline spike of material. Overlap them by about 5 um.
+    const overlap_rad = tie_rad > 0 ? 0 : 5 / Math.max(r_in, 1000);
+    const half = wedge_rad / 2 - tie_rad / 2 + overlap_rad;
     if (half <= 0) return [];
     if (half >= Math.PI - 1e-9) {
         // A full annulus: outer circle plus an inner hole (clockwise). This cuts an island free;
@@ -1025,18 +1104,663 @@ function layer_openings(layer, sym) {
 }
 return { motif_openings, layer_openings };
 })();
+// src/core/design.js
+const __m_core_design_js = (function () {
+const { kMotifTypes, kMotifParams } = __m_core_schema_js;
+// The design document (SPEC 5): the single source of truth. Every output is a pure function of it.
+// Units are mm here; geometry converts to integer micrometres. A null material-dependent value
+// means "use the material preset".
+
+
+const kSchemaVersion = 1;
+
+// Starting values; the calibration test card replaces them (SPEC 5.1, 9.4).
+const kMaterials = {
+    ply3: {
+        label: 'Birch plywood 3 mm',
+        thickness_mm: 3,
+        kerf_mm: 0.2,
+        min_web_mm: 1.5,
+        min_bridge_mm: 1.2,
+        min_hole_mm: 1.0,
+        look: { colour: '#d8b98c', translucent: false },
+        measured: false,
+    },
+    mdf3: {
+        label: 'MDF 3 mm',
+        thickness_mm: 3,
+        kerf_mm: 0.2,
+        min_web_mm: 1.5,
+        min_bridge_mm: 1.2,
+        min_hole_mm: 1.0,
+        look: { colour: '#9c7b5b', translucent: false },
+        measured: false,
+    },
+    acr3: {
+        label: 'Acrylic 3 mm, opaque',
+        thickness_mm: 3,
+        kerf_mm: 0.15,
+        min_web_mm: 2.0,
+        min_bridge_mm: 1.5,
+        min_hole_mm: 1.0,
+        look: { colour: '#202024', translucent: false },
+        measured: false,
+    },
+    acr3t: {
+        label: 'Acrylic 3 mm, translucent',
+        thickness_mm: 3,
+        kerf_mm: 0.15,
+        min_web_mm: 2.0,
+        min_bridge_mm: 1.5,
+        min_hole_mm: 1.0,
+        look: { colour: '#f2f2f2', translucent: true },
+        measured: false,
+    },
+};
+
+// Finish palettes, front to back. Colours are interpolated across however many layers there are.
+const kPalettes = {
+    orb: { label: 'Orb', stops: ['#a7a9b0', '#ff4a2a', '#3a7bd5', '#e9e4da', '#c8321e', '#243a8f', '#14101c'] },
+    acid: { label: 'Acid', stops: ['#c4f24a', '#8cc152', '#5e8f3a', '#5b2f80', '#331a4d', '#120a1c'] },
+    ember: { label: 'Ember', stops: ['#ffd27a', '#ffb340', '#ff7a2e', '#e0482a', '#9c2a2a', '#2a1010'] },
+    ice: { label: 'Ice', stops: ['#eef7ff', '#a9d4ff', '#5aa8f0', '#2f6fd0', '#243b8a', '#0d1230'] },
+    walnut: { label: 'Walnut to birch', stops: ['#2a1d14', '#4a3424', '#78553a', '#a8814f', '#d9bf8f', '#efe3c6'] },
+    mono: { label: 'Mono', stops: ['#f2f2f2', '#c8c8c8', '#9a9a9a', '#6c6c6c', '#404040', '#161616'] },
+};
+
+const kSheetPresets = {
+    '600x400': { label: '600 x 400 mm', w_mm: 600, h_mm: 400 },
+    '400x300': { label: '400 x 300 mm', w_mm: 400, h_mm: 300 },
+    '300x300': { label: '300 x 300 mm', w_mm: 300, h_mm: 300 },
+};
+
+function hex_to_rgb(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+function rgb_to_hex(rgb) {
+    return '#' + rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('');
+}
+
+// Colour for layer k of n from a palette's stops, interpolated in RGB.
+function palette_colour(palette_id, k, n) {
+    const stops = kPalettes[palette_id].stops;
+    if (n <= 1) return stops[0];
+    const t = (k / (n - 1)) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(t));
+    const f = t - i;
+    const a = hex_to_rgb(stops[i]);
+    const b = hex_to_rgb(stops[i + 1]);
+    return rgb_to_hex(a.map((c, j) => c + (b[j] - c) * f));
+}
+
+function default_layer(k, n, palette_id = 'orb') {
+    return {
+        id: `L${k + 1}`,
+        material: 'ply3',
+        thickness_mm: null,
+        gap_mm: 0,
+        finish: { kind: 'paint', colour: palette_colour(palette_id, k, n) },
+        frame_ring_mm: 12,
+        locked: false,
+        source: { kind: 'primitive', motifs: [] },
+        island_policy: 'bridge',
+        bridge: { w_mm: null, max: 4 },
+        overrides: { islands: {}, bridges: [], locks: [], edits: [] },
+    };
+}
+
+function base_design(layer_count = 8) {
+    return {
+        app: 'lamina',
+        schema: kSchemaVersion,
+        name: 'Untitled',
+        seed: 1,
+        palette: 'orb',
+        piece: {
+            outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
+            symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
+            lighting: { mode: 'unlit', colour: '#ff5b2e' },
+            depth_mode: 'per_layer',
+        },
+        machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
+        sheet: { w_mm: 600, h_mm: 400, margin_mm: 5, spacing_mm: 3 },
+        registration: { dowel_d_mm: 3, count: 3, through_front: false, ids: true },
+        spacers: { style: 'pucks', stock_material: 'ply3' },
+        layers: Array.from({ length: layer_count }, (_, k) => default_layer(k, layer_count)),
+        frame: null,
+        tiling: null,
+        check_overrides: [],
+    };
+}
+
+const is_plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Copies keys missing from target out of defaults, recursively for plain objects.
+function fill_missing(target, defaults) {
+    for (const [key, value] of Object.entries(defaults)) {
+        if (!(key in target)) target[key] = structuredClone(value);
+        else if (is_plain(value) && is_plain(target[key])) fill_missing(target[key], value);
+    }
+    return target;
+}
+
+// Opens any saved design: checks it is a Lamina file, upgrades older schemas, fills new fields.
+function migrate(input) {
+    if (!is_plain(input) || input.app !== 'lamina') throw new Error('not a Lamina design file');
+    if (!Number.isInteger(input.schema) || input.schema > kSchemaVersion) {
+        throw new Error(`design schema ${input.schema} is newer than this studio (${kSchemaVersion})`);
+    }
+    const design = structuredClone(input);
+    const n = Array.isArray(design.layers) && design.layers.length ? design.layers.length : 8;
+    fill_missing(design, base_design(n));
+    design.layers = design.layers.map((layer, k) => fill_missing(layer, default_layer(k, n, design.palette)));
+    design.schema = kSchemaVersion;
+    return design;
+}
+
+function material_of(design, layer) {
+    return kMaterials[layer.material] ?? kMaterials.ply3;
+}
+
+function layer_thickness_mm(design, layer) {
+    return layer.thickness_mm ?? material_of(design, layer).thickness_mm;
+}
+
+function piece_radius_mm(piece) {
+    const o = piece.outline;
+    if (o.kind === 'rect' || o.kind === 'arch') return Math.min(o.w_mm, o.h_mm) / 2;
+    return o.w_mm / 2;
+}
+
+// Applies a palette to every layer's finish colour.
+function apply_palette(design, palette_id) {
+    design.palette = palette_id;
+    const n = design.layers.length;
+    design.layers.forEach((layer, k) => {
+        layer.finish.colour = palette_colour(palette_id, k, n);
+    });
+}
+
+// Sets the layer count. New layers are copies of the last patterned layer, inserted before the
+// back layer, so the back stays solid; removal takes from just in front of the back.
+function set_layer_count(design, count) {
+    const n = Math.max(1, Math.min(40, Math.round(count)));
+    const layers = design.layers;
+    while (layers.length < n) {
+        const template = layers.length > 1 ? layers[layers.length - 2] : layers[0];
+        layers.splice(Math.max(layers.length - 1, 0), 0, structuredClone(template));
+    }
+    while (layers.length > n) layers.splice(Math.max(layers.length - 2, 0), 1);
+    layers.forEach((layer, k) => {
+        layer.id = `L${k + 1}`;
+    });
+    apply_palette(design, design.palette);
+}
+
+// Scales every length a motif has (positions and sizes, not structural widths such as ties), so a
+// pattern follows the piece when the piece is resized.
+function scale_motifs(design, factor) {
+    for (const layer of design.layers) {
+        for (const motif of layer.source.motifs ?? []) {
+            for (const key of kMotifTypes[motif.type]?.params ?? []) {
+                if (kMotifParams[key].scales && typeof motif[key] === 'number') {
+                    motif[key] = Math.round(motif[key] * factor * 100) / 100;
+                }
+            }
+        }
+    }
+}
+return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, scale_motifs };
+})();
+// src/core/rng.js
+const __m_core_rng_js = (function () {
+// Seeded randomness (SPEC 13.5). Every random choice in Lamina comes from here, so a design JSON
+// and its seed always reproduce the same output.
+
+// FNV-1a over a string, as an unsigned 32-bit seed.
+function hash_str(text) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+// mulberry32: small, fast, good enough for design choices. Returns floats in [0, 1).
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// An independent stream per purpose: rng_for(seed, 'layer', 3) never shifts when another stream
+// draws more numbers.
+function rng_for(seed, ...keys) {
+    const rand = mulberry32(hash_str(`${seed >>> 0}:${keys.join(':')}`));
+    return {
+        next: rand,
+        range: (lo, hi) => lo + (hi - lo) * rand(),
+        int: (lo, hi) => lo + Math.floor((hi - lo + 1) * rand()),
+        pick: items => items[Math.floor(items.length * rand())],
+        chance: p => rand() < p,
+    };
+}
+return { hash_str, mulberry32, rng_for };
+})();
+// src/pipeline/islands.js
+const __m_pipeline_islands_js = (function () {
+const { path_area_um2, union_all, subtract } = __m_geom_clip_js;
+const { mm_to_um, kUmPerMm } = __m_core_units_js;
+const { hash_str } = __m_core_rng_js;
+// Islands and bridges (SPEC 4.5, 6.2 steps 4 and 5, 6.5). An island is any component of a layer's
+// material other than the body (the largest), so it would fall out when cut. Policies per island:
+// 'bridge' (default) ties it to the material around the opening that encloses it, 'glue' cuts it
+// as a separate part with a scored locator on the layer behind, 'drop' deletes it.
+// Bridging works one level at a time: an island inside a hole of another island bridges to that
+// island, which is itself bridged, so nested rings chain to the body.
+// Assumptions: material is flat Clipper output in micrometres (outers positive, holes negative).
+
+
+
+
+const kBridgeLongMm = 15; // longer ties are fragile (W-03)
+const kTwoBridgeAreaMm2 = 25;
+const kThreeBridgeAreaMm2 = 2500;
+const kSampleUm = 1000;
+const kMinSpreadRad = Math.PI / 3;
+
+function point_in_path(p, path) {
+    let inside = false;
+    for (let i = 0, j = path.length - 1; i < path.length; j = i++) {
+        const a = path[i];
+        const b = path[j];
+        if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+}
+
+function centroid(path) {
+    let a = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0, j = path.length - 1; i < path.length; j = i++) {
+        const f = path[j].x * path[i].y - path[i].x * path[j].y;
+        a += f;
+        cx += (path[j].x + path[i].x) * f;
+        cy += (path[j].y + path[i].y) * f;
+    }
+    return a === 0 ? path[0] : { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+function bbox_mm(paths) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const path of paths) {
+        for (const p of path) {
+            x0 = Math.min(x0, p.x);
+            y0 = Math.min(y0, p.y);
+            x1 = Math.max(x1, p.x);
+            y1 = Math.max(y1, p.y);
+        }
+    }
+    return { x0: x0 / kUmPerMm, y0: y0 / kUmPerMm, x1: x1 / kUmPerMm, y1: y1 / kUmPerMm };
+}
+
+// Material as components: each outer with the holes directly inside it.
+function components(material) {
+    const outers = [];
+    const holes = [];
+    for (const path of material) (path_area_um2(path) > 0 ? outers : holes).push(path);
+    const comps = outers.map(path => ({ outer: path, holes: [], area_um2: path_area_um2(path) }));
+    const by_size = [...comps].sort((a, b) => a.area_um2 - b.area_um2);
+    for (const hole of holes) {
+        const owner = by_size.find(c => point_in_path(hole[0], c.outer));
+        if (owner) {
+            owner.holes.push(hole);
+            owner.area_um2 += path_area_um2(hole);
+        }
+    }
+    return comps;
+}
+
+function island_id(layer_id, c) {
+    const m = centroid(c.outer);
+    const key = `${layer_id}:${Math.round(m.x / 500)}:${Math.round(m.y / 500)}:${Math.round(Math.log2(c.area_um2))}`;
+    return 'i' + hash_str(key).toString(16).padStart(8, '0');
+}
+
+function resample(path) {
+    const out = [];
+    for (let i = 0; i < path.length; i++) {
+        const a = path[i];
+        const b = path[(i + 1) % path.length];
+        const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / kSampleUm));
+        for (let s = 0; s < n; s++) out.push({ x: a.x + ((b.x - a.x) * s) / n, y: a.y + ((b.y - a.y) * s) / n });
+    }
+    return out;
+}
+
+function nearest_on_path(p, path) {
+    let best = null;
+    let best_d2 = Infinity;
+    for (let i = 0; i < path.length; i++) {
+        const a = path[i];
+        const b = path[(i + 1) % path.length];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len2 = dx * dx + dy * dy;
+        const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+        const q = { x: a.x + t * dx, y: a.y + t * dy };
+        const d2 = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best = q;
+        }
+    }
+    return { q: best, d: Math.sqrt(best_d2) };
+}
+
+function segments_cross(p1, p2, p3, p4) {
+    const d = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    const d1 = d(p3, p4, p1);
+    const d2 = d(p3, p4, p2);
+    const d3 = d(p1, p2, p3);
+    const d4 = d(p1, p2, p4);
+    return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+function crosses_path(a, b, path) {
+    for (let i = 0; i < path.length; i++) if (segments_cross(a, b, path[i], path[(i + 1) % path.length])) return true;
+    return false;
+}
+
+function bridge_rect(p, q, w_um) {
+    const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+    const ux = (q.x - p.x) / len;
+    const uy = (q.y - p.y) / len;
+    const e = w_um / 2 + 200; // run into both sides so the union joins them
+    const nx = (-uy * w_um) / 2;
+    const ny = (ux * w_um) / 2;
+    const a = { x: p.x - ux * e, y: p.y - uy * e };
+    const b = { x: q.x + ux * e, y: q.y + uy * e };
+    return [
+        { x: Math.round(a.x - nx), y: Math.round(a.y - ny) },
+        { x: Math.round(b.x - nx), y: Math.round(b.y - ny) },
+        { x: Math.round(b.x + nx), y: Math.round(b.y + ny) },
+        { x: Math.round(a.x + nx), y: Math.round(a.y + ny) },
+    ];
+}
+
+function bridge_count(area_mm2, max) {
+    const n = area_mm2 < kTwoBridgeAreaMm2 ? 1 : area_mm2 < kThreeBridgeAreaMm2 ? 2 : 3;
+    return Math.max(1, Math.min(n, max));
+}
+
+// Chooses tie lines from an island to the boundary of the hole that encloses it.
+function plan_bridges(island, hole, others, w_um, count) {
+    const m = centroid(island.outer);
+    const candidates = [];
+    for (const s of resample(island.outer)) {
+        const { q, d } = nearest_on_path(s, hole);
+        if (others.some(o => crosses_path(s, q, o.outer))) continue;
+        candidates.push({ s, q, d, angle: Math.atan2(s.y - m.y, s.x - m.x) });
+    }
+    if (!candidates.length) return [];
+    const shortest = Math.min(...candidates.map(c => c.d));
+    const pool = candidates.filter(c => c.d <= shortest * 1.25 + w_um);
+    const picked = [pool.reduce((a, b) => (b.d < a.d ? b : a))];
+    const gap = (a, b) => {
+        const t = Math.abs(a - b) % (2 * Math.PI);
+        return Math.min(t, 2 * Math.PI - t);
+    };
+    while (picked.length < count) {
+        let best = null;
+        let best_spread = -1;
+        for (const c of pool) {
+            const spread = Math.min(...picked.map(p => gap(p.angle, c.angle)));
+            if (spread > best_spread + 1 || (Math.abs(spread - best_spread) <= 1 && best && c.d < best.d)) {
+                best_spread = spread;
+                best = c;
+            }
+        }
+        if (!best || best_spread < kMinSpreadRad) break;
+        picked.push(best);
+    }
+    return picked.map(c => ({ a: c.s, b: c.q, length_um: c.d, rect: bridge_rect(c.s, c.q, w_um) }));
+}
+
+// Applies island policies to a layer's material.
+// Returns { material, islands, bridges, parts, unbridged }:
+//   islands  [{ id, policy, area_mm2, bbox, outer }]
+//   bridges  [{ island, a, b, length_mm, w_mm, rect }]
+//   parts    glue-on islands, each [outer, ...holes]
+function resolve_islands(material, layer, bridge_w_mm) {
+    const comps = components(material);
+    if (comps.length <= 1) return { material, islands: [], bridges: [], parts: [], unbridged: [] };
+    const body = comps.reduce((a, b) => (b.area_um2 > a.area_um2 ? b : a));
+    const islands = comps
+        .filter(c => c !== body)
+        .map(c => {
+            const id = island_id(layer.id, c);
+            return {
+                ...c,
+                id,
+                policy: layer.overrides?.islands?.[id] ?? layer.island_policy ?? 'bridge',
+                area_mm2: c.area_um2 / (kUmPerMm * kUmPerMm),
+            };
+        });
+
+    const all_holes = comps.flatMap(c => c.holes.map(h => ({ hole: h, owner: c })));
+    const w_um = mm_to_um(bridge_w_mm);
+    const bridges = [];
+    const unbridged = [];
+    const removed = [];
+    const parts = [];
+    for (const island of islands) {
+        if (island.policy === 'drop' || island.policy === 'glue') {
+            removed.push(island.outer);
+            if (island.policy === 'glue') parts.push([island.outer, ...island.holes]);
+            continue;
+        }
+        // The smallest hole around the island (hole areas are negative, so the largest value).
+        const enclosing = all_holes
+            .filter(h => h.owner.outer !== island.outer && point_in_path(island.outer[0], h.hole))
+            .sort((a, b) => path_area_um2(b.hole) - path_area_um2(a.hole))[0];
+        if (!enclosing) {
+            unbridged.push(island.id);
+            continue;
+        }
+        const neighbours = islands.filter(o => o !== island && point_in_path(o.outer[0], enclosing.hole));
+        const planned = plan_bridges(island, enclosing.hole, neighbours, w_um, bridge_count(island.area_mm2, layer.bridge?.max ?? 4));
+        if (!planned.length) unbridged.push(island.id);
+        for (const b of planned) {
+            bridges.push({
+                island: island.id,
+                a: b.a,
+                b: b.b,
+                length_mm: b.length_um / kUmPerMm,
+                w_mm: bridge_w_mm,
+                rect: b.rect,
+            });
+        }
+    }
+
+    let out = material;
+    if (removed.length) out = subtract(out, removed);
+    if (bridges.length) out = union_all([...out, ...bridges.map(b => b.rect)]);
+    return {
+        material: out,
+        islands: islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: bbox_mm([i.outer]), outer: i.outer })),
+        bridges,
+        parts,
+        unbridged,
+    };
+}
+return { kBridgeLongMm, point_in_path, bbox_mm, components, resolve_islands };
+})();
+// src/pipeline/checks.js
+const __m_pipeline_checks_js = (function () {
+const { offset, subtract, intersect_paths, area_mm2, path_area_um2 } = __m_geom_clip_js;
+const { components, bbox_mm } = __m_pipeline_islands_js;
+const { kBridgeLongMm } = __m_pipeline_islands_js;
+const { material_of } = __m_core_design_js;
+const { mm_to_um, kUmPerMm } = __m_core_units_js;
+// Fabrication checks (SPEC 7). Fast checks run with every build; slow checks (morphology over the
+// whole layer) run separately, debounced, so dragging a slider stays fluid. Every result names a
+// layer and boxes in mm for the overlay. Fatal results block export unless overridden; an override
+// is keyed "<id>@<layer index>" in design.check_overrides.
+// Assumptions: material is the design geometry before kerf (kerf is applied at export).
+
+
+
+
+
+
+const kMaxBoxes = 60;
+const kGlueCoverage = 0.6;
+
+function result(design, id, severity, layer, message, boxes = []) {
+    const key = `${id}@${layer}`;
+    const overridden = severity === 'fatal' && (design.check_overrides ?? []).includes(key);
+    return { id, key, severity, layer, message, boxes: boxes.slice(0, kMaxBoxes), overridden };
+}
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+// built: build_design() layers, front first.
+function fast_checks(design, built) {
+    const out = [];
+    const n = design.layers.length;
+    built.forEach((b, k) => {
+        const layer = design.layers[k];
+        const mat = material_of(design, layer);
+        if (b.unbridged.length) {
+            const boxes = b.islands.filter(i => b.unbridged.includes(i.id)).map(i => i.bbox);
+            out.push(result(design, 'G-01', 'fatal', k, `Layer ${k + 1}: ${plural(b.unbridged.length, 'island', 'islands')} could not be bridged and would fall out.`, boxes));
+        }
+        const pieces = components(b.material).length;
+        if (pieces > 1) {
+            out.push(result(design, 'G-04', 'fatal', k, `Layer ${k + 1} falls apart into ${pieces} pieces.`));
+        }
+        const weak = b.bridges.filter(br => br.w_mm < mat.min_bridge_mm - 1e-9 || br.length_mm > kBridgeLongMm);
+        if (weak.length) {
+            out.push(
+                result(design, 'W-03', 'warn', k, `Layer ${k + 1}: ${plural(weak.length, 'bridge is', 'bridges are')} under ${mat.min_bridge_mm} mm wide or over ${kBridgeLongMm} mm long.`,
+                    weak.map(br => bbox_mm([br.rect]))),
+            );
+        }
+        if (b.parts.length) {
+            const behind = built[k + 1];
+            if (layer.gap_mm > 0) {
+                out.push(result(design, 'G-03', 'fatal', k, `Layer ${k + 1}: glue-on islands need no gap behind this layer.`, b.parts.map(p => bbox_mm([p[0]]))));
+            } else {
+                const floating = b.parts.filter(p => {
+                    if (!behind) return true;
+                    const covered = area_mm2(intersect_paths([p[0]], behind.material));
+                    return covered < kGlueCoverage * area_mm2([p[0]]);
+                });
+                if (floating.length) {
+                    out.push(result(design, 'G-03', 'fatal', k, `Layer ${k + 1}: ${plural(floating.length, 'glue-on island has', 'glue-on islands have')} too little material behind to sit on.`, floating.map(p => bbox_mm([p[0]]))));
+                }
+            }
+        }
+        const stock = material_of(design, { material: design.spacers.stock_material }).thickness_mm;
+        const ratio = layer.gap_mm / stock;
+        if (k < n - 1 && layer.gap_mm > 0 && Math.abs(ratio - Math.round(ratio)) > 1e-6) {
+            out.push(result(design, 'W-04', 'warn', k, `Layer ${k + 1}: a ${layer.gap_mm} mm gap is not a whole number of ${stock} mm spacers.`));
+        }
+    });
+
+    const back = design.layers[n - 1];
+    const back_built = built[n - 1];
+    if (design.piece.lighting.mode === 'backlit' && !material_of(design, back).look.translucent && back_built && back_built.open_fraction < 0.01) {
+        out.push(result(design, 'W-06', 'warn', n - 1, 'Backlit, but the back layer is solid and opaque, so no light gets through.'));
+    }
+    const front_mat = material_of(design, design.layers[0]);
+    if (design.layers[0].frame_ring_mm < front_mat.min_web_mm) {
+        out.push(result(design, 'W-07', 'warn', 0, `The front frame ring is thinner than the ${front_mat.min_web_mm} mm minimum web.`));
+    }
+    return out;
+}
+
+// Regions of material narrower than width_mm: what an opening (shrink then grow) removes.
+// - Miter joins with a high limit rebuild ordinary corners and sharp opening tips exactly, so
+//   only real necks and material spikes remain.
+// - Integer rounding leaves micron slivers along long curved edges; re-opening the result by
+//   kNoiseUm removes anything narrower than 0.02 mm. A real neck is hundreds of microns wide.
+const kMiterLimit = 20;
+const kNoiseUm = 10;
+
+function thin_regions(material, width_mm, min_area_mm2) {
+    const half = mm_to_um(width_mm / 2);
+    const opened = offset(offset(material, -half, 'miter', undefined, kMiterLimit), half, 'miter', undefined, kMiterLimit);
+    const raw = subtract(material, opened);
+    if (!raw.length) return [];
+    const denoised = offset(offset(raw, -kNoiseUm, 'miter', undefined, kMiterLimit), kNoiseUm, 'miter', undefined, kMiterLimit);
+    const min_um2 = min_area_mm2 * kUmPerMm * kUmPerMm;
+    return denoised.filter(p => path_area_um2(p) > min_um2);
+}
+
+function slow_checks(design, built) {
+    const out = [];
+    built.forEach((b, k) => {
+        const mat = material_of(design, design.layers[k]);
+        const min_area = Math.max(0.05, 0.1 * mat.min_web_mm * mat.min_web_mm);
+        // Bridges are meant to be thinner than webs and have their own check (W-03).
+        const bridge_zone = b.bridges.length ? offset(b.bridges.map(br => br.rect), mm_to_um(0.5), 'miter') : [];
+        const not_bridge = (paths, area_mm2) => {
+            if (!bridge_zone.length || !paths.length) return paths;
+            return subtract(paths, bridge_zone).filter(p => path_area_um2(p) > area_mm2 * kUmPerMm * kUmPerMm);
+        };
+        const thin = not_bridge(thin_regions(b.material, mat.min_web_mm, min_area), min_area);
+        if (thin.length) {
+            const severe = not_bridge(thin_regions(b.material, mat.kerf_mm, 0.01), 0.01);
+            if (severe.length) {
+                out.push(result(design, 'G-02', 'fatal', k, `Layer ${k + 1}: webs thinner than the ${mat.kerf_mm} mm kerf would be cut away.`, severe.map(p => bbox_mm([p]))));
+            }
+            out.push(result(design, 'W-01', 'warn', k, `Layer ${k + 1}: ${plural(thin.length, 'web is', 'webs are')} thinner than ${mat.min_web_mm} mm.`, thin.map(p => bbox_mm([p]))));
+        }
+        const small = b.material.filter(p => {
+            if (path_area_um2(p) >= 0) return false;
+            const box = bbox_mm([p]);
+            return Math.min(box.x1 - box.x0, box.y1 - box.y0) < mat.min_hole_mm;
+        });
+        if (small.length) {
+            out.push(result(design, 'W-02', 'warn', k, `Layer ${k + 1}: ${plural(small.length, 'hole is', 'holes are')} smaller than ${mat.min_hole_mm} mm.`, small.map(p => bbox_mm([p]))));
+        }
+    });
+    return out;
+}
+return { fast_checks, slow_checks };
+})();
 // src/pipeline/compose.js
 const __m_pipeline_compose_js = (function () {
 const { offset, subtract, intersect_paths, area_mm2, path_area_um2 } = __m_geom_clip_js;
 const { outline_paths } = __m_geom_outline_js;
 const { layer_openings } = __m_sources_motifs_js;
 const { mm_to_um } = __m_core_units_js;
+const { material_of } = __m_core_design_js;
+const { resolve_islands } = __m_pipeline_islands_js;
+const { fast_checks } = __m_pipeline_checks_js;
 // Layer composition (SPEC 6.2 steps 1 to 3): openings from the layer's motifs, clipped to the area
 // inside its frame ring, cut from the piece outline. Contours under kMicroAreaUm2 (boolean
 // crumbs) are dropped. There is no blanket open/close: measured on the Orb preset it cost 288 ms
 // of a 300 ms build and changed the area by 2 mm2 in 464,000. Thin webs are found by the checks,
 // which compute that morphology once anyway.
 // Assumptions: geometry in micrometres, origin at the symmetry centre.
+
+
+
 
 
 
@@ -1059,16 +1783,42 @@ function compose_layer(design, k) {
     return { outline, inner, material };
 }
 
-// Every layer, front first. Returns material paths plus simple stats and the time taken.
+function perimeter_mm(paths) {
+    let sum = 0;
+    for (const p of paths) {
+        for (let i = 0; i < p.length; i++) {
+            const a = p[i];
+            const b = p[(i + 1) % p.length];
+            sum += Math.hypot(b.x - a.x, b.y - a.y);
+        }
+    }
+    return sum / 1000;
+}
+
+// Every layer, front first, with islands resolved, then the stack-level parts: locators for
+// glue-on islands are scored on the layer behind. Returns layers, the fast checks and the time.
 function build_design(design) {
     const t0 = performance.now();
     const layers = design.layers.map((layer, k) => {
-        const { outline, material } = compose_layer(design, k);
+        const { outline, material: raw } = compose_layer(design, k);
+        const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
+        const resolved = resolve_islands(raw, layer, bridge_w_mm);
         const solid_mm2 = area_mm2(outline);
-        const area = area_mm2(material);
-        return { id: layer.id, material, area_mm2: area, open_fraction: solid_mm2 > 0 ? 1 - area / solid_mm2 : 0 };
+        const area = area_mm2(resolved.material);
+        return {
+            id: layer.id,
+            ...resolved,
+            locators: [],
+            area_mm2: area,
+            open_fraction: solid_mm2 > 0 ? 1 - area / solid_mm2 : 0,
+            cut_length_mm: perimeter_mm(resolved.material) + perimeter_mm(resolved.parts.flat()),
+        };
     });
-    return { layers, ms: performance.now() - t0 };
+    layers.forEach((l, k) => {
+        if (l.parts.length && layers[k + 1]) layers[k + 1].locators.push(...l.parts.map(p => p[0]));
+    });
+    const checks = fast_checks(design, layers);
+    return { layers, checks, ms: performance.now() - t0 };
 }
 return { compose_layer, build_design };
 })();
@@ -1693,31 +2443,58 @@ return { kCard, build_test_card, test_card_instructions, test_card_zip };
 // src/worker/geometry_worker.js
 const __m_worker_geometry_worker_js = (function () {
 const { build_design } = __m_pipeline_compose_js;
+const { slow_checks } = __m_pipeline_checks_js;
 const { pack_paths } = __m_geom_pack_js;
 const { test_card_zip } = __m_export_test_card_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
 // Protocol: request {id, type, payload}, reply {id, ok, result} or {id, ok: false, error}.
 // Typed arrays anywhere in a result are transferred, not copied.
+// 'build' is fast and runs on every edit; 'check' runs the slow checks on the last build of the
+// same design (cached by its JSON), so the UI can debounce it.
 
 
 
+
+
+let cache = { key: null, built: null };
+
+function built_for(design) {
+    const key = JSON.stringify(design);
+    if (cache.key !== key) cache = { key, built: build_design(design) };
+    return cache.built;
+}
 
 function build(design) {
-    const built = build_design(design);
+    const built = built_for(design);
     return {
         ms: built.ms,
+        checks: built.checks,
         layers: built.layers.map(l => ({
             id: l.id,
             area_mm2: l.area_mm2,
             open_fraction: l.open_fraction,
+            cut_length_mm: l.cut_length_mm,
             packed: pack_paths(l.material),
+            islands: l.islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: i.bbox, outer: pack_paths([i.outer]) })),
+            bridges: l.bridges.map(b => ({ island: b.island, length_mm: b.length_mm, w_mm: b.w_mm, rect: pack_paths([b.rect]) })),
+            parts: l.parts.map(p => pack_paths(p)),
+            locators: pack_paths(l.locators),
+            unbridged: l.unbridged,
         })),
     };
+}
+
+function check(design) {
+    const t0 = performance.now();
+    const built = built_for(design);
+    const checks = [...built.checks, ...slow_checks(design, built.layers)];
+    return { checks, ms: performance.now() - t0 };
 }
 
 const kHandlers = {
     ping: () => ({ pong: true }),
     build,
+    check,
     test_card_zip,
 };
 
@@ -1743,7 +2520,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 23 modules.
+<script>// Lamina Studio bundle: src/main.js and 26 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -1794,7 +2571,7 @@ const kSteps = [
 const kTabs = [
     { id: '3d', label: '3D', ready: true },
     { id: '2d', label: '2D', ready: false },
-    { id: 'layer', label: 'Layer', ready: false },
+    { id: 'layer', label: 'Layer', ready: true },
     { id: 'sheets', label: 'Sheets', ready: false },
 ];
 
@@ -84441,6 +85218,45 @@ const SCHEMA = [
         desc: 'Solid border that holds the pattern together.',
     },
     {
+        id: 'island_policy',
+        scope: 'layer',
+        panel: 'structure',
+        label: 'Islands',
+        type: 'select',
+        options: [
+            ['bridge', 'Bridge them to the layer'],
+            ['glue', 'Cut loose, glue on behind'],
+            ['drop', 'Remove them'],
+        ],
+        tier: 'basic',
+        desc: 'Parts that would fall out when cut. Click one in the Layer view to change just that island.',
+    },
+    {
+        id: 'bridge.w_mm',
+        scope: 'layer',
+        panel: 'structure',
+        label: 'Bridge width',
+        type: 'range',
+        min: 0.5,
+        max: 6,
+        step: 0.1,
+        unit: 'mm',
+        tier: 'basic',
+        desc: 'Starts at the material minimum bridge.',
+    },
+    {
+        id: 'bridge.max',
+        scope: 'layer',
+        panel: 'structure',
+        label: 'Most bridges per island',
+        type: 'range',
+        min: 1,
+        max: 6,
+        step: 1,
+        unit: '',
+        tier: 'advanced',
+    },
+    {
         id: 'lighting.mode',
         scope: 'piece',
         panel: 'light',
@@ -84817,6 +85633,12 @@ class StackPreview {
         this.renderer_.render(this.scene_, this.camera_);
     }
 
+    // three.js sets an inline display on its canvas, which beats the [hidden] attribute.
+    set_visible(on) {
+        this.renderer_.domElement.style.display = on ? 'block' : 'none';
+        if (on) this.resize_();
+    }
+
     frame_(radius_mm, depth_mm) {
         const fov = MathUtils.degToRad(this.camera_.fov);
         const distance = (radius_mm / Math.sin(fov / 2)) * 1.08;
@@ -85182,6 +86004,8 @@ function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, 
     Object.assign(design.piece.outline, outline);
     Object.assign(design.piece.symmetry, symmetry);
     if (lighting) Object.assign(design.piece.lighting, lighting);
+    // A backlit piece needs light to get through: translucent acrylic at the back.
+    if (design.piece.lighting.mode === 'backlit') design.layers.at(-1).material = 'acr3t';
     if (frame_ring_mm !== undefined) for (const layer of design.layers) layer.frame_ring_mm = frame_ring_mm;
     apply_palette(design, palette);
     generate_stack(design, seed, { lock_n: true });
@@ -85260,7 +86084,7 @@ return { kPresets, preset_by_id };
 // src/core/actions.js
 const __m_core_actions_js = (function () {
 const { get_path, set_path } = __m_core_schema_js;
-const { kMaterials, kPalettes, kSheetPresets, set_layer_count, apply_palette, scale_motifs, piece_radius_mm } = __m_core_design_js;
+const { kMaterials, kPalettes, kSheetPresets, set_layer_count, apply_palette, scale_motifs, piece_radius_mm, material_of } = __m_core_design_js;
 // Applies a schema control's value to a design, including the controls that are not a plain path
 // (layer count, palette, material for all layers, sheet size) and resizing, which also scales
 // the pattern. Also supplies the option lists that come from the design tables.
@@ -85290,6 +86114,10 @@ function scope_root(entry, design, layer_index) {
 
 function read_param(entry, design, layer_index) {
     if (entry.get) return entry.get(design, design.layers[layer_index]);
+    if (entry.id === 'bridge.w_mm') {
+        const layer = design.layers[layer_index];
+        return layer.bridge.w_mm ?? material_of(design, layer).min_bridge_mm;
+    }
     return get_path(scope_root(entry, design, layer_index), entry.id);
 }
 
@@ -85358,6 +86186,223 @@ function unpack_paths({ xy, starts }) {
     return paths;
 }
 return { pack_paths, unpack_paths };
+})();
+// src/core/check_level.js
+const __m_core_check_level_js = (function () {
+// Summarises check results for the status light (SPEC 7). Kept free of geometry imports so the
+// UI bundle does not pull in Clipper2.
+
+// 'bad' if an un-overridden fatal result exists, 'warn' for warnings or overrides, else 'ok'.
+function check_level(results) {
+    if (results.some(r => r.severity === 'fatal' && !r.overridden)) return 'bad';
+    if (results.some(r => r.severity === 'warn' || r.overridden)) return 'warn';
+    return 'ok';
+}
+return { check_level };
+})();
+// src/preview/layer_view.js
+const __m_preview_layer_view_js = (function () {
+const { kUmPerMm } = __m_core_units_js;
+// Layer view (SPEC 10): one layer, flat, for inspecting and editing. Material is drawn in the
+// layer's colour; bridges, islands (by policy), locators for glue-on islands from the layer in
+// front, and check boxes (red fatal, amber warning) are drawn over it. Click an island to cycle
+// its policy; the wheel zooms at the cursor; drag pans; double-click refits.
+// Assumptions: paths in micrometres, y up; the canvas works in mm.
+
+
+const kPolicyColour = { bridge: '#b4f03c', glue: '#46b4ff', drop: '#8f849f' };
+
+function point_in_path(p, path) {
+    let inside = false;
+    for (let i = 0, j = path.length - 1; i < path.length; j = i++) {
+        const a = path[i];
+        const b = path[j];
+        if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+}
+
+class LayerView {
+    // on_island_click(island) is called with the island under the cursor.
+    constructor(container, { on_island_click }) {
+        this.container_ = container;
+        this.canvas_ = document.createElement('canvas');
+        this.canvas_.className = 'layer-canvas';
+        this.canvas_.hidden = true;
+        this.legend_ = document.createElement('div');
+        this.legend_.className = 'layer-legend';
+        this.legend_.hidden = true;
+        this.legend_.innerHTML =
+            '<span class="key bridge"></span>bridged island <span class="key glue"></span>glue-on ' +
+            '<span class="key drop"></span>dropped. Click an island to change it. Wheel zooms, drag ' +
+            'pans, double-click refits. Boxes mark check findings.';
+        container.append(this.canvas_, this.legend_);
+        this.ctx_ = this.canvas_.getContext('2d');
+        this.view_ = null; // { scale px per mm, ox, oy }
+        this.data_ = null;
+        this.on_island_click_ = on_island_click;
+
+        let drag = null;
+        this.canvas_.addEventListener('pointerdown', e => {
+            drag = { x: e.offsetX, y: e.offsetY, moved: false };
+            this.canvas_.setPointerCapture(e.pointerId);
+        });
+        this.canvas_.addEventListener('pointermove', e => {
+            if (!drag || !this.view_) return;
+            const dx = e.offsetX - drag.x;
+            const dy = e.offsetY - drag.y;
+            if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+            if (drag.moved) {
+                this.view_.ox += dx;
+                this.view_.oy += dy;
+                drag.x = e.offsetX;
+                drag.y = e.offsetY;
+                this.draw_();
+            }
+        });
+        this.canvas_.addEventListener('pointerup', e => {
+            if (drag && !drag.moved) this.click_(e.offsetX, e.offsetY);
+            drag = null;
+        });
+        this.canvas_.addEventListener(
+            'wheel',
+            e => {
+                if (!this.view_) return;
+                e.preventDefault();
+                const f = Math.exp(-e.deltaY * 0.0015);
+                this.view_.ox = e.offsetX - (e.offsetX - this.view_.ox) * f;
+                this.view_.oy = e.offsetY - (e.offsetY - this.view_.oy) * f;
+                this.view_.scale *= f;
+                this.draw_();
+            },
+            { passive: false },
+        );
+        this.canvas_.addEventListener('dblclick', () => {
+            this.view_ = null;
+            this.draw_();
+        });
+        new ResizeObserver(() => this.draw_()).observe(container);
+    }
+
+    set_visible(on) {
+        this.canvas_.hidden = !on;
+        this.legend_.hidden = !on;
+        if (on) this.draw_();
+    }
+
+    // data: { colour, built (one layer from the worker, unpacked), checks (this layer's), key }.
+    // The view is refitted when key (piece size and layer) changes.
+    show(data) {
+        if (this.data_?.key !== data.key) this.view_ = null;
+        this.data_ = data;
+        if (!this.canvas_.hidden) this.draw_();
+    }
+
+    fit_() {
+        const { material } = this.data_.built;
+        let x0 = Infinity;
+        let y0 = Infinity;
+        let x1 = -Infinity;
+        let y1 = -Infinity;
+        for (const p of material.flat()) {
+            x0 = Math.min(x0, p.x);
+            y0 = Math.min(y0, p.y);
+            x1 = Math.max(x1, p.x);
+            y1 = Math.max(y1, p.y);
+        }
+        const w = this.canvas_.clientWidth;
+        const h = this.canvas_.clientHeight;
+        const span_x = (x1 - x0) / kUmPerMm || 1;
+        const span_y = (y1 - y0) / kUmPerMm || 1;
+        const scale = Math.min(w / span_x, h / span_y) * 0.9;
+        this.view_ = {
+            scale,
+            ox: w / 2 - (((x0 + x1) / 2) * scale) / kUmPerMm,
+            oy: h / 2 + (((y0 + y1) / 2) * scale) / kUmPerMm,
+        };
+    }
+
+    to_world_(sx, sy) {
+        const v = this.view_;
+        return { x: ((sx - v.ox) / v.scale) * kUmPerMm, y: ((v.oy - sy) / v.scale) * kUmPerMm };
+    }
+
+    trace_(paths) {
+        const v = this.view_;
+        const path = new Path2D();
+        for (const p of paths) {
+            if (!p.length) continue;
+            path.moveTo(v.ox + (p[0].x / kUmPerMm) * v.scale, v.oy - (p[0].y / kUmPerMm) * v.scale);
+            for (let i = 1; i < p.length; i++) {
+                path.lineTo(v.ox + (p[i].x / kUmPerMm) * v.scale, v.oy - (p[i].y / kUmPerMm) * v.scale);
+            }
+            path.closePath();
+        }
+        return path;
+    }
+
+    click_(sx, sy) {
+        if (!this.data_ || !this.view_) return;
+        const p = this.to_world_(sx, sy);
+        const hit = this.data_.built.islands.find(i => point_in_path(p, i.outer));
+        if (hit) this.on_island_click_(hit);
+    }
+
+    draw_() {
+        const canvas = this.canvas_;
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        if (!w || !h) return;
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        const ctx = this.ctx_;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        if (!this.data_) return;
+        if (!this.view_) this.fit_();
+        const { built, colour, checks } = this.data_;
+        const css = getComputedStyle(document.documentElement);
+
+        ctx.fillStyle = colour;
+        ctx.fill(this.trace_(built.material), 'evenodd');
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.stroke(this.trace_(built.material));
+
+        ctx.fillStyle = 'rgba(180, 240, 60, 0.85)';
+        for (const b of built.bridges) ctx.fill(this.trace_(b.rect));
+
+        for (const island of built.islands) {
+            ctx.setLineDash(island.policy === 'bridge' ? [] : [5, 4]);
+            ctx.strokeStyle = kPolicyColour[island.policy];
+            ctx.lineWidth = 2;
+            ctx.stroke(this.trace_([island.outer]));
+        }
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = kPolicyColour.glue;
+        ctx.lineWidth = 1.5;
+        if (built.locators.length) ctx.stroke(this.trace_(built.locators));
+        ctx.setLineDash([]);
+
+        const v = this.view_;
+        for (const c of checks) {
+            const colour_var = c.severity === 'fatal' && !c.overridden ? '--bad' : '--warn';
+            ctx.strokeStyle = css.getPropertyValue(colour_var).trim();
+            ctx.lineWidth = 2;
+            for (const b of c.boxes) {
+                const pad = 3;
+                ctx.strokeRect(
+                    v.ox + b.x0 * v.scale - pad,
+                    v.oy - b.y1 * v.scale - pad,
+                    (b.x1 - b.x0) * v.scale + 2 * pad,
+                    (b.y1 - b.y0) * v.scale + 2 * pad,
+                );
+            }
+        }
+    }
+}
+return { LayerView };
 })();
 // src/ui/controls.js
 const __m_ui_controls_js = (function () {
@@ -85485,7 +86530,7 @@ const { step_body } = __m_ui_shell_js;
 
 
 
-const kSteps = ['piece', 'material', 'layers', 'pattern', 'light', 'make'];
+const kSteps = ['piece', 'material', 'layers', 'pattern', 'structure', 'light', 'make'];
 
 function visible(entry, design, layer, tier) {
     if (entry.tier === 'advanced' && tier !== 'advanced') return false;
@@ -85515,6 +86560,7 @@ class Panels {
         const parts = [tier, shown.join(',')];
         if (step === 'layers') parts.push(d.layers.length, k);
         if (step === 'pattern') parts.push(k, layer.source.motifs.map(m => m.type).join(','));
+        if (step === 'structure') parts.push(k);
         return parts.join('|');
     }
 
@@ -85536,9 +86582,8 @@ class Panels {
             body.append(strip.el);
             refreshers.push(strip.refresh);
         }
-        if (step === 'layers' || step === 'pattern') {
-            body.append(el('h3', { class: 'sub', text: step === 'layers' ? `Layer ${k + 1}` : 'Symmetry' }));
-        }
+        const heading = { layers: `Layer ${k + 1}`, pattern: 'Symmetry', structure: `Islands on layer ${k + 1}` }[step];
+        if (heading) body.append(el('h3', { class: 'sub', text: heading }));
 
         for (const entry of SCHEMA.filter(e => e.panel === step && visible(e, d, d.layers[k], tier))) {
             const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, d) } : entry;
@@ -85696,13 +86741,16 @@ return { build_header };
 const __m_ui_make_panel_js = (function () {
 const { el, save_bytes } = __m_ui_dom_js;
 const { set_status } = __m_ui_shell_js;
-// Fixed content of the Make step, after its registry controls (SPEC 11). M1 starts with the
-// calibration test card; sheets, checks and export follow.
+// Fixed content of the Make step, after its registry controls (SPEC 11): the check report, then
+// the calibration test card. Sheets and export follow in later slices.
 
 
 
-function build_make_extras(worker) {
+function build_make_extras(worker, checks_view) {
     return container => {
+        container.append(el('h3', { class: 'sub', text: 'Checks' }));
+        checks_view.attach(container);
+
         const button = el('button', { class: 'btn', type: 'button', text: 'Download calibration test card' });
         container.append(
             el('h3', { class: 'sub', text: 'Calibration' }),
@@ -85731,6 +86779,72 @@ function build_make_extras(worker) {
 }
 return { build_make_extras };
 })();
+// src/ui/checks_view.js
+const __m_ui_checks_view_js = (function () {
+const { el } = __m_ui_dom_js;
+// The check report in the Make step (SPEC 7): one row per finding, worst first. "Show" opens the
+// layer in the Layer view; a fatal finding can be allowed through, which is recorded in the design
+// and printed on the assembly sheet.
+
+
+const kOrder = { fatal: 0, warn: 1, info: 2 };
+
+function make_checks_view(app) {
+    const root = el('div', { class: 'checks', 'aria-live': 'polite' });
+    let latest = { results: [], pending: true };
+
+    function render() {
+        root.textContent = '';
+        const { results, pending } = latest;
+        if (pending && !results.length) {
+            root.append(el('p', { class: 'step-note', text: 'Checking...' }));
+            return;
+        }
+        if (!results.length) {
+            root.append(el('p', { class: 'step-note ok', text: 'All checks pass.' }));
+            return;
+        }
+        const sorted = [...results].sort((a, b) => kOrder[a.severity] - kOrder[b.severity] || a.layer - b.layer);
+        for (const r of sorted) {
+            const level = r.severity === 'fatal' && !r.overridden ? 'bad' : 'warn';
+            const row = el('div', { class: 'check-row' }, [
+                el('span', { class: 'light', 'data-level': level }),
+                el('span', { class: 'check-msg', text: `${r.id}  ${r.message}${r.overridden ? ' (allowed)' : ''}` }),
+            ]);
+            const actions = el('div', { class: 'check-actions' });
+            const show = el('button', { type: 'button', class: 'tool small', text: 'Show' });
+            show.addEventListener('click', () => app.show_layer(r.layer));
+            actions.append(show);
+            if (r.severity === 'fatal') {
+                const allow = el('button', {
+                    type: 'button',
+                    class: 'tool small',
+                    text: r.overridden ? 'Block' : 'Allow',
+                    title: r.overridden ? 'Block export again' : 'Export anyway; recorded on the assembly sheet',
+                });
+                allow.addEventListener('click', () => app.toggle_override(r.key));
+                actions.append(allow);
+            }
+            row.append(actions);
+            root.append(row);
+        }
+    }
+
+    render();
+    return {
+        el: root,
+        update(results, pending = false) {
+            latest = { results, pending };
+            render();
+        },
+        // Panels rebuild their content, so the report re-attaches to the new container.
+        attach(container) {
+            container.append(root);
+        },
+    };
+}
+return { make_checks_view };
+})();
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
@@ -85739,14 +86853,20 @@ const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { write_param } = __m_core_actions_js;
 const { unpack_paths } = __m_geom_pack_js;
+const { check_level } = __m_core_check_level_js;
+const { LayerView } = __m_preview_layer_view_js;
 const { Panels } = __m_ui_panels_js;
 const { build_header } = __m_ui_header_js;
 const { build_make_extras } = __m_ui_make_panel_js;
+const { make_checks_view } = __m_ui_checks_view_js;
 const { set_status } = __m_ui_shell_js;
 const { save_bytes } = __m_ui_dom_js;
 // App controller: the design store, UI state, header and panels, the geometry worker and the
-// preview. Every edit goes through the store (one undo step per action or slider drag); every new
-// design is rebuilt in the worker, latest wins, and shown in the preview.
+// views. Every edit goes through the store (one undo step per action or slider drag). Every new
+// design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
+
+
+
 
 
 
@@ -85761,6 +86881,8 @@ const { save_bytes } = __m_ui_dom_js;
 
 const kDesignKey = 'lamina-design';
 const kTierKey = 'lamina-tier';
+const kCheckDelayMs = 350;
+const kPolicies = ['bridge', 'glue', 'drop'];
 
 function storage_get(key) {
     try {
@@ -85808,53 +86930,79 @@ function new_motif(type, design, layer) {
 }
 
 const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function make_builder(worker, preview) {
-    let busy = false;
-    let pending = null;
-    async function run(design) {
-        busy = true;
-        try {
-            const t0 = performance.now();
-            const result = await worker.call('build', design);
-            const layers = result.layers.map(l => ({ ...l, material: unpack_paths(l.packed) }));
-            const t1 = performance.now();
-            preview.show(design, layers);
-            const t2 = performance.now();
-            set_status(
-                'ok',
-                `${design.name}: ${layers.length} layers. Geometry ${result.ms.toFixed(0)} ms, ` +
-                    `round trip ${(t1 - t0).toFixed(0)} ms, preview ${(t2 - t1).toFixed(0)} ms.`,
-            );
-        } catch (err) {
-            set_status('bad', `Build failed: ${err.message}`);
-        }
-        busy = false;
-        if (pending) {
-            const next = pending;
-            pending = null;
-            run(next);
-        }
-    }
-    return design => {
-        if (busy) pending = design;
-        else run(design);
+function unpack_layer(l) {
+    return {
+        ...l,
+        material: unpack_paths(l.packed),
+        islands: l.islands.map(i => ({ ...i, outer: unpack_paths(i.outer)[0] })),
+        bridges: l.bridges.map(b => ({ ...b, rect: unpack_paths(b.rect)[0] })),
+        parts: l.parts.map(unpack_paths),
+        locators: unpack_paths(l.locators),
     };
 }
 
-function start_app({ worker, preview }) {
+function status_line(design, built, checks, pending) {
+    const cut_m = built.layers.reduce((s, l) => s + l.cut_length_mm, 0) / 1000;
+    const fatal = checks.filter(c => c.severity === 'fatal' && !c.overridden).length;
+    const warn = checks.filter(c => c.severity === 'warn' || c.overridden).length;
+    let verdict;
+    if (fatal) verdict = `${plural(fatal, 'problem')} to fix` + (warn ? `, ${plural(warn, 'warning')}` : '');
+    else if (warn) verdict = plural(warn, 'warning');
+    else verdict = pending ? 'checking' : 'all checks pass';
+    return `${design.name}: ${plural(design.layers.length, 'layer')}, ${cut_m.toFixed(1)} m of cutting. ` +
+        `${verdict[0].toUpperCase()}${verdict.slice(1)}. Geometry ${built.ms.toFixed(0)} ms.`;
+}
+
+function start_app({ worker, preview, stage }) {
     const store = new Store(restore_design() ?? preset_by_id('orb'));
-    const ui = { layer: 0, tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic', locks: new Set() };
+    const ui = {
+        layer: 0,
+        view: '3d',
+        tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic',
+        locks: new Set(),
+    };
+    const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
     let header;
+    let layer_view;
+    let checks_view;
 
-    const render_ui = () => {
+    const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
+    const current = d => d.layers[ui.layer];
+
+    function render_layer_view() {
+        if (!state.built) return;
+        const d = state.built_for;
+        const k = Math.min(ui.layer, state.built.layers.length - 1);
+        const o = d.piece.outline;
+        layer_view.show({
+            key: `${o.kind}|${o.w_mm}|${o.h_mm}|${k}`,
+            colour: d.layers[k].finish.colour,
+            built: state.built.layers[k],
+            checks: (state.checks_for === d ? state.checks : state.built.checks).filter(c => c.layer === k),
+        });
+    }
+
+    function render_status() {
+        if (!state.built) return;
+        const fresh = state.checks_for === state.built_for;
+        const checks = fresh ? state.checks : state.built.checks;
+        const level = check_level(checks);
+        set_status(level === 'ok' && !fresh ? 'busy' : level, status_line(state.built_for, state.built, checks, !fresh));
+        checks_view.update(checks, !fresh);
+    }
+
+    function render_ui() {
         ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
         panels.render();
         header.refresh();
-    };
-    const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
-    const current = d => d.layers[ui.layer];
+        for (const tab of document.querySelectorAll('#tabs .tab')) {
+            tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
+        }
+        render_layer_view();
+    }
 
     const app = {
         store,
@@ -85884,6 +87032,34 @@ function start_app({ worker, preview }) {
         select_layer(k) {
             ui.layer = k;
             render_ui();
+        },
+        show_layer(k) {
+            ui.layer = k;
+            app.set_view('layer');
+        },
+        set_view(view) {
+            ui.view = view;
+            preview.set_visible(view === '3d');
+            layer_view.set_visible(view === 'layer');
+            render_ui();
+        },
+        cycle_island(island) {
+            const k = ui.layer;
+            const next = kPolicies[(kPolicies.indexOf(island.policy) + 1) % kPolicies.length];
+            edit(d => {
+                const islands = d.layers[k].overrides.islands;
+                if (next === (d.layers[k].island_policy ?? 'bridge')) delete islands[island.id];
+                else islands[island.id] = next;
+            });
+            set_status('busy', `Island set to ${next}.`);
+        },
+        toggle_override(key) {
+            edit(d => {
+                const list = d.check_overrides;
+                const at = list.indexOf(key);
+                if (at >= 0) list.splice(at, 1);
+                else list.push(key);
+            });
         },
         toggle_lock(id) {
             if (ui.locks.has(id)) ui.locks.delete(id);
@@ -85918,10 +87094,59 @@ function start_app({ worker, preview }) {
                 .catch(err => set_status('bad', `Could not open ${file.name}: ${err.message}`));
         },
     };
-
-    panels = new Panels(app, { make: build_make_extras(worker) });
+    checks_view = make_checks_view(app);
+    layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
+    panels = new Panels(app, { make: build_make_extras(worker, checks_view) });
     header = build_header(app);
-    const build = make_builder(worker, preview);
+    for (const tab of document.querySelectorAll('#tabs .tab')) {
+        tab.addEventListener('click', () => {
+            if (!tab.disabled) app.set_view(tab.dataset.view);
+        });
+    }
+
+    // Builds run latest-wins; the slow checks follow once edits pause.
+    let busy = false;
+    let queued = null;
+    let check_timer = null;
+    async function build(design) {
+        if (busy) {
+            queued = design;
+            return;
+        }
+        busy = true;
+        try {
+            const result = await worker.call('build', design);
+            state.built = { ...result, layers: result.layers.map(unpack_layer) };
+            state.built_for = design;
+            preview.show(design, state.built.layers);
+            render_layer_view();
+            render_status();
+            clearTimeout(check_timer);
+            check_timer = setTimeout(() => run_checks(design), kCheckDelayMs);
+        } catch (err) {
+            set_status('bad', `Build failed: ${err.message}`);
+        }
+        busy = false;
+        if (queued) {
+            const next = queued;
+            queued = null;
+            build(next);
+        }
+    }
+    async function run_checks(design) {
+        if (design !== store.design) return;
+        try {
+            const result = await worker.call('check', design);
+            if (design !== store.design || design !== state.built_for) return;
+            state.checks = result.checks;
+            state.checks_for = design;
+            render_status();
+            render_layer_view();
+        } catch (err) {
+            set_status('bad', `Checks failed: ${err.message}`);
+        }
+    }
+
     let save_timer = null;
     store.subscribe(design => {
         render_ui();
@@ -85972,9 +87197,9 @@ function boot() {
         preview = new StackPreview(document.getElementById('stage'));
     } catch {
         show_stage_message('The 3D preview needs WebGL, which this browser could not start.');
-        preview = { show() {} };
+        preview = { show() {}, set_visible() {} };
     }
-    start_app({ worker, preview });
+    start_app({ worker, preview, stage: document.getElementById('stage') });
 }
 
 boot();

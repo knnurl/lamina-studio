@@ -1,20 +1,25 @@
 // App controller: the design store, UI state, header and panels, the geometry worker and the
-// preview. Every edit goes through the store (one undo step per action or slider drag); every new
-// design is rebuilt in the worker, latest wins, and shown in the preview.
+// views. Every edit goes through the store (one undo step per action or slider drag). Every new
+// design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
 import { Store } from '../core/store.js';
 import { migrate, piece_radius_mm } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { write_param } from '../core/actions.js';
 import { unpack_paths } from '../geom/pack.js';
+import { check_level } from '../core/check_level.js';
+import { LayerView } from '../preview/layer_view.js';
 import { Panels } from './panels.js';
 import { build_header } from './header.js';
 import { build_make_extras } from './make_panel.js';
+import { make_checks_view } from './checks_view.js';
 import { set_status } from './shell.js';
 import { save_bytes } from './dom.js';
 
 const kDesignKey = 'lamina-design';
 const kTierKey = 'lamina-tier';
+const kCheckDelayMs = 350;
+const kPolicies = ['bridge', 'glue', 'drop'];
 
 function storage_get(key) {
     try {
@@ -62,53 +67,79 @@ function new_motif(type, design, layer) {
 }
 
 const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function make_builder(worker, preview) {
-    let busy = false;
-    let pending = null;
-    async function run(design) {
-        busy = true;
-        try {
-            const t0 = performance.now();
-            const result = await worker.call('build', design);
-            const layers = result.layers.map(l => ({ ...l, material: unpack_paths(l.packed) }));
-            const t1 = performance.now();
-            preview.show(design, layers);
-            const t2 = performance.now();
-            set_status(
-                'ok',
-                `${design.name}: ${layers.length} layers. Geometry ${result.ms.toFixed(0)} ms, ` +
-                    `round trip ${(t1 - t0).toFixed(0)} ms, preview ${(t2 - t1).toFixed(0)} ms.`,
-            );
-        } catch (err) {
-            set_status('bad', `Build failed: ${err.message}`);
-        }
-        busy = false;
-        if (pending) {
-            const next = pending;
-            pending = null;
-            run(next);
-        }
-    }
-    return design => {
-        if (busy) pending = design;
-        else run(design);
+function unpack_layer(l) {
+    return {
+        ...l,
+        material: unpack_paths(l.packed),
+        islands: l.islands.map(i => ({ ...i, outer: unpack_paths(i.outer)[0] })),
+        bridges: l.bridges.map(b => ({ ...b, rect: unpack_paths(b.rect)[0] })),
+        parts: l.parts.map(unpack_paths),
+        locators: unpack_paths(l.locators),
     };
 }
 
-export function start_app({ worker, preview }) {
+function status_line(design, built, checks, pending) {
+    const cut_m = built.layers.reduce((s, l) => s + l.cut_length_mm, 0) / 1000;
+    const fatal = checks.filter(c => c.severity === 'fatal' && !c.overridden).length;
+    const warn = checks.filter(c => c.severity === 'warn' || c.overridden).length;
+    let verdict;
+    if (fatal) verdict = `${plural(fatal, 'problem')} to fix` + (warn ? `, ${plural(warn, 'warning')}` : '');
+    else if (warn) verdict = plural(warn, 'warning');
+    else verdict = pending ? 'checking' : 'all checks pass';
+    return `${design.name}: ${plural(design.layers.length, 'layer')}, ${cut_m.toFixed(1)} m of cutting. ` +
+        `${verdict[0].toUpperCase()}${verdict.slice(1)}. Geometry ${built.ms.toFixed(0)} ms.`;
+}
+
+export function start_app({ worker, preview, stage }) {
     const store = new Store(restore_design() ?? preset_by_id('orb'));
-    const ui = { layer: 0, tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic', locks: new Set() };
+    const ui = {
+        layer: 0,
+        view: '3d',
+        tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic',
+        locks: new Set(),
+    };
+    const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
     let header;
+    let layer_view;
+    let checks_view;
 
-    const render_ui = () => {
+    const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
+    const current = d => d.layers[ui.layer];
+
+    function render_layer_view() {
+        if (!state.built) return;
+        const d = state.built_for;
+        const k = Math.min(ui.layer, state.built.layers.length - 1);
+        const o = d.piece.outline;
+        layer_view.show({
+            key: `${o.kind}|${o.w_mm}|${o.h_mm}|${k}`,
+            colour: d.layers[k].finish.colour,
+            built: state.built.layers[k],
+            checks: (state.checks_for === d ? state.checks : state.built.checks).filter(c => c.layer === k),
+        });
+    }
+
+    function render_status() {
+        if (!state.built) return;
+        const fresh = state.checks_for === state.built_for;
+        const checks = fresh ? state.checks : state.built.checks;
+        const level = check_level(checks);
+        set_status(level === 'ok' && !fresh ? 'busy' : level, status_line(state.built_for, state.built, checks, !fresh));
+        checks_view.update(checks, !fresh);
+    }
+
+    function render_ui() {
         ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
         panels.render();
         header.refresh();
-    };
-    const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
-    const current = d => d.layers[ui.layer];
+        for (const tab of document.querySelectorAll('#tabs .tab')) {
+            tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
+        }
+        render_layer_view();
+    }
 
     const app = {
         store,
@@ -138,6 +169,34 @@ export function start_app({ worker, preview }) {
         select_layer(k) {
             ui.layer = k;
             render_ui();
+        },
+        show_layer(k) {
+            ui.layer = k;
+            app.set_view('layer');
+        },
+        set_view(view) {
+            ui.view = view;
+            preview.set_visible(view === '3d');
+            layer_view.set_visible(view === 'layer');
+            render_ui();
+        },
+        cycle_island(island) {
+            const k = ui.layer;
+            const next = kPolicies[(kPolicies.indexOf(island.policy) + 1) % kPolicies.length];
+            edit(d => {
+                const islands = d.layers[k].overrides.islands;
+                if (next === (d.layers[k].island_policy ?? 'bridge')) delete islands[island.id];
+                else islands[island.id] = next;
+            });
+            set_status('busy', `Island set to ${next}.`);
+        },
+        toggle_override(key) {
+            edit(d => {
+                const list = d.check_overrides;
+                const at = list.indexOf(key);
+                if (at >= 0) list.splice(at, 1);
+                else list.push(key);
+            });
         },
         toggle_lock(id) {
             if (ui.locks.has(id)) ui.locks.delete(id);
@@ -172,10 +231,59 @@ export function start_app({ worker, preview }) {
                 .catch(err => set_status('bad', `Could not open ${file.name}: ${err.message}`));
         },
     };
-
-    panels = new Panels(app, { make: build_make_extras(worker) });
+    checks_view = make_checks_view(app);
+    layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
+    panels = new Panels(app, { make: build_make_extras(worker, checks_view) });
     header = build_header(app);
-    const build = make_builder(worker, preview);
+    for (const tab of document.querySelectorAll('#tabs .tab')) {
+        tab.addEventListener('click', () => {
+            if (!tab.disabled) app.set_view(tab.dataset.view);
+        });
+    }
+
+    // Builds run latest-wins; the slow checks follow once edits pause.
+    let busy = false;
+    let queued = null;
+    let check_timer = null;
+    async function build(design) {
+        if (busy) {
+            queued = design;
+            return;
+        }
+        busy = true;
+        try {
+            const result = await worker.call('build', design);
+            state.built = { ...result, layers: result.layers.map(unpack_layer) };
+            state.built_for = design;
+            preview.show(design, state.built.layers);
+            render_layer_view();
+            render_status();
+            clearTimeout(check_timer);
+            check_timer = setTimeout(() => run_checks(design), kCheckDelayMs);
+        } catch (err) {
+            set_status('bad', `Build failed: ${err.message}`);
+        }
+        busy = false;
+        if (queued) {
+            const next = queued;
+            queued = null;
+            build(next);
+        }
+    }
+    async function run_checks(design) {
+        if (design !== store.design) return;
+        try {
+            const result = await worker.call('check', design);
+            if (design !== store.design || design !== state.built_for) return;
+            state.checks = result.checks;
+            state.checks_for = design;
+            render_status();
+            render_layer_view();
+        } catch (err) {
+            set_status('bad', `Checks failed: ${err.message}`);
+        }
+    }
+
     let save_timer = null;
     store.subscribe(design => {
         render_ui();

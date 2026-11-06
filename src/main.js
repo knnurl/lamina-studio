@@ -17,9 +17,9 @@ function boot() {
         preview = new StackPreview(document.getElementById('stage'));
     } catch {
         show_stage_message('The 3D preview needs WebGL, which this browser could not start.');
-        preview = { show() {} };
+        preview = { show() {}, set_visible() {} };
     }
-    start_app({ worker, preview });
+    start_app({ worker, preview, stage: document.getElementById('stage') });
 }
 
 boot();

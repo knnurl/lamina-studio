@@ -7,7 +7,7 @@ import { make_control } from './controls.js';
 import { el } from './dom.js';
 import { step_body } from './shell.js';
 
-const kSteps = ['piece', 'material', 'layers', 'pattern', 'light', 'make'];
+const kSteps = ['piece', 'material', 'layers', 'pattern', 'structure', 'light', 'make'];
 
 function visible(entry, design, layer, tier) {
     if (entry.tier === 'advanced' && tier !== 'advanced') return false;
@@ -37,6 +37,7 @@ export class Panels {
         const parts = [tier, shown.join(',')];
         if (step === 'layers') parts.push(d.layers.length, k);
         if (step === 'pattern') parts.push(k, layer.source.motifs.map(m => m.type).join(','));
+        if (step === 'structure') parts.push(k);
         return parts.join('|');
     }
 
@@ -58,9 +59,8 @@ export class Panels {
             body.append(strip.el);
             refreshers.push(strip.refresh);
         }
-        if (step === 'layers' || step === 'pattern') {
-            body.append(el('h3', { class: 'sub', text: step === 'layers' ? `Layer ${k + 1}` : 'Symmetry' }));
-        }
+        const heading = { layers: `Layer ${k + 1}`, pattern: 'Symmetry', structure: `Islands on layer ${k + 1}` }[step];
+        if (heading) body.append(el('h3', { class: 'sub', text: heading }));
 
         for (const entry of SCHEMA.filter(e => e.panel === step && visible(e, d, d.layers[k], tier))) {
             const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, d) } : entry;

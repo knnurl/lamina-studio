@@ -122,6 +122,12 @@ export class StackPreview {
         this.renderer_.render(this.scene_, this.camera_);
     }
 
+    // three.js sets an inline display on its canvas, which beats the [hidden] attribute.
+    set_visible(on) {
+        this.renderer_.domElement.style.display = on ? 'block' : 'none';
+        if (on) this.resize_();
+    }
+
     frame_(radius_mm, depth_mm) {
         const fov = MathUtils.degToRad(this.camera_.fov);
         const distance = (radius_mm / Math.sin(fov / 2)) * 1.08;

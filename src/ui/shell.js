@@ -15,7 +15,7 @@ const kSteps = [
 const kTabs = [
     { id: '3d', label: '3D', ready: true },
     { id: '2d', label: '2D', ready: false },
-    { id: 'layer', label: 'Layer', ready: false },
+    { id: 'layer', label: 'Layer', ready: true },
     { id: 'sheets', label: 'Sheets', ready: false },
 ];
 
