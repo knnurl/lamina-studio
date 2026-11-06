@@ -64,6 +64,7 @@ button { font: inherit; color: inherit; }
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 14px;
     padding: 10px 16px;
     background: var(--panel);
@@ -137,6 +138,119 @@ button { font: inherit; color: inherit; }
 }
 
 .step-note { margin: 0 0 10px; }
+.step-body { display: grid; gap: 10px; }
+.step-body .sub {
+    margin: 6px 0 0;
+    font: 600 12px/1.2 "Chakra Petch", system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--violet);
+}
+
+/* Controls generated from the registry */
+.ctl { display: grid; gap: 4px; color: var(--ink); }
+.ctl-head { display: flex; align-items: center; gap: 6px; }
+.ctl-head label { flex: 1; font-size: 13px; color: var(--ink); }
+.ctl-num {
+    width: 72px;
+    text-align: right;
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 13px;
+}
+.ctl-unit { width: 26px; font-size: 12px; color: var(--ink-2); }
+.ctl input[type="range"] { width: 100%; accent-color: var(--acid); margin: 0; }
+.ctl select, .add-row select, .tool-select {
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font: inherit;
+    font-size: 13px;
+}
+.ctl input[type="color"] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--rule); border-radius: 6px; background: none; }
+.ctl-toggle .ctl-head { gap: 8px; }
+.ctl-toggle input { accent-color: var(--acid); }
+.lock {
+    background: none;
+    border: 0;
+    padding: 0 2px;
+    cursor: pointer;
+    font-size: 13px;
+    filter: grayscale(1);
+    opacity: 0.55;
+}
+.lock[aria-pressed="true"] { filter: none; opacity: 1; }
+
+.layer-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.layer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px 3px 4px;
+    background: var(--field);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--ink-2);
+}
+.layer-chip .swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--rule); }
+.layer-chip[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
+
+.motif {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--panel-2);
+}
+.motif-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; color: var(--ink); }
+.icon-btn.small { width: 24px; height: 24px; font-size: 16px; line-height: 1; }
+.add-row { display: flex; gap: 8px; }
+.add-row select { flex: 1; }
+.btn.ghost {
+    background: none;
+    color: var(--acid);
+    border: 1px solid var(--acid);
+    box-shadow: none;
+}
+
+/* Header tools */
+.tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tool {
+    background: none;
+    color: var(--ink-2);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.tool:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
+.tool:disabled { opacity: 0.35; cursor: default; }
+.seed-group { display: inline-flex; align-items: center; gap: 4px; }
+.seed {
+    width: 84px;
+    text-align: center;
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 5px 6px;
+    font: inherit;
+    font-size: 14px;
+}
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.seg-btn { background: none; border: 0; padding: 5px 12px; cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--rule); }
+.seg-btn[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); }
 .btn {
     background: var(--acid);
     color: var(--on-acid);

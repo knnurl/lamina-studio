@@ -1,6 +1,7 @@
-// 3D stack preview (SPEC 10). M0 scope: extrude each layer's paths at its thickness, stack them
-// front (index 0, nearest the viewer, highest z) to back with a gap, orbit and tilt with
-// OrbitControls, and render on demand. Lighting modes, materials and the exploded view are M1.
+// 3D stack preview (SPEC 10). Extrudes each layer's paths at its thickness, stacks them front
+// (index 0, nearest the viewer, highest z) to back with their gaps, orbit and tilt with
+// OrbitControls, and renders on demand. Lighting modes, material looks and the exploded view
+// arrive in the previews slice.
 // Assumptions: paths in micrometres, outer boundaries have positive area and holes negative.
 import {
     WebGLRenderer,
@@ -19,9 +20,7 @@ import {
 } from '../vendor/three/three.module.js';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { kUmPerMm } from '../core/units.js';
-
-// Stone front, then the orb references' red and blue, ending dark at the back.
-const kDemoFinishes = ['#a3a6ad', '#ff5b2e', '#3a8ee6', '#ffb340', '#7a4fe0', '#1a1424'];
+import { layer_thickness_mm } from '../core/design.js';
 
 function signed_area(path) {
     let a = 0;
@@ -87,32 +86,35 @@ export class StackPreview {
         this.resize_();
     }
 
-    // layers: [{paths}] front first. Thickness and gap are uniform in M0.
-    set_layers(layers, { thickness_mm = 3, gap_mm = 3 } = {}) {
+    // built: [{ material: paths }] front first, as the worker returned them for design. Each layer
+    // is extruded at its real thickness; the back layer sits at z = 0 and each layer in front sits
+    // on the one behind plus its gap. The camera is reframed only when the piece's size changes.
+    show(design, built) {
         for (const mesh of this.stack_.children) {
             mesh.geometry.dispose();
             mesh.material.dispose();
         }
         this.stack_.clear();
-        const pitch_mm = thickness_mm + gap_mm;
+        let z = 0;
         let radius_mm = 1;
-        layers.forEach((layer, k) => {
-            const geometry = new ExtrudeGeometry(to_shapes(layer.paths), {
-                depth: thickness_mm,
-                bevelEnabled: false,
-            });
+        for (let k = built.length - 1; k >= 0; k--) {
+            const layer = design.layers[k];
+            const thickness_mm = layer_thickness_mm(design, layer);
+            const geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
             geometry.computeBoundingSphere();
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
-            const material = new MeshStandardMaterial({
-                color: kDemoFinishes[k % kDemoFinishes.length],
-                roughness: 0.8,
-                metalness: 0.0,
-            });
+            const material = new MeshStandardMaterial({ color: layer.finish.colour, roughness: 0.8, metalness: 0 });
             const mesh = new Mesh(geometry, material);
-            mesh.position.z = (layers.length - 1 - k) * pitch_mm;
+            mesh.position.z = z;
             this.stack_.add(mesh);
-        });
-        this.frame_(radius_mm, layers.length * pitch_mm);
+            z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
+        }
+        const o = design.piece.outline;
+        const frame_key = `${o.kind}|${o.w_mm}|${o.h_mm}|${built.length}`;
+        if (frame_key !== this.frame_key_) {
+            this.frame_key_ = frame_key;
+            this.frame_(radius_mm, z);
+        }
         this.render();
     }
 

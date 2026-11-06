@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { build_html } from '../tools/build.js';
+import { preset_by_id } from '../src/core/presets.js';
 
 const built = build_html();
 
@@ -29,8 +30,8 @@ function start_worker_bundle() {
     // structuredClone, as postMessage does; it also re-creates the vm realm's objects in this realm,
     // so strict deep equality works.
     const self = { postMessage: msg => replies.push(structuredClone(msg)) };
-    // A worker global has TextEncoder; a bare vm context does not.
-    vm.runInContext(built.worker.code, vm.createContext({ self, TextEncoder }));
+    // A worker global has TextEncoder and performance; a bare vm context does not.
+    vm.runInContext(built.worker.code, vm.createContext({ self, TextEncoder, performance }));
     return {
         call: (type, payload) => {
             self.onmessage({ data: { id: replies.length + 1, type, payload } });
@@ -39,19 +40,22 @@ function start_worker_bundle() {
     };
 }
 
-test('the worker bundle answers ping and builds the boot stack', () => {
+test('the worker bundle answers ping and builds a preset design', () => {
     const worker = start_worker_bundle();
     assert.deepEqual(worker.call('ping'), { id: 1, ok: true, result: { pong: true } });
 
-    const reply = worker.call('boot_demo', { layers: 6, radius_mm: 150 });
-    assert.equal(reply.ok, true);
+    const design = preset_by_id('orb');
+    const reply = worker.call('build', design);
+    assert.equal(reply.ok, true, reply.error);
     const layers = reply.result.layers;
-    assert.equal(layers.length, 6);
-    const full_disc_mm2 = Math.PI * 150 * 150;
-    // Front layers are the most open; the back layer is a solid disc, flattened at 0.02 mm, which
-    // loses about 1.8e-4 of the true circle's area.
-    for (let k = 1; k < layers.length; k++) assert.ok(layers[k].area_mm2 > layers[k - 1].area_mm2);
-    assert.ok(Math.abs(layers.at(-1).area_mm2 - full_disc_mm2) / full_disc_mm2 < 2.5e-4);
+    assert.equal(layers.length, design.layers.length);
+    for (const layer of layers) {
+        assert.ok(layer.packed.xy instanceof Int32Array && layer.packed.starts instanceof Uint32Array);
+    }
+    // The back layer is solid: a whole 290 mm disc, flattened at 0.02 mm (about 1.8e-4 short).
+    const disc_mm2 = Math.PI * 145 * 145;
+    assert.ok(Math.abs(layers.at(-1).area_mm2 - disc_mm2) / disc_mm2 < 2.5e-4);
+    assert.ok(layers[0].open_fraction > 0.05, 'the front layer has openings');
 });
 
 test('the worker bundle builds the test card zip', () => {

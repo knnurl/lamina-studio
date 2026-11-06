@@ -75,6 +75,7 @@ button { font: inherit; color: inherit; }
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 14px;
     padding: 10px 16px;
     background: var(--panel);
@@ -148,6 +149,119 @@ button { font: inherit; color: inherit; }
 }
 
 .step-note { margin: 0 0 10px; }
+.step-body { display: grid; gap: 10px; }
+.step-body .sub {
+    margin: 6px 0 0;
+    font: 600 12px/1.2 "Chakra Petch", system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--violet);
+}
+
+/* Controls generated from the registry */
+.ctl { display: grid; gap: 4px; color: var(--ink); }
+.ctl-head { display: flex; align-items: center; gap: 6px; }
+.ctl-head label { flex: 1; font-size: 13px; color: var(--ink); }
+.ctl-num {
+    width: 72px;
+    text-align: right;
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 13px;
+}
+.ctl-unit { width: 26px; font-size: 12px; color: var(--ink-2); }
+.ctl input[type="range"] { width: 100%; accent-color: var(--acid); margin: 0; }
+.ctl select, .add-row select, .tool-select {
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font: inherit;
+    font-size: 13px;
+}
+.ctl input[type="color"] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--rule); border-radius: 6px; background: none; }
+.ctl-toggle .ctl-head { gap: 8px; }
+.ctl-toggle input { accent-color: var(--acid); }
+.lock {
+    background: none;
+    border: 0;
+    padding: 0 2px;
+    cursor: pointer;
+    font-size: 13px;
+    filter: grayscale(1);
+    opacity: 0.55;
+}
+.lock[aria-pressed="true"] { filter: none; opacity: 1; }
+
+.layer-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.layer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px 3px 4px;
+    background: var(--field);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--ink-2);
+}
+.layer-chip .swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--rule); }
+.layer-chip[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
+
+.motif {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--panel-2);
+}
+.motif-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; color: var(--ink); }
+.icon-btn.small { width: 24px; height: 24px; font-size: 16px; line-height: 1; }
+.add-row { display: flex; gap: 8px; }
+.add-row select { flex: 1; }
+.btn.ghost {
+    background: none;
+    color: var(--acid);
+    border: 1px solid var(--acid);
+    box-shadow: none;
+}
+
+/* Header tools */
+.tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tool {
+    background: none;
+    color: var(--ink-2);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.tool:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
+.tool:disabled { opacity: 0.35; cursor: default; }
+.seed-group { display: inline-flex; align-items: center; gap: 4px; }
+.seed {
+    width: 84px;
+    text-align: center;
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 5px 6px;
+    font: inherit;
+    font-size: 14px;
+}
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.seg-btn { background: none; border: 0; padding: 5px 12px; cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--rule); }
+.seg-btn[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); }
 .btn {
     background: var(--acid);
     color: var(--on-acid);
@@ -246,7 +360,9 @@ button { font: inherit; color: inherit; }
   <header class="top">
     <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
     <span class="chip" title="Current milestone">M1 in progress</span>
+    <div class="tools" id="tools-left"></div>
     <div class="spacer"></div>
+    <div class="tools" id="tools-right"></div>
     <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
     </button>
@@ -261,7 +377,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 10 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 15 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -289,7 +405,7 @@ return { kUmPerMm, mm_to_um };
 })();
 // src/geom/clip.js
 const __m_geom_clip_js = (function () {
-const { union, difference, inflatePaths, area, areaPaths, getBoundsPaths, FillRule, JoinType, EndType } = __m_vendor_clipper2_clipper2_min_mjs;
+const { union, difference, intersect, inflatePaths, area, areaPaths, getBoundsPaths, FillRule, JoinType, EndType } = __m_vendor_clipper2_clipper2_min_mjs;
 const { kUmPerMm } = __m_core_units_js;
 // Geometry core over Clipper2 (SPEC 6.1). Paths are arrays of {x, y} in integer micrometres
 // (Clipper2 Path64), closed, outer boundaries positive (counter-clockwise, y up) and holes negative.
@@ -367,6 +483,10 @@ function subtract(subject, clip) {
     return difference(subject, clip, FillRule.NonZero);
 }
 
+function intersect_paths(subject, clip) {
+    return intersect(subject, clip, FillRule.NonZero);
+}
+
 const kJoin = { round: JoinType.Round, miter: JoinType.Miter, square: JoinType.Square };
 
 // Grows (delta_um > 0) or shrinks closed regions. Holes move the opposite way, so +kerf/2 on a
@@ -389,45 +509,602 @@ function bounds_mm(paths) {
         y1: b.bottom / kUmPerMm,
     };
 }
-return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, subtract, offset, area_mm2, bounds_mm };
+return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, subtract, intersect_paths, offset, area_mm2, bounds_mm };
 })();
-// src/dev/boot_demo.js
-const __m_dev_boot_demo_js = (function () {
-const { circle_path, regular_polygon_path, subtract, union_all, area_mm2 } = __m_geom_clip_js;
+// src/geom/outline.js
+const __m_geom_outline_js = (function () {
+const { circle_path, rounded_rect_path, regular_polygon_path, circle_segments } = __m_geom_clip_js;
 const { mm_to_um } = __m_core_units_js;
-// M0 boot self-test: a small round stack with rotating diamond windows, built with Clipper2 in
-// the worker, so the shell proves the vendored geometry core and the 3D preview end to end.
-// Not the layer pipeline: M1 replaces it. Front layer (index 0) is the most open, the back solid.
+// Piece outlines (SPEC 4.1), centred on the origin, which is also the symmetry centre. For an arch
+// the origin is the centre of its round top, so radial patterns sit in the arch like a halo.
+// Returns paths in micrometres, counter-clockwise.
 
 
 
-function boot_demo({ layers = 6, radius_mm = 150 } = {}) {
-    const out = [];
-    for (let k = 0; k < layers; k++) {
-        const outer = [circle_path(0, 0, mm_to_um(radius_mm))];
-        const depth = k / (layers - 1);
-        const windows = [];
-        if (k < layers - 1) {
-            windows.push(circle_path(0, 0, mm_to_um(radius_mm * (0.3 - 0.22 * depth))));
-            const rings = [0.5, 0.72];
-            rings.forEach((ring, j) => {
-                const n = (k + j) % 2 ? 16 : 8;
-                const r_mm = radius_mm * ring;
-                const size_mm = radius_mm * (0.12 - 0.07 * depth) * (j ? 0.8 : 1);
-                for (let i = 0; i < n; i++) {
-                    const a = (2 * Math.PI * (i + 0.5 * (k % 2))) / n;
-                    const cx = mm_to_um(r_mm * Math.cos(a));
-                    const cy = mm_to_um(r_mm * Math.sin(a));
-                    windows.push(regular_polygon_path(cx, cy, mm_to_um(size_mm), 4, a));
-                }
-            });
-        }
-        const paths = windows.length ? subtract(outer, union_all(windows)) : outer;
-        out.push({ index: k, paths, area_mm2: area_mm2(paths) });
+function arch_path(w_um, h_um) {
+    const r = w_um / 2;
+    const bottom = -Math.max(h_um - r, 1000);
+    const steps = Math.max(2, Math.ceil(circle_segments(r) / 2));
+    const path = [
+        { x: -r, y: bottom },
+        { x: r, y: bottom },
+    ];
+    for (let i = 0; i <= steps; i++) {
+        const a = (Math.PI * i) / steps;
+        path.push({ x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) });
     }
-    return { layers: out };
+    return path;
 }
-return { boot_demo };
+
+function outline_paths(outline) {
+    const w = mm_to_um(outline.w_mm);
+    const h = mm_to_um(outline.h_mm);
+    switch (outline.kind) {
+        case 'circle':
+            return [circle_path(0, 0, w / 2)];
+        case 'rect': {
+            const r = Math.min(mm_to_um(outline.corner_r_mm ?? 0), w / 2, h / 2);
+            return [rounded_rect_path(-w / 2, -h / 2, w / 2, h / 2, r)];
+        }
+        case 'polygon': {
+            const n = Math.max(3, Math.round(outline.sides));
+            return [regular_polygon_path(0, 0, w / 2, n, -Math.PI / 2 + Math.PI / n)]; // flat bottom
+        }
+        case 'arch':
+            return [arch_path(w, h)];
+        default:
+            throw new Error(`unknown outline "${outline.kind}"`);
+    }
+}
+return { outline_paths };
+})();
+// src/geom/symmetry.js
+const __m_geom_symmetry_js = (function () {
+// Symmetry engine (SPEC 6.2 step 2): replicates paths around the piece centre (the origin).
+// Copies are made before any boolean union, so every copy is exact. A mirrored copy is reversed to
+// stay counter-clockwise: otherwise it would cancel its original under the non-zero fill rule
+// wherever they overlap.
+
+const rotation = a => [Math.cos(a), -Math.sin(a), Math.sin(a), Math.cos(a)];
+const kMirrorX = [1, 0, 0, -1]; // reflect across the x axis (y -> -y)
+const kMirrorY = [-1, 0, 0, 1]; // reflect across the y axis (x -> -x)
+
+function multiply(p, q) {
+    return [p[0] * q[0] + p[1] * q[2], p[0] * q[1] + p[1] * q[3], p[2] * q[0] + p[3] * q[2], p[2] * q[1] + p[3] * q[3]];
+}
+
+// Rotational order of a symmetry: the angle a motif's own copies ("copies per repeat") divide.
+function rotation_order(sym) {
+    return sym.kind === 'rot' || sym.kind === 'dihedral' ? Math.max(1, Math.round(sym.n)) : 1;
+}
+
+// The 2 x 2 matrices of the symmetry group, phase applied, identity first.
+function symmetry_matrices(sym) {
+    const n = rotation_order(sym);
+    const out = [];
+    switch (sym.kind) {
+        case 'rot':
+        case 'dihedral':
+            for (let k = 0; k < n; k++) out.push(rotation((2 * Math.PI * k) / n));
+            if (sym.kind === 'dihedral') {
+                for (let k = 0; k < n; k++) out.push(multiply(rotation((2 * Math.PI * k) / n), kMirrorX));
+            }
+            break;
+        case 'mirror_x':
+            out.push([1, 0, 0, 1], kMirrorY);
+            break;
+        case 'mirror_xy':
+            out.push([1, 0, 0, 1], kMirrorY, kMirrorX, [-1, 0, 0, -1]);
+            break;
+        case 'none':
+            out.push([1, 0, 0, 1]);
+            break;
+        default:
+            throw new Error(`unknown symmetry "${sym.kind}"`);
+    }
+    const phase = rotation(((sym.phase_deg ?? 0) * Math.PI) / 180);
+    return out.map(m => multiply(phase, m));
+}
+
+function transform_path(path, m) {
+    const out = path.map(p => ({
+        x: Math.round(m[0] * p.x + m[1] * p.y),
+        y: Math.round(m[2] * p.x + m[3] * p.y),
+    }));
+    return m[0] * m[3] - m[1] * m[2] < 0 ? out.reverse() : out;
+}
+
+function rotate_path(path, angle_rad) {
+    return transform_path(path, rotation(angle_rad));
+}
+
+function replicate(paths, sym) {
+    const out = [];
+    for (const m of symmetry_matrices(sym)) for (const path of paths) out.push(transform_path(path, m));
+    return out;
+}
+return { rotation_order, symmetry_matrices, transform_path, rotate_path, replicate };
+})();
+// src/core/schema.js
+const __m_core_schema_js = (function () {
+// Parameter registry (SPEC 11): every control is declared once here, and the UI is generated from it.
+// Entry fields:
+//   id        path under the scope's root ('outline.w_mm'), or a name when get/set are given
+//   scope     'design' (root), 'piece' (design.piece) or 'layer' (the selected layer)
+//   panel     sidebar step the control appears in (not 'step', which is a slider's increment)
+//   type      'range' | 'select' | 'colour' | 'toggle'
+//   tier      'basic' or 'advanced' (advanced controls show only in Advanced mode)
+//   options   for select: [[value, label], ...] or a function (design) -> that list
+//   show_if   optional (design, layer) -> bool
+//   get / set optional accessors (design, layer) -> value and (design, layer, value), for controls
+//             that are not a plain path
+//   randomisable, lockable: whether Randomise may change it, and whether it has a lock
+
+const kMotifTypes = {
+    disc: { label: 'Centre opening', params: ['d_mm'], replicated: false },
+    window: { label: 'Windows', params: ['r_mm', 'size_mm', 'sides', 'rot_deg', 'mult', 'angle_deg'], replicated: true },
+    petal: { label: 'Petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    ring: { label: 'Arc slots', params: ['r_mm', 'w_mm', 'tie_mm', 'mult', 'angle_deg'], replicated: true },
+    ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
+};
+
+// scales: the value is a length that follows the piece when it is resized. Structural widths
+// (ties) do not scale, because their minimum is set by the material, not the design.
+const kMotifParams = {
+    d_mm: { label: 'Diameter', min: 1, max: 1200, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    r_mm: { label: 'Radius', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    size_mm: { label: 'Size', min: 0.5, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    sides: { label: 'Sides (0 is round)', min: 0, max: 12, step: 1, unit: '', scales: false, tier: 'basic' },
+    rot_deg: { label: 'Turn', min: -180, max: 180, step: 1, unit: 'deg', scales: false, tier: 'advanced' },
+    length_mm: { label: 'Length', min: 1, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    width_mm: { label: 'Width', min: 0.5, max: 300, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    w_mm: { label: 'Width', min: 0.5, max: 300, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    tie_mm: { label: 'Tie width', min: 0, max: 60, step: 0.1, unit: 'mm', scales: false, tier: 'advanced' },
+    r0_mm: { label: 'Inner radius', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    r1_mm: { label: 'Outer radius', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    w0_mm: { label: 'Inner width', min: 0, max: 200, step: 0.5, unit: 'mm', scales: true, tier: 'advanced' },
+    w1_mm: { label: 'Outer width', min: 0, max: 200, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    mult: { label: 'Copies per repeat', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
+    angle_deg: { label: 'Offset', min: -180, max: 180, step: 0.5, unit: 'deg', scales: false, tier: 'basic' },
+};
+
+const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
+const sym_is = (...kinds) => d => kinds.includes(d.piece.symmetry.kind);
+
+const SCHEMA = [
+    {
+        id: 'outline.kind',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Outline',
+        type: 'select',
+        options: [
+            ['circle', 'Circle'],
+            ['rect', 'Rectangle'],
+            ['polygon', 'Polygon'],
+            ['arch', 'Arch'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'outline.w_mm',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Width',
+        type: 'range',
+        min: 50,
+        max: 1200,
+        step: 1,
+        unit: 'mm',
+        tier: 'basic',
+        desc: 'Diameter for circles and polygons. The pattern scales with it.',
+    },
+    {
+        id: 'outline.h_mm',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Height',
+        type: 'range',
+        min: 50,
+        max: 900,
+        step: 1,
+        unit: 'mm',
+        tier: 'basic',
+        show_if: kind_is('rect', 'arch'),
+    },
+    {
+        id: 'outline.sides',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Sides',
+        type: 'range',
+        min: 3,
+        max: 16,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        show_if: kind_is('polygon'),
+    },
+    {
+        id: 'outline.corner_r_mm',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Corner radius',
+        type: 'range',
+        min: 0,
+        max: 100,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'advanced',
+        show_if: kind_is('rect'),
+    },
+    {
+        id: 'layer_count',
+        scope: 'design',
+        panel: 'piece',
+        label: 'Layers',
+        type: 'range',
+        min: 1,
+        max: 40,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        get: d => d.layers.length,
+    },
+    {
+        id: 'symmetry.kind',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Symmetry',
+        type: 'select',
+        options: [
+            ['none', 'None'],
+            ['rot', 'Rotate'],
+            ['dihedral', 'Kaleidoscope'],
+            ['mirror_x', 'Mirror'],
+            ['mirror_xy', 'Mirror both ways'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'symmetry.n',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Repeats',
+        type: 'range',
+        min: 2,
+        max: 36,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        show_if: sym_is('rot', 'dihedral'),
+        randomisable: true,
+        lockable: true,
+    },
+    {
+        id: 'symmetry.phase_deg',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Turn the pattern',
+        type: 'range',
+        min: 0,
+        max: 360,
+        step: 0.5,
+        unit: 'deg',
+        tier: 'advanced',
+    },
+    {
+        id: 'palette',
+        scope: 'design',
+        panel: 'material',
+        label: 'Palette',
+        type: 'select',
+        tier: 'basic',
+        options: null, // filled from kPalettes by the UI, which imports design.js
+    },
+    {
+        id: 'all_material',
+        scope: 'design',
+        panel: 'material',
+        label: 'Material for every layer',
+        type: 'select',
+        tier: 'basic',
+        options: null, // filled from kMaterials by the UI
+        get: d => (d.layers.every(l => l.material === d.layers[0].material) ? d.layers[0].material : ''),
+    },
+    {
+        id: 'material',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Material',
+        type: 'select',
+        tier: 'advanced',
+        options: null,
+    },
+    {
+        id: 'finish.colour',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Colour',
+        type: 'colour',
+        tier: 'basic',
+    },
+    {
+        id: 'gap_mm',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Gap behind',
+        type: 'range',
+        min: 0,
+        max: 30,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'basic',
+        desc: '0 glues this layer to the next. Spacers are cut from the same sheets.',
+    },
+    {
+        id: 'frame_ring_mm',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Frame ring',
+        type: 'range',
+        min: 0,
+        max: 80,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'basic',
+        desc: 'Solid border that holds the pattern together.',
+    },
+    {
+        id: 'lighting.mode',
+        scope: 'piece',
+        panel: 'light',
+        label: 'Lighting',
+        type: 'select',
+        options: [
+            ['unlit', 'Unlit'],
+            ['backlit', 'Backlit'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'lighting.colour',
+        scope: 'piece',
+        panel: 'light',
+        label: 'Light colour',
+        type: 'colour',
+        tier: 'basic',
+        show_if: d => d.piece.lighting.mode === 'backlit',
+    },
+    {
+        id: 'sheet_size',
+        scope: 'design',
+        panel: 'make',
+        label: 'Stock sheet',
+        type: 'select',
+        tier: 'basic',
+        options: null, // filled from kSheetPresets by the UI
+        get: d => `${d.sheet.w_mm}x${d.sheet.h_mm}`,
+    },
+];
+
+function schema_entry(id) {
+    const entry = SCHEMA.find(e => e.id === id);
+    if (!entry) throw new Error(`no schema entry "${id}"`);
+    return entry;
+}
+
+function get_path(obj, path) {
+    return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+function set_path(obj, path, value) {
+    const keys = path.split('.');
+    const last = keys.pop();
+    const parent = keys.reduce((o, k) => o[k], obj);
+    parent[last] = value;
+}
+return { kMotifTypes, kMotifParams, SCHEMA, schema_entry, get_path, set_path };
+})();
+// src/sources/motifs.js
+const __m_sources_motifs_js = (function () {
+const { circle_path, regular_polygon_path, circle_segments, union_all } = __m_geom_clip_js;
+const { rotate_path, replicate, rotation_order } = __m_geom_symmetry_js;
+const { kMotifTypes } = __m_core_schema_js;
+const { mm_to_um } = __m_core_units_js;
+// Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
+// on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
+// engine fills the circle. Returns paths in micrometres, counter-clockwise.
+
+
+
+
+
+const kDeg = Math.PI / 180;
+
+function arc_points(cx, cy, r, a0, a1) {
+    const n = Math.max(1, Math.ceil((Math.abs(a1 - a0) / (2 * Math.PI)) * circle_segments(r)));
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+        const a = a0 + ((a1 - a0) * i) / n;
+        out.push({ x: Math.round(cx + r * Math.cos(a)), y: Math.round(cy + r * Math.sin(a)) });
+    }
+    return out;
+}
+
+function window_path(m) {
+    const r = mm_to_um(m.r_mm);
+    const half = mm_to_um(m.size_mm) / 2;
+    const sides = Math.round(m.sides);
+    if (sides < 3) return circle_path(r, 0, half);
+    return regular_polygon_path(r, 0, half, sides, (m.rot_deg ?? 0) * kDeg);
+}
+
+// A lens (vesica) pointing along the radius: two arcs meeting at tips length_mm apart.
+function petal_path(m) {
+    const cx = mm_to_um(m.r_mm);
+    const half_len = mm_to_um(m.length_mm) / 2;
+    const half_w = Math.min(mm_to_um(m.width_mm) / 2, half_len * 0.98);
+    const R = (half_len * half_len + half_w * half_w) / (2 * half_w);
+    const beta = Math.asin(half_len / R);
+    const top = arc_points(cx, -(R - half_w), R, Math.PI / 2 - beta, Math.PI / 2 + beta);
+    const bottom = arc_points(cx, R - half_w, R, -Math.PI / 2 - beta, -Math.PI / 2 + beta);
+    return [...top, ...bottom.slice(1, -1)];
+}
+
+// An annular sector between r - w/2 and r + w/2, filling its share of the wedge minus a tie.
+function ring_path(m, wedge_rad) {
+    const r = mm_to_um(m.r_mm);
+    const w = mm_to_um(m.w_mm);
+    const r_out = r + w / 2;
+    const r_in = Math.max(0, r - w / 2);
+    const tie_rad = r > 0 ? mm_to_um(m.tie_mm ?? 0) / r : 0;
+    const half = wedge_rad / 2 - tie_rad / 2;
+    if (half <= 0) return [];
+    if (half >= Math.PI - 1e-9) {
+        // A full annulus: outer circle plus an inner hole (clockwise). This cuts an island free;
+        // the bridge stage ties it back.
+        return r_in > 0 ? [circle_path(0, 0, r_out), circle_path(0, 0, r_in).reverse()] : [circle_path(0, 0, r_out)];
+    }
+    const outer = arc_points(0, 0, r_out, -half, half);
+    const inner = r_in > 0 ? arc_points(0, 0, r_in, half, -half) : [{ x: 0, y: 0 }];
+    return [[...outer, ...inner]];
+}
+
+function ray_path(m) {
+    const r0 = mm_to_um(m.r0_mm);
+    const r1 = mm_to_um(m.r1_mm);
+    const w0 = mm_to_um(m.w0_mm) / 2;
+    const w1 = mm_to_um(m.w1_mm) / 2;
+    if (r1 <= r0) return [];
+    const path = [];
+    if (w0 > 0) path.push({ x: r0, y: -w0 });
+    else path.push({ x: r0, y: 0 });
+    path.push({ x: r1, y: -w1 }, { x: r1, y: w1 });
+    if (w0 > 0) path.push({ x: r0, y: w0 });
+    return w1 > 0 || w0 > 0 ? [path] : [];
+}
+
+// Paths for one copy of a motif on the +x axis.
+function base_paths(m, wedge_rad) {
+    switch (m.type) {
+        case 'window':
+            return [window_path(m)];
+        case 'petal':
+            return [petal_path(m)];
+        case 'ring':
+            return ring_path(m, wedge_rad);
+        case 'ray':
+            return ray_path(m);
+        default:
+            throw new Error(`unknown motif "${m.type}"`);
+    }
+}
+
+// All openings of one motif under the piece's symmetry.
+function motif_openings(m, sym) {
+    if (!(m.type in kMotifTypes)) throw new Error(`unknown motif "${m.type}"`);
+    if (m.type === 'disc') return m.d_mm > 0 ? [circle_path(0, 0, mm_to_um(m.d_mm) / 2)] : [];
+    const mult = Math.max(1, Math.round(m.mult ?? 1));
+    const wedge = (2 * Math.PI) / rotation_order(sym);
+    const base = base_paths(m, wedge / mult);
+    if (!base.length) return [];
+    const copies = [];
+    for (let j = 0; j < mult; j++) {
+        const a = (m.angle_deg ?? 0) * kDeg + (j * wedge) / mult;
+        for (const path of base) copies.push(rotate_path(path, a));
+    }
+    return replicate(copies, sym);
+}
+
+// The union of every motif's openings on a layer.
+function layer_openings(layer, sym) {
+    const all = [];
+    for (const m of layer.source.motifs ?? []) all.push(...motif_openings(m, sym));
+    return all.length ? union_all(all) : [];
+}
+return { motif_openings, layer_openings };
+})();
+// src/pipeline/compose.js
+const __m_pipeline_compose_js = (function () {
+const { offset, subtract, intersect_paths, area_mm2, path_area_um2 } = __m_geom_clip_js;
+const { outline_paths } = __m_geom_outline_js;
+const { layer_openings } = __m_sources_motifs_js;
+const { mm_to_um } = __m_core_units_js;
+// Layer composition (SPEC 6.2 steps 1 to 3): openings from the layer's motifs, clipped to the area
+// inside its frame ring, cut from the piece outline. Contours under kMicroAreaUm2 (boolean
+// crumbs) are dropped. There is no blanket open/close: measured on the Orb preset it cost 288 ms
+// of a 300 ms build and changed the area by 2 mm2 in 464,000. Thin webs are found by the checks,
+// which compute that morphology once anyway.
+// Assumptions: geometry in micrometres, origin at the symmetry centre.
+
+
+
+
+
+const kMicroAreaUm2 = 50000; // 0.05 mm2
+
+function drop_crumbs(paths) {
+    return paths.filter(p => Math.abs(path_area_um2(p)) >= kMicroAreaUm2);
+}
+
+function compose_layer(design, k) {
+    const layer = design.layers[k];
+    const outline = outline_paths(design.piece.outline);
+    const ring_um = mm_to_um(layer.frame_ring_mm ?? 0);
+    const inner = ring_um > 0 ? offset(outline, -ring_um) : outline;
+    const openings = layer_openings(layer, design.piece.symmetry);
+    const cut = openings.length && inner.length ? intersect_paths(openings, inner) : [];
+    const material = cut.length ? drop_crumbs(subtract(outline, cut)) : outline;
+    return { outline, inner, material };
+}
+
+// Every layer, front first. Returns material paths plus simple stats and the time taken.
+function build_design(design) {
+    const t0 = performance.now();
+    const layers = design.layers.map((layer, k) => {
+        const { outline, material } = compose_layer(design, k);
+        const solid_mm2 = area_mm2(outline);
+        const area = area_mm2(material);
+        return { id: layer.id, material, area_mm2: area, open_fraction: solid_mm2 > 0 ? 1 - area / solid_mm2 : 0 };
+    });
+    return { layers, ms: performance.now() - t0 };
+}
+return { compose_layer, build_design };
+})();
+// src/geom/pack.js
+const __m_geom_pack_js = (function () {
+// Packs paths into typed arrays for postMessage: transferring two buffers is far cheaper than
+// structured-cloning thousands of {x, y} objects. Coordinates are micrometres in Int32 (+-2.1 km).
+
+function pack_paths(paths) {
+    let n = 0;
+    for (const p of paths) n += p.length;
+    const xy = new Int32Array(n * 2);
+    const starts = new Uint32Array(paths.length + 1);
+    let at = 0;
+    paths.forEach((path, i) => {
+        starts[i] = at;
+        for (const p of path) {
+            xy[2 * at] = p.x;
+            xy[2 * at + 1] = p.y;
+            at++;
+        }
+    });
+    starts[paths.length] = at;
+    return { xy, starts };
+}
+
+function unpack_paths({ xy, starts }) {
+    const paths = [];
+    for (let i = 0; i + 1 < starts.length; i++) {
+        const path = [];
+        for (let k = starts[i]; k < starts[i + 1]; k++) path.push({ x: xy[2 * k], y: xy[2 * k + 1] });
+        paths.push(path);
+    }
+    return paths;
+}
+return { pack_paths, unpack_paths };
 })();
 // src/export/stroke_font.js
 const __m_export_stroke_font_js = (function () {
@@ -1015,25 +1692,40 @@ return { kCard, build_test_card, test_card_instructions, test_card_zip };
 })();
 // src/worker/geometry_worker.js
 const __m_worker_geometry_worker_js = (function () {
-const { boot_demo } = __m_dev_boot_demo_js;
+const { build_design } = __m_pipeline_compose_js;
+const { pack_paths } = __m_geom_pack_js;
 const { test_card_zip } = __m_export_test_card_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
 // Protocol: request {id, type, payload}, reply {id, ok, result} or {id, ok: false, error}.
-// A result's top-level Uint8Array fields are transferred, not copied.
+// Typed arrays anywhere in a result are transferred, not copied.
 
 
+
+
+function build(design) {
+    const built = build_design(design);
+    return {
+        ms: built.ms,
+        layers: built.layers.map(l => ({
+            id: l.id,
+            area_mm2: l.area_mm2,
+            open_fraction: l.open_fraction,
+            packed: pack_paths(l.material),
+        })),
+    };
+}
 
 const kHandlers = {
     ping: () => ({ pong: true }),
-    boot_demo,
+    build,
     test_card_zip,
 };
 
-function transferables(result) {
-    if (!result || typeof result !== 'object') return [];
-    return Object.values(result)
-        .filter(v => v instanceof Uint8Array)
-        .map(v => v.buffer);
+function transferables(value, out = []) {
+    if (ArrayBuffer.isView(value)) out.push(value.buffer);
+    else if (Array.isArray(value)) for (const v of value) transferables(v, out);
+    else if (value && typeof value === 'object') for (const v of Object.values(value)) transferables(v, out);
+    return out;
 }
 
 self.onmessage = event => {
@@ -1051,7 +1743,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 10 modules.
+<script>// Lamina Studio bundle: src/main.js and 23 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -1195,44 +1887,6 @@ function init_theme(button) {
     });
 }
 return { init_theme };
-})();
-// src/ui/make_panel.js
-const __m_ui_make_panel_js = (function () {
-const { el, save_bytes } = __m_ui_dom_js;
-const { step_body, set_status } = __m_ui_shell_js;
-// Make step (SPEC 11). M1 starts with the calibration test card; sheets, checks and export follow.
-
-
-
-function build_make_panel(worker) {
-    const body = step_body('make');
-    body.textContent = '';
-    body.closest('details').open = true;
-    const button = el('button', { class: 'btn', type: 'button', text: 'Download calibration test card' });
-    body.append(
-        el('p', {
-            class: 'step-note',
-            text:
-                'Cut this first on a new laser or material. It measures kerf, import scale, minimum ' +
-                'web, bridge, hole, dowel fit and fit clearance. Instructions are in the zip.',
-        }),
-        button,
-    );
-    button.addEventListener('click', async () => {
-        button.disabled = true;
-        set_status('busy', 'Building the test card');
-        try {
-            const { name, bytes } = await worker.call('test_card_zip');
-            save_bytes(name, bytes, 'application/zip');
-            set_status('ok', `Saved ${name}: SVG, DXF and instructions.`);
-        } catch (err) {
-            set_status('bad', `Test card failed: ${err.message}`);
-        } finally {
-            button.disabled = false;
-        }
-    });
-}
-return { build_make_panel };
 })();
 // src/worker/client.js
 const __m_worker_client_js = (function () {
@@ -83556,21 +84210,512 @@ function mm_to_um(value_mm) {
 }
 return { kUmPerMm, mm_to_um };
 })();
+// src/core/schema.js
+const __m_core_schema_js = (function () {
+// Parameter registry (SPEC 11): every control is declared once here, and the UI is generated from it.
+// Entry fields:
+//   id        path under the scope's root ('outline.w_mm'), or a name when get/set are given
+//   scope     'design' (root), 'piece' (design.piece) or 'layer' (the selected layer)
+//   panel     sidebar step the control appears in (not 'step', which is a slider's increment)
+//   type      'range' | 'select' | 'colour' | 'toggle'
+//   tier      'basic' or 'advanced' (advanced controls show only in Advanced mode)
+//   options   for select: [[value, label], ...] or a function (design) -> that list
+//   show_if   optional (design, layer) -> bool
+//   get / set optional accessors (design, layer) -> value and (design, layer, value), for controls
+//             that are not a plain path
+//   randomisable, lockable: whether Randomise may change it, and whether it has a lock
+
+const kMotifTypes = {
+    disc: { label: 'Centre opening', params: ['d_mm'], replicated: false },
+    window: { label: 'Windows', params: ['r_mm', 'size_mm', 'sides', 'rot_deg', 'mult', 'angle_deg'], replicated: true },
+    petal: { label: 'Petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    ring: { label: 'Arc slots', params: ['r_mm', 'w_mm', 'tie_mm', 'mult', 'angle_deg'], replicated: true },
+    ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
+};
+
+// scales: the value is a length that follows the piece when it is resized. Structural widths
+// (ties) do not scale, because their minimum is set by the material, not the design.
+const kMotifParams = {
+    d_mm: { label: 'Diameter', min: 1, max: 1200, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    r_mm: { label: 'Radius', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    size_mm: { label: 'Size', min: 0.5, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    sides: { label: 'Sides (0 is round)', min: 0, max: 12, step: 1, unit: '', scales: false, tier: 'basic' },
+    rot_deg: { label: 'Turn', min: -180, max: 180, step: 1, unit: 'deg', scales: false, tier: 'advanced' },
+    length_mm: { label: 'Length', min: 1, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    width_mm: { label: 'Width', min: 0.5, max: 300, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    w_mm: { label: 'Width', min: 0.5, max: 300, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    tie_mm: { label: 'Tie width', min: 0, max: 60, step: 0.1, unit: 'mm', scales: false, tier: 'advanced' },
+    r0_mm: { label: 'Inner radius', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    r1_mm: { label: 'Outer radius', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    w0_mm: { label: 'Inner width', min: 0, max: 200, step: 0.5, unit: 'mm', scales: true, tier: 'advanced' },
+    w1_mm: { label: 'Outer width', min: 0, max: 200, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    mult: { label: 'Copies per repeat', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
+    angle_deg: { label: 'Offset', min: -180, max: 180, step: 0.5, unit: 'deg', scales: false, tier: 'basic' },
+};
+
+const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
+const sym_is = (...kinds) => d => kinds.includes(d.piece.symmetry.kind);
+
+const SCHEMA = [
+    {
+        id: 'outline.kind',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Outline',
+        type: 'select',
+        options: [
+            ['circle', 'Circle'],
+            ['rect', 'Rectangle'],
+            ['polygon', 'Polygon'],
+            ['arch', 'Arch'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'outline.w_mm',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Width',
+        type: 'range',
+        min: 50,
+        max: 1200,
+        step: 1,
+        unit: 'mm',
+        tier: 'basic',
+        desc: 'Diameter for circles and polygons. The pattern scales with it.',
+    },
+    {
+        id: 'outline.h_mm',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Height',
+        type: 'range',
+        min: 50,
+        max: 900,
+        step: 1,
+        unit: 'mm',
+        tier: 'basic',
+        show_if: kind_is('rect', 'arch'),
+    },
+    {
+        id: 'outline.sides',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Sides',
+        type: 'range',
+        min: 3,
+        max: 16,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        show_if: kind_is('polygon'),
+    },
+    {
+        id: 'outline.corner_r_mm',
+        scope: 'piece',
+        panel: 'piece',
+        label: 'Corner radius',
+        type: 'range',
+        min: 0,
+        max: 100,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'advanced',
+        show_if: kind_is('rect'),
+    },
+    {
+        id: 'layer_count',
+        scope: 'design',
+        panel: 'piece',
+        label: 'Layers',
+        type: 'range',
+        min: 1,
+        max: 40,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        get: d => d.layers.length,
+    },
+    {
+        id: 'symmetry.kind',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Symmetry',
+        type: 'select',
+        options: [
+            ['none', 'None'],
+            ['rot', 'Rotate'],
+            ['dihedral', 'Kaleidoscope'],
+            ['mirror_x', 'Mirror'],
+            ['mirror_xy', 'Mirror both ways'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'symmetry.n',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Repeats',
+        type: 'range',
+        min: 2,
+        max: 36,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        show_if: sym_is('rot', 'dihedral'),
+        randomisable: true,
+        lockable: true,
+    },
+    {
+        id: 'symmetry.phase_deg',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Turn the pattern',
+        type: 'range',
+        min: 0,
+        max: 360,
+        step: 0.5,
+        unit: 'deg',
+        tier: 'advanced',
+    },
+    {
+        id: 'palette',
+        scope: 'design',
+        panel: 'material',
+        label: 'Palette',
+        type: 'select',
+        tier: 'basic',
+        options: null, // filled from kPalettes by the UI, which imports design.js
+    },
+    {
+        id: 'all_material',
+        scope: 'design',
+        panel: 'material',
+        label: 'Material for every layer',
+        type: 'select',
+        tier: 'basic',
+        options: null, // filled from kMaterials by the UI
+        get: d => (d.layers.every(l => l.material === d.layers[0].material) ? d.layers[0].material : ''),
+    },
+    {
+        id: 'material',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Material',
+        type: 'select',
+        tier: 'advanced',
+        options: null,
+    },
+    {
+        id: 'finish.colour',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Colour',
+        type: 'colour',
+        tier: 'basic',
+    },
+    {
+        id: 'gap_mm',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Gap behind',
+        type: 'range',
+        min: 0,
+        max: 30,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'basic',
+        desc: '0 glues this layer to the next. Spacers are cut from the same sheets.',
+    },
+    {
+        id: 'frame_ring_mm',
+        scope: 'layer',
+        panel: 'layers',
+        label: 'Frame ring',
+        type: 'range',
+        min: 0,
+        max: 80,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'basic',
+        desc: 'Solid border that holds the pattern together.',
+    },
+    {
+        id: 'lighting.mode',
+        scope: 'piece',
+        panel: 'light',
+        label: 'Lighting',
+        type: 'select',
+        options: [
+            ['unlit', 'Unlit'],
+            ['backlit', 'Backlit'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'lighting.colour',
+        scope: 'piece',
+        panel: 'light',
+        label: 'Light colour',
+        type: 'colour',
+        tier: 'basic',
+        show_if: d => d.piece.lighting.mode === 'backlit',
+    },
+    {
+        id: 'sheet_size',
+        scope: 'design',
+        panel: 'make',
+        label: 'Stock sheet',
+        type: 'select',
+        tier: 'basic',
+        options: null, // filled from kSheetPresets by the UI
+        get: d => `${d.sheet.w_mm}x${d.sheet.h_mm}`,
+    },
+];
+
+function schema_entry(id) {
+    const entry = SCHEMA.find(e => e.id === id);
+    if (!entry) throw new Error(`no schema entry "${id}"`);
+    return entry;
+}
+
+function get_path(obj, path) {
+    return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+function set_path(obj, path, value) {
+    const keys = path.split('.');
+    const last = keys.pop();
+    const parent = keys.reduce((o, k) => o[k], obj);
+    parent[last] = value;
+}
+return { kMotifTypes, kMotifParams, SCHEMA, schema_entry, get_path, set_path };
+})();
+// src/core/design.js
+const __m_core_design_js = (function () {
+const { kMotifTypes, kMotifParams } = __m_core_schema_js;
+// The design document (SPEC 5): the single source of truth. Every output is a pure function of it.
+// Units are mm here; geometry converts to integer micrometres. A null material-dependent value
+// means "use the material preset".
+
+
+const kSchemaVersion = 1;
+
+// Starting values; the calibration test card replaces them (SPEC 5.1, 9.4).
+const kMaterials = {
+    ply3: {
+        label: 'Birch plywood 3 mm',
+        thickness_mm: 3,
+        kerf_mm: 0.2,
+        min_web_mm: 1.5,
+        min_bridge_mm: 1.2,
+        min_hole_mm: 1.0,
+        look: { colour: '#d8b98c', translucent: false },
+        measured: false,
+    },
+    mdf3: {
+        label: 'MDF 3 mm',
+        thickness_mm: 3,
+        kerf_mm: 0.2,
+        min_web_mm: 1.5,
+        min_bridge_mm: 1.2,
+        min_hole_mm: 1.0,
+        look: { colour: '#9c7b5b', translucent: false },
+        measured: false,
+    },
+    acr3: {
+        label: 'Acrylic 3 mm, opaque',
+        thickness_mm: 3,
+        kerf_mm: 0.15,
+        min_web_mm: 2.0,
+        min_bridge_mm: 1.5,
+        min_hole_mm: 1.0,
+        look: { colour: '#202024', translucent: false },
+        measured: false,
+    },
+    acr3t: {
+        label: 'Acrylic 3 mm, translucent',
+        thickness_mm: 3,
+        kerf_mm: 0.15,
+        min_web_mm: 2.0,
+        min_bridge_mm: 1.5,
+        min_hole_mm: 1.0,
+        look: { colour: '#f2f2f2', translucent: true },
+        measured: false,
+    },
+};
+
+// Finish palettes, front to back. Colours are interpolated across however many layers there are.
+const kPalettes = {
+    orb: { label: 'Orb', stops: ['#a7a9b0', '#ff4a2a', '#3a7bd5', '#e9e4da', '#c8321e', '#243a8f', '#14101c'] },
+    acid: { label: 'Acid', stops: ['#c4f24a', '#8cc152', '#5e8f3a', '#5b2f80', '#331a4d', '#120a1c'] },
+    ember: { label: 'Ember', stops: ['#ffd27a', '#ffb340', '#ff7a2e', '#e0482a', '#9c2a2a', '#2a1010'] },
+    ice: { label: 'Ice', stops: ['#eef7ff', '#a9d4ff', '#5aa8f0', '#2f6fd0', '#243b8a', '#0d1230'] },
+    walnut: { label: 'Walnut to birch', stops: ['#2a1d14', '#4a3424', '#78553a', '#a8814f', '#d9bf8f', '#efe3c6'] },
+    mono: { label: 'Mono', stops: ['#f2f2f2', '#c8c8c8', '#9a9a9a', '#6c6c6c', '#404040', '#161616'] },
+};
+
+const kSheetPresets = {
+    '600x400': { label: '600 x 400 mm', w_mm: 600, h_mm: 400 },
+    '400x300': { label: '400 x 300 mm', w_mm: 400, h_mm: 300 },
+    '300x300': { label: '300 x 300 mm', w_mm: 300, h_mm: 300 },
+};
+
+function hex_to_rgb(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+function rgb_to_hex(rgb) {
+    return '#' + rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('');
+}
+
+// Colour for layer k of n from a palette's stops, interpolated in RGB.
+function palette_colour(palette_id, k, n) {
+    const stops = kPalettes[palette_id].stops;
+    if (n <= 1) return stops[0];
+    const t = (k / (n - 1)) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(t));
+    const f = t - i;
+    const a = hex_to_rgb(stops[i]);
+    const b = hex_to_rgb(stops[i + 1]);
+    return rgb_to_hex(a.map((c, j) => c + (b[j] - c) * f));
+}
+
+function default_layer(k, n, palette_id = 'orb') {
+    return {
+        id: `L${k + 1}`,
+        material: 'ply3',
+        thickness_mm: null,
+        gap_mm: 0,
+        finish: { kind: 'paint', colour: palette_colour(palette_id, k, n) },
+        frame_ring_mm: 12,
+        locked: false,
+        source: { kind: 'primitive', motifs: [] },
+        island_policy: 'bridge',
+        bridge: { w_mm: null, max: 4 },
+        overrides: { islands: {}, bridges: [], locks: [], edits: [] },
+    };
+}
+
+function base_design(layer_count = 8) {
+    return {
+        app: 'lamina',
+        schema: kSchemaVersion,
+        name: 'Untitled',
+        seed: 1,
+        palette: 'orb',
+        piece: {
+            outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
+            symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
+            lighting: { mode: 'unlit', colour: '#ff5b2e' },
+            depth_mode: 'per_layer',
+        },
+        machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
+        sheet: { w_mm: 600, h_mm: 400, margin_mm: 5, spacing_mm: 3 },
+        registration: { dowel_d_mm: 3, count: 3, through_front: false, ids: true },
+        spacers: { style: 'pucks', stock_material: 'ply3' },
+        layers: Array.from({ length: layer_count }, (_, k) => default_layer(k, layer_count)),
+        frame: null,
+        tiling: null,
+        check_overrides: [],
+    };
+}
+
+const is_plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Copies keys missing from target out of defaults, recursively for plain objects.
+function fill_missing(target, defaults) {
+    for (const [key, value] of Object.entries(defaults)) {
+        if (!(key in target)) target[key] = structuredClone(value);
+        else if (is_plain(value) && is_plain(target[key])) fill_missing(target[key], value);
+    }
+    return target;
+}
+
+// Opens any saved design: checks it is a Lamina file, upgrades older schemas, fills new fields.
+function migrate(input) {
+    if (!is_plain(input) || input.app !== 'lamina') throw new Error('not a Lamina design file');
+    if (!Number.isInteger(input.schema) || input.schema > kSchemaVersion) {
+        throw new Error(`design schema ${input.schema} is newer than this studio (${kSchemaVersion})`);
+    }
+    const design = structuredClone(input);
+    const n = Array.isArray(design.layers) && design.layers.length ? design.layers.length : 8;
+    fill_missing(design, base_design(n));
+    design.layers = design.layers.map((layer, k) => fill_missing(layer, default_layer(k, n, design.palette)));
+    design.schema = kSchemaVersion;
+    return design;
+}
+
+function material_of(design, layer) {
+    return kMaterials[layer.material] ?? kMaterials.ply3;
+}
+
+function layer_thickness_mm(design, layer) {
+    return layer.thickness_mm ?? material_of(design, layer).thickness_mm;
+}
+
+function piece_radius_mm(piece) {
+    const o = piece.outline;
+    if (o.kind === 'rect' || o.kind === 'arch') return Math.min(o.w_mm, o.h_mm) / 2;
+    return o.w_mm / 2;
+}
+
+// Applies a palette to every layer's finish colour.
+function apply_palette(design, palette_id) {
+    design.palette = palette_id;
+    const n = design.layers.length;
+    design.layers.forEach((layer, k) => {
+        layer.finish.colour = palette_colour(palette_id, k, n);
+    });
+}
+
+// Sets the layer count. New layers are copies of the last patterned layer, inserted before the
+// back layer, so the back stays solid; removal takes from just in front of the back.
+function set_layer_count(design, count) {
+    const n = Math.max(1, Math.min(40, Math.round(count)));
+    const layers = design.layers;
+    while (layers.length < n) {
+        const template = layers.length > 1 ? layers[layers.length - 2] : layers[0];
+        layers.splice(Math.max(layers.length - 1, 0), 0, structuredClone(template));
+    }
+    while (layers.length > n) layers.splice(Math.max(layers.length - 2, 0), 1);
+    layers.forEach((layer, k) => {
+        layer.id = `L${k + 1}`;
+    });
+    apply_palette(design, design.palette);
+}
+
+// Scales every length a motif has (positions and sizes, not structural widths such as ties), so a
+// pattern follows the piece when the piece is resized.
+function scale_motifs(design, factor) {
+    for (const layer of design.layers) {
+        for (const motif of layer.source.motifs ?? []) {
+            for (const key of kMotifTypes[motif.type]?.params ?? []) {
+                if (kMotifParams[key].scales && typeof motif[key] === 'number') {
+                    motif[key] = Math.round(motif[key] * factor * 100) / 100;
+                }
+            }
+        }
+    }
+}
+return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, scale_motifs };
+})();
 // src/preview/three_stack.js
 const __m_preview_three_stack_js = (function () {
 const { WebGLRenderer, Scene, PerspectiveCamera, Shape, Path, Vector2, ExtrudeGeometry, MeshStandardMaterial, Mesh, Group, AmbientLight, DirectionalLight, MathUtils } = __m_vendor_three_three_module_js;
 const { OrbitControls } = __m_vendor_three_OrbitControls_js;
 const { kUmPerMm } = __m_core_units_js;
-// 3D stack preview (SPEC 10). M0 scope: extrude each layer's paths at its thickness, stack them
-// front (index 0, nearest the viewer, highest z) to back with a gap, orbit and tilt with
-// OrbitControls, and render on demand. Lighting modes, materials and the exploded view are M1.
+const { layer_thickness_mm } = __m_core_design_js;
+// 3D stack preview (SPEC 10). Extrudes each layer's paths at its thickness, stacks them front
+// (index 0, nearest the viewer, highest z) to back with their gaps, orbit and tilt with
+// OrbitControls, and renders on demand. Lighting modes, material looks and the exploded view
+// arrive in the previews slice.
 // Assumptions: paths in micrometres, outer boundaries have positive area and holes negative.
 
 
 
 
-// Stone front, then the orb references' red and blue, ending dark at the back.
-const kDemoFinishes = ['#a3a6ad', '#ff5b2e', '#3a8ee6', '#ffb340', '#7a4fe0', '#1a1424'];
 
 function signed_area(path) {
     let a = 0;
@@ -83636,32 +84781,35 @@ class StackPreview {
         this.resize_();
     }
 
-    // layers: [{paths}] front first. Thickness and gap are uniform in M0.
-    set_layers(layers, { thickness_mm = 3, gap_mm = 3 } = {}) {
+    // built: [{ material: paths }] front first, as the worker returned them for design. Each layer
+    // is extruded at its real thickness; the back layer sits at z = 0 and each layer in front sits
+    // on the one behind plus its gap. The camera is reframed only when the piece's size changes.
+    show(design, built) {
         for (const mesh of this.stack_.children) {
             mesh.geometry.dispose();
             mesh.material.dispose();
         }
         this.stack_.clear();
-        const pitch_mm = thickness_mm + gap_mm;
+        let z = 0;
         let radius_mm = 1;
-        layers.forEach((layer, k) => {
-            const geometry = new ExtrudeGeometry(to_shapes(layer.paths), {
-                depth: thickness_mm,
-                bevelEnabled: false,
-            });
+        for (let k = built.length - 1; k >= 0; k--) {
+            const layer = design.layers[k];
+            const thickness_mm = layer_thickness_mm(design, layer);
+            const geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
             geometry.computeBoundingSphere();
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
-            const material = new MeshStandardMaterial({
-                color: kDemoFinishes[k % kDemoFinishes.length],
-                roughness: 0.8,
-                metalness: 0.0,
-            });
+            const material = new MeshStandardMaterial({ color: layer.finish.colour, roughness: 0.8, metalness: 0 });
             const mesh = new Mesh(geometry, material);
-            mesh.position.z = (layers.length - 1 - k) * pitch_mm;
+            mesh.position.z = z;
             this.stack_.add(mesh);
-        });
-        this.frame_(radius_mm, layers.length * pitch_mm);
+            z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
+        }
+        const o = design.piece.outline;
+        const frame_key = `${o.kind}|${o.w_mm}|${o.h_mm}|${built.length}`;
+        if (frame_key !== this.frame_key_) {
+            this.frame_key_ = frame_key;
+            this.frame_(radius_mm, z);
+        }
         this.render();
     }
 
@@ -83689,52 +84837,1144 @@ class StackPreview {
 }
 return { StackPreview };
 })();
+// src/core/store.js
+const __m_core_store_js = (function () {
+// Design store with undo and redo (SPEC 11): 80 steps. Edits that share a coalesce key within
+// kCoalesceMs (one slider drag) become one undo step. Designs are immutable snapshots: an edit
+// clones, mutates the clone, and replaces the current design.
+
+const kUndoDepth = 80;
+const kCoalesceMs = 700;
+
+class Store {
+    constructor(design, { now = () => Date.now() } = {}) {
+        this.design_ = design;
+        this.undo_ = [];
+        this.redo_ = [];
+        this.listeners_ = [];
+        this.last_key_ = null;
+        this.last_time_ = 0;
+        this.now_ = now;
+    }
+
+    get design() {
+        return this.design_;
+    }
+
+    subscribe(listener) {
+        this.listeners_.push(listener);
+    }
+
+    // mutate(draft) edits a clone of the current design. coalesce_key joins rapid edits of the
+    // same control into one undo step.
+    update(mutate, { coalesce_key = null } = {}) {
+        const draft = structuredClone(this.design_);
+        mutate(draft);
+        const t = this.now_();
+        const join = coalesce_key !== null && coalesce_key === this.last_key_ && t - this.last_time_ < kCoalesceMs;
+        if (!join) {
+            this.undo_.push(this.design_);
+            if (this.undo_.length > kUndoDepth) this.undo_.shift();
+        }
+        this.redo_ = [];
+        this.last_key_ = coalesce_key;
+        this.last_time_ = t;
+        this.set_(draft);
+    }
+
+    // Replaces the whole design (open file, preset), as one undo step.
+    replace(design) {
+        this.update(draft => {
+            for (const key of Object.keys(draft)) delete draft[key];
+            Object.assign(draft, structuredClone(design));
+        });
+    }
+
+    undo() {
+        if (!this.undo_.length) return false;
+        this.redo_.push(this.design_);
+        this.last_key_ = null;
+        this.set_(this.undo_.pop());
+        return true;
+    }
+
+    redo() {
+        if (!this.redo_.length) return false;
+        this.undo_.push(this.design_);
+        this.last_key_ = null;
+        this.set_(this.redo_.pop());
+        return true;
+    }
+
+    can_undo() {
+        return this.undo_.length > 0;
+    }
+
+    can_redo() {
+        return this.redo_.length > 0;
+    }
+
+    set_(design) {
+        this.design_ = design;
+        for (const listener of this.listeners_) listener(design);
+    }
+}
+return { kUndoDepth, Store };
+})();
+// src/core/rng.js
+const __m_core_rng_js = (function () {
+// Seeded randomness (SPEC 13.5). Every random choice in Lamina comes from here, so a design JSON
+// and its seed always reproduce the same output.
+
+// FNV-1a over a string, as an unsigned 32-bit seed.
+function hash_str(text) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+// mulberry32: small, fast, good enough for design choices. Returns floats in [0, 1).
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// An independent stream per purpose: rng_for(seed, 'layer', 3) never shifts when another stream
+// draws more numbers.
+function rng_for(seed, ...keys) {
+    const rand = mulberry32(hash_str(`${seed >>> 0}:${keys.join(':')}`));
+    return {
+        next: rand,
+        range: (lo, hi) => lo + (hi - lo) * rand(),
+        int: (lo, hi) => lo + Math.floor((hi - lo + 1) * rand()),
+        pick: items => items[Math.floor(items.length * rand())],
+        chance: p => rand() < p,
+    };
+}
+return { hash_str, mulberry32, rng_for };
+})();
+// src/geom/symmetry.js
+const __m_geom_symmetry_js = (function () {
+// Symmetry engine (SPEC 6.2 step 2): replicates paths around the piece centre (the origin).
+// Copies are made before any boolean union, so every copy is exact. A mirrored copy is reversed to
+// stay counter-clockwise: otherwise it would cancel its original under the non-zero fill rule
+// wherever they overlap.
+
+const rotation = a => [Math.cos(a), -Math.sin(a), Math.sin(a), Math.cos(a)];
+const kMirrorX = [1, 0, 0, -1]; // reflect across the x axis (y -> -y)
+const kMirrorY = [-1, 0, 0, 1]; // reflect across the y axis (x -> -x)
+
+function multiply(p, q) {
+    return [p[0] * q[0] + p[1] * q[2], p[0] * q[1] + p[1] * q[3], p[2] * q[0] + p[3] * q[2], p[2] * q[1] + p[3] * q[3]];
+}
+
+// Rotational order of a symmetry: the angle a motif's own copies ("copies per repeat") divide.
+function rotation_order(sym) {
+    return sym.kind === 'rot' || sym.kind === 'dihedral' ? Math.max(1, Math.round(sym.n)) : 1;
+}
+
+// The 2 x 2 matrices of the symmetry group, phase applied, identity first.
+function symmetry_matrices(sym) {
+    const n = rotation_order(sym);
+    const out = [];
+    switch (sym.kind) {
+        case 'rot':
+        case 'dihedral':
+            for (let k = 0; k < n; k++) out.push(rotation((2 * Math.PI * k) / n));
+            if (sym.kind === 'dihedral') {
+                for (let k = 0; k < n; k++) out.push(multiply(rotation((2 * Math.PI * k) / n), kMirrorX));
+            }
+            break;
+        case 'mirror_x':
+            out.push([1, 0, 0, 1], kMirrorY);
+            break;
+        case 'mirror_xy':
+            out.push([1, 0, 0, 1], kMirrorY, kMirrorX, [-1, 0, 0, -1]);
+            break;
+        case 'none':
+            out.push([1, 0, 0, 1]);
+            break;
+        default:
+            throw new Error(`unknown symmetry "${sym.kind}"`);
+    }
+    const phase = rotation(((sym.phase_deg ?? 0) * Math.PI) / 180);
+    return out.map(m => multiply(phase, m));
+}
+
+function transform_path(path, m) {
+    const out = path.map(p => ({
+        x: Math.round(m[0] * p.x + m[1] * p.y),
+        y: Math.round(m[2] * p.x + m[3] * p.y),
+    }));
+    return m[0] * m[3] - m[1] * m[2] < 0 ? out.reverse() : out;
+}
+
+function rotate_path(path, angle_rad) {
+    return transform_path(path, rotation(angle_rad));
+}
+
+function replicate(paths, sym) {
+    const out = [];
+    for (const m of symmetry_matrices(sym)) for (const path of paths) out.push(transform_path(path, m));
+    return out;
+}
+return { rotation_order, symmetry_matrices, transform_path, rotate_path, replicate };
+})();
+// src/core/generate.js
+const __m_core_generate_js = (function () {
+const { rng_for } = __m_core_rng_js;
+const { rotation_order } = __m_geom_symmetry_js;
+// Seeded pattern generator for primitive pieces (M1). It picks a centre opening and a few concentric
+// bands, each with one motif type, and repeats them through the stack. Openings shrink from front
+// to back and alternate layers turn half a step, so looking into the piece reads as depth: the
+// orb references' nested look, made from primitives. The back layer stays solid.
+// Generated layers are island-free by construction (arc slots always keep a tie), and opening sizes
+// are capped against their neighbours so webs stay well above the minimum.
+
+
+
+// How far from the centre bands may reach. Circles and polygons fill their circumradius (polygon
+// corners clip the outer band); rectangles and arches reach towards their far corners, so the
+// whole outline carries pattern and the frame ring clips the outer bands.
+function pattern_radius_mm(outline) {
+    switch (outline.kind) {
+        case 'rect':
+            return Math.hypot(outline.w_mm, outline.h_mm) * 0.46;
+        case 'arch':
+            return Math.hypot(outline.w_mm / 2, outline.h_mm - outline.w_mm / 2) * 0.92;
+        default:
+            return outline.w_mm / 2;
+    }
+}
+
+const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
+const r1 = v => Math.round(v * 10) / 10;
+
+function make_bands(rng, inner_mm, from_mm, count, types) {
+    const weights = Array.from({ length: count }, () => rng.range(0.7, 1.3));
+    const total = weights.reduce((a, b) => a + b, 0);
+    const span_all = inner_mm * 0.97 - from_mm;
+    let r = from_mm;
+    return weights.map(w => {
+        const span = (span_all * w) / total;
+        const band = {
+            r0: r,
+            r1: r + span,
+            type: rng.pick(types),
+            sides: rng.pick([0, 3, 4, 4, 6, 8]),
+            rot: rng.pick([0, 0, 45, 90]),
+            mult: rng.pick([1, 1, 1, 2]),
+            alternate: rng.chance(0.5),
+            reach: rng.range(0.45, 1.0), // deepest layer (0 front .. 1 back) the band reaches
+            tie_mm: rng.range(2.5, 6),
+            taper: rng.range(0, 0.6),
+        };
+        r += span;
+        return band;
+    });
+}
+
+function band_motif(band, n, depth, k) {
+    const span = band.r1 - band.r0;
+    const rc = (band.r0 + band.r1) / 2;
+    const copies = n * band.mult;
+    const arc = (2 * Math.PI * rc) / copies;
+    const s = 1 - 0.55 * depth;
+    const angle_deg = band.alternate && k % 2 ? r1(180 / copies) : 0;
+    const common = { mult: band.mult, angle_deg };
+    switch (band.type) {
+        case 'window':
+            return {
+                type: 'window',
+                r_mm: r1(rc),
+                size_mm: r1(Math.min(span * 0.8, arc * 0.75) * s),
+                sides: band.sides,
+                rot_deg: band.rot,
+                ...common,
+            };
+        case 'petal': {
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            return {
+                type: 'petal',
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * 0.6, length * 0.55) * s),
+                ...common,
+            };
+        }
+        case 'ring':
+            return {
+                type: 'ring',
+                r_mm: r1(rc),
+                w_mm: r1(span * 0.6 * s),
+                tie_mm: r1(band.tie_mm * (1 + depth)),
+                ...common,
+            };
+        case 'ray': {
+            const w1 = arc * 0.45 * s;
+            return {
+                type: 'ray',
+                r0_mm: r1(band.r0 + span * 0.1),
+                r1_mm: r1(band.r1 - span * 0.05),
+                w0_mm: r1(w1 * band.taper),
+                w1_mm: r1(w1),
+                ...common,
+            };
+        }
+        default:
+            throw new Error(`unknown band type "${band.type}"`);
+    }
+}
+
+// Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
+// symmetry repeat count; options.types limits the motif types used.
+function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
+    const rng = rng_for(seed, 'stack');
+    const sym = design.piece.symmetry;
+    if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([6, 8, 8, 10, 12, 12, 16]);
+    const n = rotation_order(sym);
+    const ring0 = design.layers[0].frame_ring_mm;
+    const inner = pattern_radius_mm(design.piece.outline) - ring0;
+    const disc_frac = rng.range(0.16, 0.36);
+    const bands = make_bands(rng, inner, inner * (disc_frac + 0.08), rng.int(2, 4), types);
+    // Frame rings widen towards the back, so the border steps inwards like a stacked mandala.
+    const ring_step = rng.range(0, 0.035) * inner;
+
+    const count = design.layers.length;
+    const patterned = count > 1 ? count - 1 : 1;
+    design.layers.forEach((layer, k) => {
+        if (layer.locked) return;
+        layer.frame_ring_mm = r1(ring0 + k * ring_step);
+        if (k >= patterned) {
+            layer.source.motifs = [];
+            return;
+        }
+        const depth = patterned > 1 ? k / (patterned - 1) : 0;
+        const motifs = [{ type: 'disc', d_mm: r1(2 * inner * disc_frac * (1 - 0.55 * depth)) }];
+        for (const band of bands) if (depth <= band.reach) motifs.push(band_motif(band, n, depth, k));
+        layer.source.motifs = motifs;
+    });
+    design.seed = seed >>> 0;
+}
+return { generate_stack };
+})();
+// src/core/presets.js
+const __m_core_presets_js = (function () {
+const { base_design, apply_palette } = __m_core_design_js;
+const { generate_stack } = __m_core_generate_js;
+// Starting designs (SPEC 11): at least five primitive demos for M1. Each is a base design plus
+// outline, symmetry, palette and a generator seed, so presets stay small and reproducible.
+
+
+
+function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, frame_ring_mm }) {
+    const design = base_design(layers);
+    design.name = name;
+    Object.assign(design.piece.outline, outline);
+    Object.assign(design.piece.symmetry, symmetry);
+    if (lighting) Object.assign(design.piece.lighting, lighting);
+    if (frame_ring_mm !== undefined) for (const layer of design.layers) layer.frame_ring_mm = frame_ring_mm;
+    apply_palette(design, palette);
+    generate_stack(design, seed, { lock_n: true });
+    return design;
+}
+
+const kPresets = [
+    {
+        id: 'orb',
+        name: 'Orb',
+        make: () =>
+            preset('Orb', {
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 8 },
+                palette: 'orb',
+                seed: 5,
+            }),
+    },
+    {
+        id: 'rose',
+        name: 'Rose window',
+        make: () =>
+            preset('Rose window', {
+                layers: 10,
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 12 },
+                palette: 'ember',
+                seed: 4,
+            }),
+    },
+    {
+        id: 'gate',
+        name: 'Acid gate',
+        make: () =>
+            preset('Acid gate', {
+                outline: { kind: 'arch', w_mm: 240, h_mm: 330 },
+                symmetry: { kind: 'dihedral', n: 10 },
+                palette: 'acid',
+                seed: 4,
+            }),
+    },
+    {
+        id: 'lantern',
+        name: 'Hex lantern',
+        make: () =>
+            preset('Hex lantern', {
+                outline: { kind: 'polygon', w_mm: 290, sides: 6 },
+                symmetry: { kind: 'rot', n: 6 },
+                palette: 'ice',
+                seed: 5,
+                lighting: { mode: 'backlit', colour: '#46b4ff' },
+            }),
+    },
+    {
+        id: 'sun',
+        name: 'Walnut sun',
+        make: () =>
+            preset('Walnut sun', {
+                layers: 6,
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 16 },
+                palette: 'walnut',
+                seed: 2,
+                frame_ring_mm: 10,
+            }),
+    },
+];
+
+function preset_by_id(id) {
+    const p = kPresets.find(x => x.id === id);
+    if (!p) throw new Error(`no preset "${id}"`);
+    return p.make();
+}
+return { kPresets, preset_by_id };
+})();
+// src/core/actions.js
+const __m_core_actions_js = (function () {
+const { get_path, set_path } = __m_core_schema_js;
+const { kMaterials, kPalettes, kSheetPresets, set_layer_count, apply_palette, scale_motifs, piece_radius_mm } = __m_core_design_js;
+// Applies a schema control's value to a design, including the controls that are not a plain path
+// (layer count, palette, material for all layers, sheet size) and resizing, which also scales
+// the pattern. Also supplies the option lists that come from the design tables.
+
+
+
+function options_for(entry, design) {
+    if (entry.options) return typeof entry.options === 'function' ? entry.options(design) : entry.options;
+    switch (entry.id) {
+        case 'palette':
+            return Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
+        case 'all_material':
+        case 'material':
+            return Object.entries(kMaterials).map(([id, m]) => [id, m.label]);
+        case 'sheet_size':
+            return Object.entries(kSheetPresets).map(([id, s]) => [id, s.label]);
+        default:
+            throw new Error(`no options for "${entry.id}"`);
+    }
+}
+
+function scope_root(entry, design, layer_index) {
+    if (entry.scope === 'piece') return design.piece;
+    if (entry.scope === 'layer') return design.layers[layer_index];
+    return design;
+}
+
+function read_param(entry, design, layer_index) {
+    if (entry.get) return entry.get(design, design.layers[layer_index]);
+    return get_path(scope_root(entry, design, layer_index), entry.id);
+}
+
+// Mutates design (a draft) so the control reads value.
+function write_param(entry, design, layer_index, value) {
+    switch (entry.id) {
+        case 'layer_count':
+            set_layer_count(design, value);
+            return;
+        case 'palette':
+            apply_palette(design, value);
+            return;
+        case 'all_material':
+            for (const layer of design.layers) layer.material = value;
+            return;
+        case 'sheet_size': {
+            const preset = kSheetPresets[value];
+            design.sheet.w_mm = preset.w_mm;
+            design.sheet.h_mm = preset.h_mm;
+            return;
+        }
+        case 'outline.w_mm':
+        case 'outline.h_mm': {
+            const before = piece_radius_mm(design.piece);
+            set_path(design.piece, entry.id, value);
+            const after = piece_radius_mm(design.piece);
+            if (before > 0 && after !== before) scale_motifs(design, after / before);
+            return;
+        }
+        default:
+            set_path(scope_root(entry, design, layer_index), entry.id, value);
+    }
+}
+return { options_for, read_param, write_param };
+})();
+// src/geom/pack.js
+const __m_geom_pack_js = (function () {
+// Packs paths into typed arrays for postMessage: transferring two buffers is far cheaper than
+// structured-cloning thousands of {x, y} objects. Coordinates are micrometres in Int32 (+-2.1 km).
+
+function pack_paths(paths) {
+    let n = 0;
+    for (const p of paths) n += p.length;
+    const xy = new Int32Array(n * 2);
+    const starts = new Uint32Array(paths.length + 1);
+    let at = 0;
+    paths.forEach((path, i) => {
+        starts[i] = at;
+        for (const p of path) {
+            xy[2 * at] = p.x;
+            xy[2 * at + 1] = p.y;
+            at++;
+        }
+    });
+    starts[paths.length] = at;
+    return { xy, starts };
+}
+
+function unpack_paths({ xy, starts }) {
+    const paths = [];
+    for (let i = 0; i + 1 < starts.length; i++) {
+        const path = [];
+        for (let k = starts[i]; k < starts[i + 1]; k++) path.push({ x: xy[2 * k], y: xy[2 * k + 1] });
+        paths.push(path);
+    }
+    return paths;
+}
+return { pack_paths, unpack_paths };
+})();
+// src/ui/controls.js
+const __m_ui_controls_js = (function () {
+const { el } = __m_ui_dom_js;
+// Controls generated from registry entries (SPEC 11). A control owns its DOM and exposes
+// refresh(value) so panels can update values in place without rebuilding (which would drop focus
+// mid-drag). Changes are reported through on_change(value, { coalesce }): slider drags coalesce
+// into one undo step.
+
+
+let next_uid = 1;
+
+function format_number(value, step) {
+    const decimals = step >= 1 ? 0 : Math.min(3, String(step).split('.')[1]?.length ?? 1);
+    return Number(value).toFixed(decimals);
+}
+
+// spec: { label, type, min, max, step, unit, options, desc, lockable }
+// state: { locked: () => bool, toggle_lock: () => void } for lockable controls
+function make_control(spec, on_change, state = {}) {
+    const uid = `ctl-${next_uid++}`;
+    const row = el('div', { class: `ctl ctl-${spec.type}` });
+    const head = el('div', { class: 'ctl-head' });
+    const label = el('label', { for: uid, text: spec.label });
+    head.append(label);
+    row.append(head);
+    if (spec.desc) row.title = spec.desc;
+
+    let refresh;
+    switch (spec.type) {
+        case 'range': {
+            const slider = el('input', { id: uid, type: 'range', min: spec.min, max: spec.max, step: spec.step });
+            const number = el('input', {
+                type: 'number',
+                class: 'ctl-num',
+                min: spec.min,
+                max: spec.max,
+                step: spec.step,
+                'aria-label': `${spec.label} value`,
+            });
+            const unit = el('span', { class: 'ctl-unit', text: spec.unit || '' });
+            head.append(number, unit);
+            if (spec.lockable) {
+                const lock = el('button', { type: 'button', class: 'lock', 'aria-label': `Lock ${spec.label}` });
+                const paint = () => {
+                    const on = state.locked();
+                    lock.setAttribute('aria-pressed', String(on));
+                    lock.textContent = on ? '\u{1F512}' : '\u{1F513}';
+                    lock.title = on ? 'Locked: Randomise keeps this value' : 'Unlocked: Randomise may change this';
+                };
+                lock.addEventListener('click', () => {
+                    state.toggle_lock();
+                    paint();
+                });
+                paint();
+                head.append(lock);
+            }
+            row.append(slider);
+            const clamp = v => Math.min(spec.max, Math.max(spec.min, v));
+            slider.addEventListener('input', () => {
+                number.value = format_number(slider.value, spec.step);
+                on_change(Number(slider.value), { coalesce: true });
+            });
+            number.addEventListener('change', () => {
+                const v = clamp(Number(number.value));
+                if (!Number.isFinite(v)) return;
+                slider.value = v;
+                number.value = format_number(v, spec.step);
+                on_change(v, { coalesce: false });
+            });
+            refresh = value => {
+                if (document.activeElement !== slider) slider.value = value;
+                if (document.activeElement !== number) number.value = format_number(value, spec.step);
+            };
+            break;
+        }
+        case 'select': {
+            const select = el('select', { id: uid });
+            for (const [value, text] of spec.options) select.append(el('option', { value, text }));
+            head.after(select);
+            select.addEventListener('change', () => on_change(select.value, { coalesce: false }));
+            refresh = value => {
+                select.value = value;
+            };
+            break;
+        }
+        case 'colour': {
+            const input = el('input', { id: uid, type: 'color' });
+            head.append(input);
+            input.addEventListener('input', () => on_change(input.value, { coalesce: true }));
+            refresh = value => {
+                if (document.activeElement !== input) input.value = value;
+            };
+            break;
+        }
+        case 'toggle': {
+            const input = el('input', { id: uid, type: 'checkbox' });
+            head.prepend(input);
+            input.addEventListener('change', () => on_change(input.checked, { coalesce: false }));
+            refresh = value => {
+                input.checked = Boolean(value);
+            };
+            break;
+        }
+        default:
+            throw new Error(`unknown control type "${spec.type}"`);
+    }
+    return { el: row, refresh };
+}
+return { make_control };
+})();
+// src/ui/panels.js
+const __m_ui_panels_js = (function () {
+const { SCHEMA, kMotifTypes, kMotifParams } = __m_core_schema_js;
+const { options_for, read_param } = __m_core_actions_js;
+const { make_control } = __m_ui_controls_js;
+const { el } = __m_ui_dom_js;
+const { step_body } = __m_ui_shell_js;
+// Sidebar step panels, generated from the registry (SPEC 11). Each step rebuilds only when its
+// structure changes (layer count, selected layer, motif list, Basic or Advanced); otherwise its
+// controls refresh in place, so a slider keeps focus while it is dragged.
+
+
+
+
+
+
+const kSteps = ['piece', 'material', 'layers', 'pattern', 'light', 'make'];
+
+function visible(entry, design, layer, tier) {
+    if (entry.tier === 'advanced' && tier !== 'advanced') return false;
+    return !entry.show_if || entry.show_if(design, layer);
+}
+
+class Panels {
+    // app: { design, ui: { layer, tier, locks }, set_param, set_motif_param, add_motif,
+    //        remove_motif, set_layer_locked, select_layer }
+    // extras: { make: (container) => void } fills fixed content after a step's controls.
+    constructor(app, extras = {}) {
+        this.app_ = app;
+        this.extras_ = extras;
+        this.sig_ = {};
+        this.refreshers_ = {};
+    }
+
+    render() {
+        for (const step of kSteps) this.render_step_(step);
+    }
+
+    signature_(step) {
+        const d = this.app_.design;
+        const { layer: k, tier } = this.app_.ui;
+        const layer = d.layers[k];
+        const shown = SCHEMA.filter(e => e.panel === step && visible(e, d, layer, tier)).map(e => e.id);
+        const parts = [tier, shown.join(',')];
+        if (step === 'layers') parts.push(d.layers.length, k);
+        if (step === 'pattern') parts.push(k, layer.source.motifs.map(m => m.type).join(','));
+        return parts.join('|');
+    }
+
+    render_step_(step) {
+        const sig = this.signature_(step);
+        if (sig === this.sig_[step]) {
+            for (const refresh of this.refreshers_[step]) refresh();
+            return;
+        }
+        this.sig_[step] = sig;
+        const body = step_body(step);
+        body.textContent = '';
+        const refreshers = (this.refreshers_[step] = []);
+        const d = this.app_.design;
+        const { layer: k, tier } = this.app_.ui;
+
+        if (step === 'layers') {
+            const strip = this.layer_strip_();
+            body.append(strip.el);
+            refreshers.push(strip.refresh);
+        }
+        if (step === 'layers' || step === 'pattern') {
+            body.append(el('h3', { class: 'sub', text: step === 'layers' ? `Layer ${k + 1}` : 'Symmetry' }));
+        }
+
+        for (const entry of SCHEMA.filter(e => e.panel === step && visible(e, d, d.layers[k], tier))) {
+            const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, d) } : entry;
+            const state = entry.lockable
+                ? { locked: () => this.app_.ui.locks.has(entry.id), toggle_lock: () => this.app_.toggle_lock(entry.id) }
+                : {};
+            const control = make_control(spec, (value, { coalesce }) => this.app_.set_param(entry, value, coalesce), state);
+            body.append(control.el);
+            const refresh = () => control.refresh(read_param(entry, this.app_.design, this.app_.ui.layer));
+            refresh();
+            refreshers.push(refresh);
+        }
+
+        if (step === 'pattern') this.motif_editor_(body, refreshers);
+        if (this.extras_[step]) this.extras_[step](body);
+    }
+
+    layer_strip_() {
+        const d = this.app_.design;
+        const strip = el('div', { class: 'layer-strip', role: 'listbox', 'aria-label': 'Layers, front first' });
+        d.layers.forEach((layer, k) => {
+            const chip = el('button', {
+                type: 'button',
+                class: 'layer-chip',
+                role: 'option',
+                'aria-selected': String(k === this.app_.ui.layer),
+                title: `Layer ${k + 1}${k === 0 ? ' (front)' : k === d.layers.length - 1 ? ' (back)' : ''}`,
+            });
+            chip.append(el('span', { class: 'swatch' }), el('span', { text: String(k + 1) }));
+            chip.firstChild.style.background = layer.finish.colour;
+            chip.addEventListener('click', () => this.app_.select_layer(k));
+            strip.append(chip);
+        });
+        const refresh = () => {
+            [...strip.children].forEach((chip, k) => {
+                chip.firstChild.style.background = this.app_.design.layers[k].finish.colour;
+            });
+        };
+        return { el: strip, refresh };
+    }
+
+    motif_editor_(body, refreshers) {
+        const app = this.app_;
+        const k = app.ui.layer;
+        const tier = app.ui.tier;
+        const layer = app.design.layers[k];
+        body.append(el('h3', { class: 'sub', text: `Pattern of layer ${k + 1}` }));
+
+        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value =>
+            app.set_layer_locked(value),
+        );
+        body.append(keep.el);
+        refreshers.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
+        keep.refresh(layer.locked);
+
+        if (!layer.source.motifs.length) {
+            body.append(el('p', { class: 'step-note', text: 'No openings: this layer is solid.' }));
+        }
+        layer.source.motifs.forEach((motif, i) => {
+            const card = el('div', { class: 'motif' });
+            const remove = el('button', { type: 'button', class: 'icon-btn small', 'aria-label': 'Remove', text: '×' });
+            remove.addEventListener('click', () => app.remove_motif(i));
+            card.append(el('div', { class: 'motif-head' }, [el('span', { text: kMotifTypes[motif.type].label }), remove]));
+            for (const key of kMotifTypes[motif.type].params) {
+                const p = kMotifParams[key];
+                if (p.tier === 'advanced' && tier !== 'advanced') continue;
+                const control = make_control({ ...p, type: 'range' }, (value, { coalesce }) =>
+                    app.set_motif_param(i, key, value, coalesce),
+                );
+                card.append(control.el);
+                const refresh = () => control.refresh(app.design.layers[app.ui.layer].source.motifs[i]?.[key] ?? 0);
+                refresh();
+                refreshers.push(refresh);
+            }
+            body.append(card);
+        });
+
+        const type = el('select', { 'aria-label': 'Opening type' });
+        for (const [id, t] of Object.entries(kMotifTypes)) type.append(el('option', { value: id, text: t.label }));
+        const add = el('button', { type: 'button', class: 'btn ghost', text: 'Add openings' });
+        add.addEventListener('click', () => app.add_motif(type.value));
+        body.append(el('div', { class: 'add-row' }, [type, add]));
+    }
+}
+return { Panels };
+})();
+// src/ui/header.js
+const __m_ui_header_js = (function () {
+const { kPresets } = __m_core_presets_js;
+const { el } = __m_ui_dom_js;
+// Header tools: presets, seed stepping, Randomise, undo and redo on the left; Basic or Advanced,
+// open and save on the right. Returns refresh() for state that follows the design and history.
+
+
+
+function button(text, title, on_click, cls = 'tool') {
+    const b = el('button', { type: 'button', class: cls, title, 'aria-label': title, text });
+    b.addEventListener('click', on_click);
+    return b;
+}
+
+function build_header(app) {
+    const left = document.getElementById('tools-left');
+    const right = document.getElementById('tools-right');
+
+    const presets = el('select', { class: 'tool-select', 'aria-label': 'Start from a preset' });
+    presets.append(el('option', { value: '', text: 'Presets' }));
+    for (const p of kPresets) presets.append(el('option', { value: p.id, text: p.name }));
+    presets.addEventListener('change', () => {
+        if (presets.value) app.load_preset(presets.value);
+        presets.value = '';
+    });
+
+    const seed = el('input', { type: 'number', class: 'seed', min: 0, step: 1, 'aria-label': 'Seed' });
+    seed.addEventListener('change', () => app.set_seed(Math.max(0, Math.round(Number(seed.value) || 0))));
+    const prev = button('←', 'Previous seed', () => app.set_seed(Math.max(0, app.design.seed - 1)));
+    const next = button('→', 'Next seed', () => app.set_seed(app.design.seed + 1));
+    const randomise = button(
+        'Randomise',
+        'New pattern from a random seed. Locked values and kept layers stay.',
+        () => app.set_seed(Math.floor(Math.random() * 1e6)),
+        'btn',
+    );
+    const undo = button('↶', 'Undo (Ctrl+Z)', () => app.undo());
+    const redo = button('↷', 'Redo (Ctrl+Shift+Z)', () => app.redo());
+    left.append(presets, el('div', { class: 'seed-group' }, [prev, seed, next]), randomise, undo, redo);
+
+    const basic = button('Basic', 'Show the main controls', () => app.set_tier('basic'), 'seg-btn');
+    const advanced = button('Advanced', 'Show every control', () => app.set_tier('advanced'), 'seg-btn');
+    const file = el('input', { type: 'file', accept: '.json,application/json', hidden: '' });
+    file.addEventListener('change', () => {
+        if (file.files[0]) app.open(file.files[0]);
+        file.value = '';
+    });
+    right.append(
+        el('div', { class: 'seg', role: 'group', 'aria-label': 'Detail' }, [basic, advanced]),
+        button('Open', 'Open a saved design (.lamina.json)', () => file.click()),
+        button('Save', 'Save this design as .lamina.json', () => app.save()),
+        file,
+    );
+
+    return {
+        refresh() {
+            if (document.activeElement !== seed) seed.value = app.design.seed;
+            undo.disabled = !app.store.can_undo();
+            redo.disabled = !app.store.can_redo();
+            basic.setAttribute('aria-pressed', String(app.ui.tier === 'basic'));
+            advanced.setAttribute('aria-pressed', String(app.ui.tier === 'advanced'));
+        },
+    };
+}
+return { build_header };
+})();
+// src/ui/make_panel.js
+const __m_ui_make_panel_js = (function () {
+const { el, save_bytes } = __m_ui_dom_js;
+const { set_status } = __m_ui_shell_js;
+// Fixed content of the Make step, after its registry controls (SPEC 11). M1 starts with the
+// calibration test card; sheets, checks and export follow.
+
+
+
+function build_make_extras(worker) {
+    return container => {
+        const button = el('button', { class: 'btn', type: 'button', text: 'Download calibration test card' });
+        container.append(
+            el('h3', { class: 'sub', text: 'Calibration' }),
+            el('p', {
+                class: 'step-note',
+                text:
+                    'Cut this first on a new laser or material. It measures kerf, import scale, minimum ' +
+                    'web, bridge, hole, dowel fit and fit clearance. Instructions are in the zip.',
+            }),
+            button,
+        );
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            set_status('busy', 'Building the test card');
+            try {
+                const { name, bytes } = await worker.call('test_card_zip');
+                save_bytes(name, bytes, 'application/zip');
+                set_status('ok', `Saved ${name}: SVG, DXF and instructions.`);
+            } catch (err) {
+                set_status('bad', `Test card failed: ${err.message}`);
+            } finally {
+                button.disabled = false;
+            }
+        });
+    };
+}
+return { build_make_extras };
+})();
+// src/ui/app.js
+const __m_ui_app_js = (function () {
+const { Store } = __m_core_store_js;
+const { migrate, piece_radius_mm } = __m_core_design_js;
+const { preset_by_id } = __m_core_presets_js;
+const { generate_stack } = __m_core_generate_js;
+const { write_param } = __m_core_actions_js;
+const { unpack_paths } = __m_geom_pack_js;
+const { Panels } = __m_ui_panels_js;
+const { build_header } = __m_ui_header_js;
+const { build_make_extras } = __m_ui_make_panel_js;
+const { set_status } = __m_ui_shell_js;
+const { save_bytes } = __m_ui_dom_js;
+// App controller: the design store, UI state, header and panels, the geometry worker and the
+// preview. Every edit goes through the store (one undo step per action or slider drag); every new
+// design is rebuilt in the worker, latest wins, and shown in the preview.
+
+
+
+
+
+
+
+
+
+
+
+
+const kDesignKey = 'lamina-design';
+const kTierKey = 'lamina-tier';
+
+function storage_get(key) {
+    try {
+        return localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function storage_set(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch {
+        // Storage unavailable: autosave is a convenience only.
+    }
+}
+
+function restore_design() {
+    try {
+        const raw = storage_get(kDesignKey);
+        return raw ? migrate(JSON.parse(raw)) : null;
+    } catch {
+        return null;
+    }
+}
+
+// Sensible starting values for new openings, relative to the space inside the frame ring.
+function new_motif(type, design, layer) {
+    const r = Math.max(10, piece_radius_mm(design.piece) - layer.frame_ring_mm);
+    const v = x => Math.round(x * r * 10) / 10;
+    switch (type) {
+        case 'disc':
+            return { type, d_mm: v(0.6) };
+        case 'window':
+            return { type, r_mm: v(0.55), size_mm: v(0.14), sides: 4, rot_deg: 0, mult: 1, angle_deg: 0 };
+        case 'petal':
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 };
+        case 'ring':
+            return { type, r_mm: v(0.78), w_mm: v(0.06), tie_mm: 3, mult: 1, angle_deg: 0 };
+        case 'ray':
+            return { type, r0_mm: v(0.3), r1_mm: v(0.9), w0_mm: 0, w1_mm: v(0.08), mult: 1, angle_deg: 0 };
+        default:
+            throw new Error(`unknown opening type "${type}"`);
+    }
+}
+
+const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
+
+function make_builder(worker, preview) {
+    let busy = false;
+    let pending = null;
+    async function run(design) {
+        busy = true;
+        try {
+            const t0 = performance.now();
+            const result = await worker.call('build', design);
+            const layers = result.layers.map(l => ({ ...l, material: unpack_paths(l.packed) }));
+            const t1 = performance.now();
+            preview.show(design, layers);
+            const t2 = performance.now();
+            set_status(
+                'ok',
+                `${design.name}: ${layers.length} layers. Geometry ${result.ms.toFixed(0)} ms, ` +
+                    `round trip ${(t1 - t0).toFixed(0)} ms, preview ${(t2 - t1).toFixed(0)} ms.`,
+            );
+        } catch (err) {
+            set_status('bad', `Build failed: ${err.message}`);
+        }
+        busy = false;
+        if (pending) {
+            const next = pending;
+            pending = null;
+            run(next);
+        }
+    }
+    return design => {
+        if (busy) pending = design;
+        else run(design);
+    };
+}
+
+function start_app({ worker, preview }) {
+    const store = new Store(restore_design() ?? preset_by_id('orb'));
+    const ui = { layer: 0, tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic', locks: new Set() };
+    let panels;
+    let header;
+
+    const render_ui = () => {
+        ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
+        panels.render();
+        header.refresh();
+    };
+    const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
+    const current = d => d.layers[ui.layer];
+
+    const app = {
+        store,
+        ui,
+        get design() {
+            return store.design;
+        },
+        set_param(entry, value, coalesce) {
+            edit(d => write_param(entry, d, ui.layer, value), coalesce ? `${entry.id}@${ui.layer}` : null);
+        },
+        set_motif_param(i, key, value, coalesce) {
+            edit(d => {
+                current(d).source.motifs[i][key] = value;
+            }, coalesce ? `motif@${ui.layer}.${i}.${key}` : null);
+        },
+        add_motif(type) {
+            edit(d => current(d).source.motifs.push(new_motif(type, d, current(d))));
+        },
+        remove_motif(i) {
+            edit(d => current(d).source.motifs.splice(i, 1));
+        },
+        set_layer_locked(value) {
+            edit(d => {
+                current(d).locked = value;
+            });
+        },
+        select_layer(k) {
+            ui.layer = k;
+            render_ui();
+        },
+        toggle_lock(id) {
+            if (ui.locks.has(id)) ui.locks.delete(id);
+            else ui.locks.add(id);
+        },
+        set_tier(tier) {
+            ui.tier = tier;
+            storage_set(kTierKey, tier);
+            render_ui();
+        },
+        set_seed(seed) {
+            edit(d => generate_stack(d, seed, { lock_n: ui.locks.has('symmetry.n') }));
+        },
+        load_preset(id) {
+            ui.layer = 0;
+            store.replace(preset_by_id(id));
+        },
+        undo: () => store.undo(),
+        redo: () => store.redo(),
+        save() {
+            const json = JSON.stringify(store.design, null, 2) + '\n';
+            save_bytes(`${slug(store.design.name)}.lamina.json`, new TextEncoder().encode(json), 'application/json');
+            set_status('ok', `Saved ${slug(store.design.name)}.lamina.json`);
+        },
+        open(file) {
+            file.text()
+                .then(text => {
+                    const design = migrate(JSON.parse(text));
+                    ui.layer = 0;
+                    store.replace(design);
+                })
+                .catch(err => set_status('bad', `Could not open ${file.name}: ${err.message}`));
+        },
+    };
+
+    panels = new Panels(app, { make: build_make_extras(worker) });
+    header = build_header(app);
+    const build = make_builder(worker, preview);
+    let save_timer = null;
+    store.subscribe(design => {
+        render_ui();
+        build(design);
+        clearTimeout(save_timer);
+        save_timer = setTimeout(() => storage_set(kDesignKey, JSON.stringify(design)), 400);
+    });
+
+    document.addEventListener('keydown', event => {
+        const typing = event.target.closest?.('input[type=number], input[type=text], select');
+        if (typing || !(event.ctrlKey || event.metaKey)) return;
+        const key = event.key.toLowerCase();
+        if (key === 'z' && !event.shiftKey) app.undo();
+        else if ((key === 'z' && event.shiftKey) || key === 'y') app.redo();
+        else return;
+        event.preventDefault();
+    });
+
+    render_ui();
+    build(store.design);
+    return app;
+}
+return { start_app };
+})();
 // src/main.js
 const __m_main_js = (function () {
 const { build_shell, set_status, show_stage_message } = __m_ui_shell_js;
 const { init_theme } = __m_ui_theme_js;
-const { build_make_panel } = __m_ui_make_panel_js;
 const { start_worker } = __m_worker_client_js;
 const { StackPreview } = __m_preview_three_stack_js;
-// Lamina Studio entry: builds the shell, starts the geometry worker, fills the panels that exist so
-// far and shows the M0 boot stack, which proves the worker, Clipper2 and the three.js preview work
-// together from a single file.
+const { start_app } = __m_ui_app_js;
+// Lamina Studio entry: builds the shell, starts the geometry worker and the 3D preview, then hands
+// over to the app controller.
 
 
 
 
 
 
-async function boot() {
+function boot() {
     build_shell();
     init_theme(document.getElementById('theme-toggle'));
     set_status('busy', 'Starting the geometry worker');
     const worker = start_worker();
-    build_make_panel(worker);
 
     let preview;
     try {
         preview = new StackPreview(document.getElementById('stage'));
-    } catch (err) {
+    } catch {
         show_stage_message('The 3D preview needs WebGL, which this browser could not start.');
-        set_status('bad', `3D preview unavailable: ${err.message}`);
-        return;
+        preview = { show() {} };
     }
-
-    try {
-        const t0 = performance.now();
-        const demo = await worker.call('boot_demo', { layers: 6, radius_mm: 150 });
-        const t1 = performance.now();
-        preview.set_layers(demo.layers);
-        const t2 = performance.now();
-        set_status(
-            'ok',
-            `Engine ready: ${demo.layers.length} demo layers. Worker start and geometry ` +
-                `${(t1 - t0).toFixed(0)} ms, preview ${(t2 - t1).toFixed(0)} ms.`,
-        );
-    } catch (err) {
-        set_status('bad', `Geometry worker failed: ${err.message}`);
-    }
+    start_app({ worker, preview });
 }
 
 boot();

@@ -1,42 +1,25 @@
-// Lamina Studio entry: builds the shell, starts the geometry worker, fills the panels that exist so
-// far and shows the M0 boot stack, which proves the worker, Clipper2 and the three.js preview work
-// together from a single file.
+// Lamina Studio entry: builds the shell, starts the geometry worker and the 3D preview, then hands
+// over to the app controller.
 import { build_shell, set_status, show_stage_message } from './ui/shell.js';
 import { init_theme } from './ui/theme.js';
-import { build_make_panel } from './ui/make_panel.js';
 import { start_worker } from './worker/client.js';
 import { StackPreview } from './preview/three_stack.js';
+import { start_app } from './ui/app.js';
 
-async function boot() {
+function boot() {
     build_shell();
     init_theme(document.getElementById('theme-toggle'));
     set_status('busy', 'Starting the geometry worker');
     const worker = start_worker();
-    build_make_panel(worker);
 
     let preview;
     try {
         preview = new StackPreview(document.getElementById('stage'));
-    } catch (err) {
+    } catch {
         show_stage_message('The 3D preview needs WebGL, which this browser could not start.');
-        set_status('bad', `3D preview unavailable: ${err.message}`);
-        return;
+        preview = { show() {} };
     }
-
-    try {
-        const t0 = performance.now();
-        const demo = await worker.call('boot_demo', { layers: 6, radius_mm: 150 });
-        const t1 = performance.now();
-        preview.set_layers(demo.layers);
-        const t2 = performance.now();
-        set_status(
-            'ok',
-            `Engine ready: ${demo.layers.length} demo layers. Worker start and geometry ` +
-                `${(t1 - t0).toFixed(0)} ms, preview ${(t2 - t1).toFixed(0)} ms.`,
-        );
-    } catch (err) {
-        set_status('bad', `Geometry worker failed: ${err.message}`);
-    }
+    start_app({ worker, preview });
 }
 
 boot();

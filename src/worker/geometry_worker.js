@@ -1,20 +1,34 @@
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
 // Protocol: request {id, type, payload}, reply {id, ok, result} or {id, ok: false, error}.
-// A result's top-level Uint8Array fields are transferred, not copied.
-import { boot_demo } from '../dev/boot_demo.js';
+// Typed arrays anywhere in a result are transferred, not copied.
+import { build_design } from '../pipeline/compose.js';
+import { pack_paths } from '../geom/pack.js';
 import { test_card_zip } from '../export/test_card.js';
+
+function build(design) {
+    const built = build_design(design);
+    return {
+        ms: built.ms,
+        layers: built.layers.map(l => ({
+            id: l.id,
+            area_mm2: l.area_mm2,
+            open_fraction: l.open_fraction,
+            packed: pack_paths(l.material),
+        })),
+    };
+}
 
 const kHandlers = {
     ping: () => ({ pong: true }),
-    boot_demo,
+    build,
     test_card_zip,
 };
 
-function transferables(result) {
-    if (!result || typeof result !== 'object') return [];
-    return Object.values(result)
-        .filter(v => v instanceof Uint8Array)
-        .map(v => v.buffer);
+function transferables(value, out = []) {
+    if (ArrayBuffer.isView(value)) out.push(value.buffer);
+    else if (Array.isArray(value)) for (const v of value) transferables(v, out);
+    else if (value && typeof value === 'object') for (const v of Object.values(value)) transferables(v, out);
+    return out;
 }
 
 self.onmessage = event => {
