@@ -319,14 +319,14 @@ Randomise with checks: Randomise tries up to 10 variations and keeps the first w
 ### 9.1 Cut files
 - **SVG**:
   - `width`/`height` in mm, with a `viewBox` in mm.
-  - Strokes use pure RGB primaries, because the Epilog driver's colour mapping works on vector artwork in RGB: cut `#FF0000`, score `#0000FF`, engrave (vector marking, for IDs) `#00FF00`, guide `#888888`.
-  - Guide geometry sits in a separate group named `guide` that the laser should ignore.
+  - Strokes use pure RGB primaries, because the Epilog driver's colour mapping works on vector artwork in RGB: cut `#FF0000`, score `#0000FF`, engrave (vector marking, for IDs) `#00FF00`.
+  - No guide geometry in cut files. Epilog vectors every colour it is sent, mapped or not `[Verify]`, so guides live only in previews and the assembly sheet. The writers reject unknown layers.
   - Stroke width 0.025 mm (about 0.001 in), so the driver treats every line as a hairline vector. `[Verify the threshold on the lab's Job Manager setup]`
   - Vector paths have no fill.
 - **DXF R12** (AC1009):
   - Header `$INSUNITS` 4 (mm) and `$MEASUREMENT` 1. The DXFs already proven at the lab (AngelShadowBox, written by ezdxf as AC1024) carry the same two values. R12 keeps the writer small, with no handles to get wrong.
   - A `LAYER` table and `POLYLINE`/`VERTEX` entities in mm: closed for cuts, open for score lines and engraved text strokes.
-  - Layers `CUT` (colour 1), `SCORE` (5), `ENGRAVE` (3) and `GUIDE` (8). The test card's score ramp adds `RAMP_1` to `RAMP_5`, using ACI colours 5, 4, 6, 2 and 30, which are RGB blue, cyan, magenta, yellow and orange.
+  - Layers `CUT` (colour 1), `SCORE` (5) and `ENGRAVE` (3). The test card's score ramp adds `RAMP_1` to `RAMP_5`, using ACI colours 5, 4, 6, 2 and 30, which are RGB blue, cyan, magenta, yellow and orange.
   - No splines and no bulges: everything is flattened.
 - **Order**: within each part, inner contours first, then the outline.
 - **Lab workflow** (Adobe Illustrator printing to Epilog Job Manager):
@@ -533,6 +533,23 @@ Done when:
 - [ ] The tests in section 16 pass, including the determinism test.
 - [ ] Performance targets for M1 are measured and recorded in `docs/PERF.md`.
 - [ ] Physical proof: the test card is cut on the lab laser and its measurements are entered. A 4-layer, 120 mm primitive piece is cut and assembled, with bridges, dowels, IDs and spacers all working.
+
+**Progress** (M1 is built in slices, the test card first):
+- 2026-11-06, slice 1 done: the calibration test card (9.4) downloads from the Make step as a zip of SVG, DXF and instructions.
+  - New code: the SVG and DXF R12 writers, the store-only zip, and the single-stroke font.
+  - Checked independently with ezdxf 1.4.5: AC1009, 0 audit errors, `$INSUNITS` 4, cut extents exactly 150.000 x 100.000 mm. Python `zipfile` finds valid CRCs.
+  - The zip the browser downloads is byte-identical to the one Node builds.
+  - Waiting on: the first cut at the lab.
+- Next slices:
+  1. Data model, SCHEMA and undo.
+  2. Outlines, primitives and symmetry.
+  3. Islands, bridges and checks.
+  4. Registration and spacers.
+  5. Previews.
+  6. Packing, zip and the assembly sheet.
+  7. SVG import.
+  8. Calibrate panel.
+  9. Performance and golden designs.
 
 ### M2: lattice
 Square, 45-degree and polar grids. Meander, key-fret, window lattice and band generators. Field-sliced depth mode. Cell paint and erase with live symmetry, region lock and mask, and bridge drag. Done when an orb-style piece of about 12 layers can be made in Basic mode from a preset and passes the checks. A physical cut is recommended.
