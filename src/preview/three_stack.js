@@ -122,6 +122,15 @@ export class StackPreview {
         this.renderer_.render(this.scene_, this.camera_);
     }
 
+    // A PNG of the current view, for the export zip. Rendered and read in the same task, so the
+    // drawing buffer is still intact.
+    capture_png() {
+        this.render();
+        return new Promise(resolve => {
+            this.renderer_.domElement.toBlob(async blob => resolve(blob ? new Uint8Array(await blob.arrayBuffer()) : null), 'image/png');
+        });
+    }
+
     // three.js sets an inline display on its canvas, which beats the [hidden] attribute.
     set_visible(on) {
         this.renderer_.domElement.style.display = on ? 'block' : 'none';

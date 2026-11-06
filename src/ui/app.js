@@ -237,7 +237,24 @@ export function start_app({ worker, preview, stage }) {
     };
     checks_view = make_checks_view(app);
     layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
-    panels = new Panels(app, { make: build_make_extras(worker, checks_view) });
+    app.export_zip = async () => {
+        const design = store.design;
+        set_status('busy', 'Exporting');
+        try {
+            const preview_png = preview.capture_png ? await preview.capture_png().catch(() => null) : null;
+            const result = await worker.call('export_zip', { design, preview_png });
+            if (result.blocked) {
+                set_status('bad', `Export blocked by ${result.problems.length === 1 ? 'a problem' : `${result.problems.length} problems`}: ${result.problems.join(' ')} Fix them, or allow them in the check list.`);
+                return;
+            }
+            save_bytes(result.name, result.bytes, 'application/zip');
+            const sheets = result.summary.sheets.map(s => `${s.count} sheet${s.count === 1 ? '' : 's'} of ${s.material}`).join(', ');
+            set_status('ok', `Saved ${result.name}: ${sheets}, ${result.summary.parts} parts, ${result.summary.files} files.`);
+        } catch (err) {
+            set_status('bad', `Export failed: ${err.message}`);
+        }
+    };
+    panels = new Panels(app, { make: build_make_extras(worker, checks_view, () => app.export_zip()) });
     header = build_header(app);
     for (const tab of document.querySelectorAll('#tabs .tab')) {
         tab.addEventListener('click', () => {

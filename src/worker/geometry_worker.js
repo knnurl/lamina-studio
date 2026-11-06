@@ -8,6 +8,7 @@ import { slow_checks } from '../pipeline/checks.js';
 import { dowel_length_mm } from '../pipeline/registration.js';
 import { pack_paths } from '../geom/pack.js';
 import { test_card_zip } from '../export/test_card.js';
+import { export_design } from '../export/export_design.js';
 
 let cache = { key: null, built: null };
 
@@ -45,6 +46,15 @@ function build(design) {
     };
 }
 
+// Exports the design as a zip, unless an un-allowed fatal finding blocks it.
+function export_zip({ design, preview_png = null }) {
+    const built = built_for(design);
+    const checks = [...built.checks, ...slow_checks(design, built.layers)];
+    const blocking = checks.filter(c => c.severity === 'fatal' && !c.overridden);
+    if (blocking.length) return { blocked: true, problems: blocking.map(c => `${c.id} ${c.message}`) };
+    return export_design(design, built.layers, built.registration, checks, { preview_png });
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -56,6 +66,7 @@ const kHandlers = {
     ping: () => ({ pong: true }),
     build,
     check,
+    export_zip,
     test_card_zip,
 };
 

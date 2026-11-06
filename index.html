@@ -416,7 +416,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 20 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 23 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -1288,7 +1288,7 @@ function base_design(layer_count = 8) {
             depth_mode: 'per_layer',
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
-        sheet: { w_mm: 600, h_mm: 400, margin_mm: 5, spacing_mm: 3 },
+        sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
         registration: { dowel_d_mm: 3, count: 3, through_front: false, ids: true },
         spacers: { style: 'pucks', stock_material: 'ply3' },
         layers: Array.from({ length: layer_count }, (_, k) => default_layer(k, layer_count)),
@@ -2017,6 +2017,14 @@ function fast_checks(design, built, registration = { warnings: [] }) {
             const boxes = b.islands.filter(i => b.unbridged.includes(i.id)).map(i => i.bbox);
             out.push(result(design, 'G-01', 'fatal', k, `Layer ${k + 1}: ${plural(b.unbridged.length, 'island', 'islands')} could not be bridged and would fall out.`, boxes));
         }
+        const box = bbox_mm(b.material);
+        const w = box.x1 - box.x0 + mat.kerf_mm;
+        const h = box.y1 - box.y0 + mat.kerf_mm;
+        const W = design.sheet.w_mm - 2 * design.sheet.margin_mm;
+        const H = design.sheet.h_mm - 2 * design.sheet.margin_mm;
+        if (!((w <= W && h <= H) || (h <= W && w <= H))) {
+            out.push(result(design, 'G-05', 'fatal', k, `Layer ${k + 1} (${w.toFixed(1)} x ${h.toFixed(1)} mm) does not fit the ${design.sheet.w_mm} x ${design.sheet.h_mm} mm sheet inside its ${design.sheet.margin_mm} mm margin.`));
+        }
         const pieces = components(b.material).length;
         if (pieces > 1) {
             out.push(result(design, 'G-04', 'fatal', k, `Layer ${k + 1} falls apart into ${pieces} pieces.`));
@@ -2707,6 +2715,457 @@ function test_card_zip() {
 }
 return { kCard, build_test_card, test_card_instructions, test_card_zip };
 })();
+// src/export/pack.js
+const __m_export_pack_js = (function () {
+// Sheet packing (SPEC 9.2): bounding-box skyline packing, bottom-left, rotation 0 or 90 degrees,
+// largest parts first, first fit across the sheets already open. Deterministic: the same parts in
+// the same order give the same layout. Not true-shape nesting: small parts do not go inside other
+// parts' holes.
+// Units: mm. Each skyline starts at the usable area's bottom-left (inside the sheet margin).
+
+const kEps = 1e-9;
+
+function new_sheet(W, s) {
+    return { skyline: [{ x: 0, y: 0, w: W + s }], placed: [] };
+}
+
+// Lowest y at which a box w wide can rest from skyline segment i, or null.
+function rest_y(skyline, i, w, W, s) {
+    if (skyline[i].x + w > W + s + kEps) return null;
+    let y = 0;
+    let span = 0;
+    for (let j = i; span < w - kEps; j++) {
+        if (j >= skyline.length) return null;
+        y = Math.max(y, skyline[j].y);
+        span += skyline[j].w;
+    }
+    return y;
+}
+
+function raise(skyline, box) {
+    const next = [];
+    for (const seg of skyline) {
+        const a = seg.x;
+        const b = seg.x + seg.w;
+        if (b <= box.x + kEps || a >= box.x + box.w - kEps) next.push(seg);
+        else {
+            if (a < box.x) next.push({ x: a, y: seg.y, w: box.x - a });
+            if (b > box.x + box.w) next.push({ x: box.x + box.w, y: seg.y, w: b - box.x - box.w });
+        }
+    }
+    next.push({ x: box.x, y: box.y + box.h, w: box.w });
+    next.sort((p, q) => p.x - q.x);
+    return next.reduce((acc, seg) => {
+        const last = acc[acc.length - 1];
+        if (last && Math.abs(last.y - seg.y) < kEps) last.w += seg.w;
+        else acc.push({ ...seg });
+        return acc;
+    }, []);
+}
+
+// Best bottom-left spot for the item on one sheet, or null.
+function spot(sheet_state, item, W, H, s) {
+    let best = null;
+    for (const rotated of [false, true]) {
+        const w = (rotated ? item.h : item.w) + s;
+        const h = (rotated ? item.w : item.h) + s;
+        sheet_state.skyline.forEach((seg, i) => {
+            const y = rest_y(sheet_state.skyline, i, w, W, s);
+            if (y === null || y + h > H + s + kEps) return;
+            const top = y + h;
+            if (!best || top < best.y + best.h - kEps || (Math.abs(top - best.y - best.h) < kEps && seg.x < best.x)) {
+                best = { x: seg.x, y, w, h, rotated };
+            }
+        });
+    }
+    return best;
+}
+
+// items: [{ key, w, h }], one per copy. sheet: { w_mm, h_mm, margin_mm, spacing_mm }.
+// Returns { sheets: [[{ key, x, y, rotated }]], unplaced: [key] }; x, y are the placed box's
+// bottom-left corner in sheet coordinates (mm).
+function pack(items, sheet) {
+    const W = sheet.w_mm - 2 * sheet.margin_mm;
+    const H = sheet.h_mm - 2 * sheet.margin_mm;
+    const s = sheet.spacing_mm;
+    const order = items
+        .map((item, i) => ({ ...item, i }))
+        .sort((a, b) => b.w * b.h - a.w * a.h || Math.max(b.w, b.h) - Math.max(a.w, a.h) || a.i - b.i);
+    const states = [];
+    const unplaced = [];
+    for (const item of order) {
+        const fits_at_all = (item.w <= W + kEps && item.h <= H + kEps) || (item.h <= W + kEps && item.w <= H + kEps);
+        if (!fits_at_all) {
+            unplaced.push(item.key);
+            continue;
+        }
+        let target = null;
+        let box = null;
+        for (const state of states) {
+            box = spot(state, item, W, H, s);
+            if (box) {
+                target = state;
+                break;
+            }
+        }
+        if (!target) {
+            target = new_sheet(W, s);
+            states.push(target);
+            box = spot(target, item, W, H, s);
+        }
+        target.skyline = raise(target.skyline, box);
+        target.placed.push({ key: item.key, x: box.x + sheet.margin_mm, y: box.y + sheet.margin_mm, rotated: box.rotated });
+    }
+    return { sheets: states.map(st => st.placed), unplaced };
+}
+return { pack };
+})();
+// src/export/assembly.js
+const __m_export_assembly_js = (function () {
+const { material_of, layer_thickness_mm } = __m_core_design_js;
+const { dowel_length_mm } = __m_pipeline_registration_js;
+const { kUmPerMm } = __m_core_units_js;
+// Assembly sheet (SPEC 9.3): a printable page (the browser saves it as PDF) with the stack table,
+// build steps, layer thumbnails and any warnings or allowed findings. Light theme for paper.
+// Deterministic: no dates, no randomness.
+
+
+
+
+const esc = s =>
+    String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function outline_text(o) {
+    switch (o.kind) {
+        case 'circle':
+            return `${o.w_mm} mm circle`;
+        case 'rect':
+            return `${o.w_mm} x ${o.h_mm} mm rectangle`;
+        case 'polygon':
+            return `${o.w_mm} mm ${o.sides}-sided polygon`;
+        case 'arch':
+            return `${o.w_mm} x ${o.h_mm} mm arch`;
+        default:
+            return o.kind;
+    }
+}
+
+function thumbnail(material, colour) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of material.flat()) {
+        x0 = Math.min(x0, p.x);
+        y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x);
+        y1 = Math.max(y1, p.y);
+    }
+    const f = v => (v / kUmPerMm).toFixed(1);
+    const d = material.map(path => 'M' + path.map(p => `${f(p.x)} ${f(-p.y)}`).join('L') + 'Z').join('');
+    const pad = 2;
+    const vb = `${f(x0 - pad * kUmPerMm)} ${f(-y1 - pad * kUmPerMm)} ${f(x1 - x0 + 2 * pad * kUmPerMm)} ${f(y1 - y0 + 2 * pad * kUmPerMm)}`;
+    return `<svg viewBox="${vb}" width="150" height="150"><path d="${d}" fill="${esc(colour)}" fill-rule="evenodd" stroke="#333" stroke-width="0.4"/></svg>`;
+}
+
+function assembly_html(design, built, registration, checks, parts, sheets) {
+    const n = design.layers.length;
+    const reg = design.registration;
+    const drilled_from = reg.through_front ? 1 : 2;
+    const total_mm = design.layers.reduce((s, l, k) => s + layer_thickness_mm(design, l) + (k < n - 1 ? l.gap_mm : 0), 0);
+    const cut_m = built.reduce((s, l) => s + l.cut_length_mm, 0) / 1000;
+    const sheet_counts = {};
+    for (const s of sheets) sheet_counts[s.material] = (sheet_counts[s.material] ?? 0) + 1;
+    const spacer_for = k => registration.spacers.find(s => s.gap === k);
+
+    const rows = design.layers
+        .map((layer, k) => {
+            const mat = material_of(design, layer);
+            const sp = spacer_for(k);
+            const glue = built[k].parts.length;
+            return `<tr>
+<td>${k + 1}${k === 0 ? ' (front)' : k === n - 1 ? ' (back)' : ''}</td>
+<td>${esc(mat.label)}</td>
+<td>${layer_thickness_mm(design, layer)} mm</td>
+<td><span class="sw" style="background:${esc(layer.finish.colour)}"></span>${esc(layer.finish.colour)}</td>
+<td>${k < n - 1 ? `${layer.gap_mm} mm` : ''}</td>
+<td>${sp ? `${plural(sp.copies, sp.kind === 'puck' ? 'puck' : 'ring')}` : ''}</td>
+<td>${glue ? plural(glue, 'glue-on part') : ''}</td>
+<td>${k + 1 >= drilled_from && registration.dowels.length ? 'yes' : 'no'}</td>
+</tr>`;
+        })
+        .join('\n');
+
+    const glue_steps = [];
+    built.forEach((l, k) => {
+        if (l.parts.length) {
+            glue_steps.push(`<li>Glue the ${plural(l.parts.length, 'loose part')} cut from layer ${k + 1} onto layer ${k + 2}, inside the scored outlines.</li>`);
+        }
+    });
+    const gaps = registration.spacers.map(s => `behind layer ${s.gap + 1}: ${plural(s.copies, s.kind === 'puck' ? 'puck' : 'ring')}`);
+    const findings = checks.filter(c => c.severity !== 'info');
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(design.name)}: assembly</title>
+<style>
+body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1c1626; background: #fff; margin: 24px auto; max-width: 900px; padding: 0 16px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 24px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+.sub { color: #5c5270; margin: 0 0 16px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #eee; vertical-align: middle; }
+th { color: #5c5270; font-weight: 600; }
+.sw { display: inline-block; width: 12px; height: 12px; border: 1px solid #999; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; margin: 0; }
+.facts div { background: #f6f3fa; padding: 8px 10px; border-radius: 6px; }
+.facts b { display: block; font-size: 12px; color: #5c5270; font-weight: 600; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 12px; }
+.thumbs figure { margin: 0; text-align: center; font-size: 12px; color: #5c5270; }
+.warn { color: #a86300; }
+.fatal { color: #c62f4a; }
+@media print { body { margin: 0; } h2 { break-after: avoid; } .thumbs, table { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<h1>${esc(design.name)}</h1>
+<p class="sub">Lamina Studio assembly sheet. Print it, or save it as PDF from the browser.</p>
+
+<div class="facts">
+<div><b>Piece</b>${outline_text(design.piece.outline)}, ${plural(n, 'layer')}, ${total_mm.toFixed(1)} mm deep</div>
+<div><b>Sheets</b>${Object.entries(sheet_counts).map(([m, c]) => `${c} x ${esc(material_of(design, { material: m }).label)}, ${design.sheet.w_mm} x ${design.sheet.h_mm} mm`).join('<br>') || 'none'}</div>
+<div><b>Dowels</b>${registration.dowels.length ? `${registration.dowels.length} x ${reg.dowel_d_mm} mm, ${dowel_length_mm(design)} mm long (holes ${registration.hole_d_mm.toFixed(2)} mm)` : 'none'}</div>
+<div><b>Cutting</b>${cut_m.toFixed(1)} m of cut line, ${plural(parts.reduce((s, p) => s + p.copies, 0), 'part')}</div>
+</div>
+
+<h2>Stack, front to back</h2>
+<table>
+<tr><th>Layer</th><th>Material</th><th>Thickness</th><th>Finish</th><th>Gap behind</th><th>Spacers</th><th>Loose parts</th><th>Drilled</th></tr>
+${rows}
+</table>
+
+<h2>Build steps</h2>
+<ol>
+<li>Cut the sheets. On each sheet run green (engrave) and blue (score) before red (cut), so parts are marked before they drop out.</li>
+<li>Finish each layer in the colour listed above before assembly. Keep paint out of the dowel holes.</li>
+${glue_steps.join('\n')}
+${registration.dowels.length ? `<li>Push the ${plural(registration.dowels.length, 'dowel')} through the back layer (layer ${n}).</li>
+<li>Stack layers ${n - 1} to ${drilled_from} onto the dowels, matching the engraved numbers (hidden on the face under the layer in front; the arrow points up)${gaps.length ? `, with spacers ${gaps.join('; ')}` : ''}.</li>` : `<li>Stack the layers from the back (layer ${n}) to the front, aligning their outlines.</li>`}
+${drilled_from === 2 ? '<li>Glue the front layer (layer 1) on last, aligned by its outline. It is not drilled, so the dowels stay hidden.</li>' : ''}
+</ol>
+
+<h2>Layers</h2>
+<div class="thumbs">
+${built.map((l, k) => `<figure>${thumbnail(l.material, design.layers[k].finish.colour)}<figcaption>Layer ${k + 1}</figcaption></figure>`).join('\n')}
+</div>
+${findings.length ? `
+<h2>Checks</h2>
+<ul>
+${findings.map(c => `<li class="${c.severity === 'fatal' ? 'fatal' : 'warn'}">${esc(c.id)}: ${esc(c.message)}${c.overridden ? ' Allowed by the designer.' : ''}</li>`).join('\n')}
+</ul>` : ''}
+</body>
+</html>
+`;
+}
+return { assembly_html };
+})();
+// src/export/export_design.js
+const __m_export_export_design_js = (function () {
+const { offset, path_area_um2 } = __m_geom_clip_js;
+const { material_of } = __m_core_design_js;
+const { mm_to_um, kUmPerMm } = __m_core_units_js;
+const { drawing_to_svg } = __m_export_svg_js;
+const { drawing_to_dxf } = __m_export_dxf_js;
+const { zip_store } = __m_export_zip_store_js;
+const { pack } = __m_export_pack_js;
+const { assembly_html } = __m_export_assembly_js;
+// Design export (SPEC 9): kerf-compensated cut files for every layer, glue-on part and spacer,
+// packed onto stock sheets per material, plus design.json, checks.txt and the assembly sheet, in
+// one zip. Deterministic: the same design gives the same bytes (the optional preview PNG aside).
+// Kerf: cut paths are the design offset by +kerf/2 with round joins (the beam is round), so
+// outlines grow and holes shrink and the cut part comes out at its design size.
+// Assumptions: geometry in micrometres, y up; drawings in mm with the origin bottom-left.
+
+
+
+
+
+
+
+
+
+const kKerfTolUm = 5;
+
+const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
+const pad2 = n => String(n).padStart(2, '0');
+
+function kerf(paths, kerf_mm) {
+    return paths.length ? offset(paths, mm_to_um(kerf_mm / 2), 'round', kKerfTolUm) : [];
+}
+
+function bounds_um(groups) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const paths of groups) {
+        for (const path of paths) {
+            for (const p of path) {
+                x0 = Math.min(x0, p.x);
+                y0 = Math.min(y0, p.y);
+                x1 = Math.max(x1, p.x);
+                y1 = Math.max(y1, p.y);
+            }
+        }
+    }
+    return { x0, y0, x1, y1 };
+}
+
+// Everything that gets cut: { key, file, label, material, cut, score, engrave, copies, w, h, b }.
+function export_parts(design, built, registration) {
+    const parts = [];
+    const add = part => {
+        const b = bounds_um([part.cut]);
+        parts.push({ score: [], engrave: [], copies: 1, ...part, b, w: (b.x1 - b.x0) / kUmPerMm, h: (b.y1 - b.y0) / kUmPerMm });
+    };
+    built.forEach((l, k) => {
+        const layer = design.layers[k];
+        const mat = material_of(design, layer);
+        add({
+            key: `L${pad2(k + 1)}`,
+            file: `layers/L${pad2(k + 1)}`,
+            label: `Layer ${k + 1}`,
+            material: layer.material,
+            cut: kerf(l.material, mat.kerf_mm),
+            score: l.locators,
+            engrave: l.ids,
+        });
+        l.parts.forEach((p, i) => {
+            add({
+                key: `L${pad2(k + 1)}-glue-${pad2(i + 1)}`,
+                file: `parts/L${pad2(k + 1)}_glue_${pad2(i + 1)}`,
+                label: `Glue-on part ${i + 1} of layer ${k + 1}`,
+                material: layer.material,
+                cut: kerf(p, mat.kerf_mm),
+            });
+        });
+    });
+    for (const s of registration.spacers) {
+        const stock = design.spacers.stock_material;
+        add({
+            key: `gap${pad2(s.gap + 1)}-${s.kind}`,
+            file: `parts/gap${pad2(s.gap + 1)}_${s.kind}_x${s.copies}`,
+            label: `Spacer ${s.kind}, behind layer ${s.gap + 1}`,
+            material: stock,
+            cut: kerf(s.paths, material_of(design, { material: stock }).kerf_mm),
+            copies: s.copies,
+        });
+    }
+    return parts;
+}
+
+// Moves a part so its bounding box's bottom-left sits at (x_mm, y_mm), turned 90 degrees if asked.
+function placer(part, x_mm, y_mm, rotated) {
+    const { b } = part;
+    const dx = mm_to_um(x_mm);
+    const dy = mm_to_um(y_mm);
+    return path =>
+        path.map(p =>
+            rotated
+                ? { x: Math.round(b.y1 - p.y + dx), y: Math.round(p.x - b.x0 + dy) }
+                : { x: Math.round(p.x - b.x0 + dx), y: Math.round(p.y - b.y0 + dy) },
+        );
+}
+
+// Engraving and scoring first, then holes, then outlines, so parts are marked before they drop.
+function drawing(width_mm, height_mm, placed) {
+    const engrave = [];
+    const score = [];
+    const holes = [];
+    const outers = [];
+    for (const { part, move } of placed) {
+        for (const s of part.engrave) engrave.push({ layer: 'ENGRAVE', closed: false, points: move(s) });
+        for (const s of part.score) score.push({ layer: 'SCORE', closed: true, points: move(s) });
+        for (const c of part.cut) (path_area_um2(c) < 0 ? holes : outers).push({ layer: 'CUT', closed: true, points: move(c) });
+    }
+    return { width_mm, height_mm, items: [...engrave, ...score, ...holes, ...outers] };
+}
+
+function checks_text(checks) {
+    if (!checks.length) return 'All checks pass.\n';
+    return checks
+        .map(c => `${c.severity.toUpperCase().padEnd(5)} ${c.id}  ${c.message}${c.overridden ? '  (allowed by the designer)' : ''}`)
+        .join('\n') + '\n';
+}
+
+// Lays out every part on stock sheets, one set of sheets per material.
+function layout_sheets(design, parts) {
+    const by_material = new Map();
+    for (const part of parts) {
+        if (!by_material.has(part.material)) by_material.set(part.material, []);
+        by_material.get(part.material).push(part);
+    }
+    const sheets = [];
+    const unplaced = [];
+    for (const [material, group] of [...by_material.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+        const items = [];
+        for (const part of group) for (let c = 0; c < part.copies; c++) items.push({ key: `${part.key}#${c + 1}`, w: part.w, h: part.h });
+        const result = pack(items, design.sheet);
+        unplaced.push(...result.unplaced);
+        result.sheets.forEach(placements => sheets.push({ material, placements }));
+    }
+    return { sheets, unplaced };
+}
+
+// files for the zip, plus a summary. preview_png: optional Uint8Array from the 3D view.
+function export_design(design, built, registration, checks, { preview_png = null } = {}) {
+    const parts = export_parts(design, built, registration);
+    const by_key = new Map(parts.map(p => [p.key, p]));
+    const root = `lamina_${slug(design.name)}`;
+    const files = [];
+    const add_drawing = (path, d) => {
+        files.push({ name: `${root}/${path}.svg`, data: drawing_to_svg(d) });
+        files.push({ name: `${root}/${path}.dxf`, data: drawing_to_dxf(d) });
+    };
+
+    const { sheets, unplaced } = layout_sheets(design, parts);
+    const per_material = {};
+    sheets.forEach(sheet => {
+        per_material[sheet.material] = (per_material[sheet.material] ?? 0) + 1;
+        const placed = sheet.placements.map(pl => {
+            const part = by_key.get(pl.key.split('#')[0]);
+            return { part, move: placer(part, pl.x, pl.y, pl.rotated) };
+        });
+        add_drawing(`sheets/sheet_${pad2(per_material[sheet.material])}_${sheet.material}`, drawing(design.sheet.w_mm, design.sheet.h_mm, placed));
+    });
+
+    const margin = 5;
+    for (const part of parts) {
+        add_drawing(part.file, drawing(part.w + 2 * margin, part.h + 2 * margin, [{ part, move: placer(part, margin, margin, false) }]));
+    }
+
+    files.push({ name: `${root}/design.json`, data: JSON.stringify(design, null, 2) + '\n' });
+    files.push({ name: `${root}/checks.txt`, data: checks_text(checks) });
+    files.push({ name: `${root}/assembly.html`, data: assembly_html(design, built, registration, checks, parts, sheets) });
+    if (preview_png) files.push({ name: `${root}/preview.png`, data: preview_png });
+
+    return {
+        name: `${root}.zip`,
+        bytes: zip_store(files),
+        summary: {
+            files: files.length,
+            sheets: Object.entries(per_material).map(([material, count]) => ({ material, count })),
+            parts: parts.reduce((n, p) => n + p.copies, 0),
+            unplaced,
+        },
+    };
+}
+return { export_parts, layout_sheets, export_design };
+})();
 // src/worker/geometry_worker.js
 const __m_worker_geometry_worker_js = (function () {
 const { build_design } = __m_pipeline_compose_js;
@@ -2714,11 +3173,13 @@ const { slow_checks } = __m_pipeline_checks_js;
 const { dowel_length_mm } = __m_pipeline_registration_js;
 const { pack_paths } = __m_geom_pack_js;
 const { test_card_zip } = __m_export_test_card_js;
+const { export_design } = __m_export_export_design_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
 // Protocol: request {id, type, payload}, reply {id, ok, result} or {id, ok: false, error}.
 // Typed arrays anywhere in a result are transferred, not copied.
 // 'build' is fast and runs on every edit; 'check' runs the slow checks on the last build of the
 // same design (cached by its JSON), so the UI can debounce it.
+
 
 
 
@@ -2761,6 +3222,15 @@ function build(design) {
     };
 }
 
+// Exports the design as a zip, unless an un-allowed fatal finding blocks it.
+function export_zip({ design, preview_png = null }) {
+    const built = built_for(design);
+    const checks = [...built.checks, ...slow_checks(design, built.layers)];
+    const blocking = checks.filter(c => c.severity === 'fatal' && !c.overridden);
+    if (blocking.length) return { blocked: true, problems: blocking.map(c => `${c.id} ${c.message}`) };
+    return export_design(design, built.layers, built.registration, checks, { preview_png });
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -2772,6 +3242,7 @@ const kHandlers = {
     ping: () => ({ pong: true }),
     build,
     check,
+    export_zip,
     test_card_zip,
 };
 
@@ -85759,7 +86230,7 @@ function base_design(layer_count = 8) {
             depth_mode: 'per_layer',
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
-        sheet: { w_mm: 600, h_mm: 400, margin_mm: 5, spacing_mm: 3 },
+        sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
         registration: { dowel_d_mm: 3, count: 3, through_front: false, ids: true },
         spacers: { style: 'pucks', stock_material: 'ply3' },
         layers: Array.from({ length: layer_count }, (_, k) => default_layer(k, layer_count)),
@@ -85962,6 +86433,15 @@ class StackPreview {
 
     render() {
         this.renderer_.render(this.scene_, this.camera_);
+    }
+
+    // A PNG of the current view, for the export zip. Rendered and read in the same task, so the
+    // drawing buffer is still intact.
+    capture_png() {
+        this.render();
+        return new Promise(resolve => {
+            this.renderer_.domElement.toBlob(async blob => resolve(blob ? new Uint8Array(await blob.arrayBuffer()) : null), 'image/png');
+        });
     }
 
     // three.js sets an inline display on its canvas, which beats the [hidden] attribute.
@@ -87097,17 +87577,35 @@ return { build_header };
 const __m_ui_make_panel_js = (function () {
 const { el, save_bytes } = __m_ui_dom_js;
 const { set_status } = __m_ui_shell_js;
-// Fixed content of the Make step, after its registry controls (SPEC 11): the check report, then
-// the calibration test card. Sheets and export follow in later slices.
+// Fixed content of the Make step, after its registry controls (SPEC 11): export, the check report,
+// then the calibration test card.
 
 
 
-function build_make_extras(worker, checks_view) {
+function build_make_extras(worker, checks_view, on_export) {
     return container => {
-        container.append(el('h3', { class: 'sub', text: 'Checks' }));
+        const export_button = el('button', { class: 'btn', type: 'button', text: 'Export cut files' });
+        export_button.addEventListener('click', async () => {
+            export_button.disabled = true;
+            try {
+                await on_export();
+            } finally {
+                export_button.disabled = false;
+            }
+        });
+        container.append(
+            el('p', {
+                class: 'step-note',
+                text:
+                    'A zip of SVG and DXF for every sheet, layer and part (kerf applied), the assembly ' +
+                    'sheet, the check report and the design file.',
+            }),
+            export_button,
+            el('h3', { class: 'sub', text: 'Checks' }),
+        );
         checks_view.attach(container);
 
-        const button = el('button', { class: 'btn', type: 'button', text: 'Download calibration test card' });
+        const button = el('button', { class: 'btn ghost', type: 'button', text: 'Download calibration test card' });
         container.append(
             el('h3', { class: 'sub', text: 'Calibration' }),
             el('p', {
@@ -87456,7 +87954,24 @@ function start_app({ worker, preview, stage }) {
     };
     checks_view = make_checks_view(app);
     layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
-    panels = new Panels(app, { make: build_make_extras(worker, checks_view) });
+    app.export_zip = async () => {
+        const design = store.design;
+        set_status('busy', 'Exporting');
+        try {
+            const preview_png = preview.capture_png ? await preview.capture_png().catch(() => null) : null;
+            const result = await worker.call('export_zip', { design, preview_png });
+            if (result.blocked) {
+                set_status('bad', `Export blocked by ${result.problems.length === 1 ? 'a problem' : `${result.problems.length} problems`}: ${result.problems.join(' ')} Fix them, or allow them in the check list.`);
+                return;
+            }
+            save_bytes(result.name, result.bytes, 'application/zip');
+            const sheets = result.summary.sheets.map(s => `${s.count} sheet${s.count === 1 ? '' : 's'} of ${s.material}`).join(', ');
+            set_status('ok', `Saved ${result.name}: ${sheets}, ${result.summary.parts} parts, ${result.summary.files} files.`);
+        } catch (err) {
+            set_status('bad', `Export failed: ${err.message}`);
+        }
+    };
+    panels = new Panels(app, { make: build_make_extras(worker, checks_view, () => app.export_zip()) });
     header = build_header(app);
     for (const tab of document.querySelectorAll('#tabs .tab')) {
         tab.addEventListener('click', () => {

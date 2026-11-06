@@ -70,6 +70,22 @@ test('the worker bundle builds the test card zip', () => {
     assert.equal(new DataView(reply.result.bytes.buffer).getUint32(0, true), 0x04034b50);
 });
 
+test('the worker refuses to export while a fatal finding is not allowed', () => {
+    const worker = start_worker_bundle();
+    const design = preset_by_id('orb');
+    design.sheet.w_mm = 250;
+    design.sheet.h_mm = 250;
+    const blocked = worker.call('export_zip', { design });
+    assert.equal(blocked.ok, true);
+    assert.equal(blocked.result.blocked, true);
+    assert.ok(blocked.result.problems.every(p => p.startsWith('G-05')));
+    design.sheet.w_mm = 600;
+    design.sheet.h_mm = 400;
+    const done = worker.call('export_zip', { design });
+    assert.equal(done.result.name, 'lamina_orb.zip');
+    assert.ok(done.result.bytes instanceof Uint8Array);
+});
+
 test('the worker reports unknown requests as errors', () => {
     const reply = start_worker_bundle().call('nope');
     assert.equal(reply.ok, false);
