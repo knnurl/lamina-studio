@@ -1,0 +1,366 @@
+{
+  "orb": {
+    "layers": 8,
+    "area_mm2": [
+      47756,
+      50359,
+      52763,
+      54983,
+      57505,
+      59246,
+      65029,
+      66017
+    ],
+    "islands": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bridges": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 7,
+    "spacers": [],
+    "cut_length_mm": 22143,
+    "checks": [],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 4
+      }
+    ],
+    "parts": 8,
+    "files": 27
+  },
+  "rose": {
+    "layers": 10,
+    "area_mm2": [
+      46959,
+      48932,
+      50805,
+      52528,
+      54233,
+      62131,
+      63331,
+      64612,
+      65312,
+      66017
+    ],
+    "islands": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bridges": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 9,
+    "spacers": [],
+    "cut_length_mm": 32695,
+    "checks": [],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 5
+      }
+    ],
+    "parts": 10,
+    "files": 33
+  },
+  "gate": {
+    "layers": 8,
+    "area_mm2": [
+      48588,
+      53150,
+      57216,
+      60764,
+      68636,
+      69983,
+      71229,
+      72992
+    ],
+    "islands": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bridges": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 7,
+    "spacers": [],
+    "cut_length_mm": 20918,
+    "checks": [
+      "W-02@3"
+    ],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 4
+      }
+    ],
+    "parts": 8,
+    "files": 27
+  },
+  "lantern": {
+    "layers": 8,
+    "area_mm2": [
+      36283,
+      39621,
+      41295,
+      43975,
+      45915,
+      47657,
+      53614,
+      54602
+    ],
+    "islands": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bridges": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 7,
+    "spacers": [],
+    "cut_length_mm": 20231,
+    "checks": [],
+    "sheets": [
+      {
+        "material": "acr3t",
+        "count": 1
+      },
+      {
+        "material": "ply3",
+        "count": 4
+      }
+    ],
+    "parts": 8,
+    "files": 29
+  },
+  "sun": {
+    "layers": 6,
+    "area_mm2": [
+      46871,
+      50507,
+      54038,
+      62409,
+      65504,
+      66017
+    ],
+    "islands": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bridges": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 5,
+    "spacers": [],
+    "cut_length_mm": 21224,
+    "checks": [],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 3
+      }
+    ],
+    "parts": 6,
+    "files": 21
+  },
+  "islands": {
+    "layers": 4,
+    "area_mm2": [
+      48579,
+      61391,
+      66017,
+      66017
+    ],
+    "islands": [
+      3,
+      1,
+      0,
+      0
+    ],
+    "bridges": [
+      3,
+      3,
+      0,
+      0
+    ],
+    "glue_parts": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 3,
+    "spacers": [
+      "puckx6@2"
+    ],
+    "cut_length_mm": 6883,
+    "checks": [
+      "G-03@0"
+    ],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 2
+      }
+    ],
+    "parts": 11,
+    "files": 19
+  },
+  "svg": {
+    "layers": 2,
+    "area_mm2": [
+      15355,
+      29946
+    ],
+    "islands": [
+      1,
+      0
+    ],
+    "bridges": [
+      2,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 1,
+    "spacers": [],
+    "cut_length_mm": 2308,
+    "checks": [
+      "W-03@0"
+    ],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 1
+      }
+    ],
+    "parts": 2,
+    "files": 9
+  }
+}
