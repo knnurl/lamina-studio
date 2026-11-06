@@ -149,8 +149,10 @@ The design is one JSON document, the single source of truth. Every output is a p
     { "id": "L1", "material": "ply3", "thickness_mm": 3, "gap_mm": 0,
       "finish": { "kind": "paint|stain|natural", "colour": "#8a8f98" },
       "frame_ring_mm": 12,
+      "locked": false,
       "source": { "kind": "primitive|svg|lattice|circuit|radial|image",
-                  "params": {} },
+                  "motifs": [ { "type": "window", "r_mm": 80, "size_mm": 20, "sides": 4,
+                                "rot_deg": 0, "mult": 1, "angle_deg": 0 } ] },
       "island_policy": "bridge", "bridge": { "w_mm": null, "max": 4 },
       "overrides": { "islands": {}, "bridges": [], "locks": [], "edits": [] } }
   ],
@@ -193,7 +195,7 @@ Each stage is a pure function, so stages cache by input hash and only dirty stag
 2. **Symmetry**: replicate the fundamental domain by rotation, mirroring or tiling. This happens before the boolean union, so copies are exact.
 3. **Compose**:
    - `layer = outline − (openings ∩ inner_region)`, where `inner_region` is the outline inset by `frame_ring_mm`.
-   - Sliver cleanup: an open/close at ±`min_web/4`, as Angel's ±0.35 mm round-join did.
+   - Crumb removal: contours under 0.05 mm² are dropped. There is no blanket open/close. Measured on the Orb preset, it took 288 of 300 ms per build and changed the area by 2 mm² in 464,000 mm². Thin webs are left for the W-01/G-02 checks, which compute that morphology once anyway.
 4. **Islands**: find connected components. The body is the component touching the frame ring, or else the largest. Every other component is an island, with a stable ID.
 5. **Islands policy**: synthesise bridges (6.5), split into a glue-on part plus a locator, or drop.
 6. **Registration**: dowel holes, then engraved IDs (computed across the whole stack, 6.4).
@@ -262,14 +264,19 @@ Randomise with checks: Randomise tries up to 10 variations and keeps the first w
 ## 8. Sources and generators
 
 ### 8.1 M1: primitives and import
-- **Primitives**:
-  - Concentric rings (count, width, spacing).
-  - Radial rays (count, width, taper, inner and outer radius).
-  - Polygon windows (n, size, ring placement).
-  - Scalloped border (lobes, depth).
-  - Grid of holes (square or polar).
-
-  All take the symmetry setting. They exist to exercise the engine and to make simple, good-looking pieces.
+- **Primitives** ("openings"): each layer holds a list of motifs. Each motif is drawn once on the +x axis. "Copies per repeat" spreads copies across one symmetry wedge, and the symmetry engine fills the circle.
+  - **Centre opening** (diameter). Not replicated.
+  - **Windows**: a regular polygon, or a circle when sides is 0, at a radius, with size and turn. A scalloped border is windows on the inner edge of the frame ring.
+  - **Petals**: a lens at a radius, with length and width.
+  - **Arc slots**: an annular sector at a radius with width, keeping a tie between neighbours. A tie of 0 makes a full ring, which cuts an island free (the bridge stage ties it back).
+  - **Rays**: a tapered spoke from an inner to an outer radius.
+- **Generator** (Randomise, the seed arrows):
+  - It picks a centre opening and 2 to 4 concentric bands, each with one motif type, and repeats them through the stack.
+  - Openings shrink from front to back, alternate layers may turn half a step, and frame rings widen towards the back. The back layer stays solid.
+  - Bands reach the far corners on rectangles and arches, clipped by the frame ring.
+  - Output is island-free by construction (arc slots always keep a tie), and sizes are capped against neighbours so webs stay well above the minimum.
+  - Locks keep the repeat count. "Keep this layer" leaves a layer untouched.
+- **Presets**: Orb, Rose window, Acid gate, Hex lantern, Walnut sun. Each is an outline, symmetry, palette and generator seed, with the seed chosen from a rendered sweep.
 - **SVG import**:
   - Per layer, or one multi-layer file split by top-level group or layer.
   - Handles `viewBox` and `width`/`height` in px, pt or mm. Px is assumed to be 96 DPI unless overridden; an Illustrator export is 72 DPI, `[Verify]` by importing the purchased 7-layer mandala, which should come out about 291 mm.
@@ -539,10 +546,18 @@ Done when:
   - New code: the SVG and DXF R12 writers, the store-only zip, and the single-stroke font.
   - Checked independently with ezdxf 1.4.5: AC1009, 0 audit errors, `$INSUNITS` 4, cut extents exactly 150.000 x 100.000 mm. Python `zipfile` finds valid CRCs.
   - The zip the browser downloads is byte-identical to the one Node builds.
-  - Waiting on: the first cut at the lab.
+  - **TODO (owner):** cut the test card at the lab and record the measurements listed in its instructions. Until then, material presets stay unmeasured and the Calibrate panel (slice 8) is built against the formulas in 9.4.
+- 2026-11-06, slices 2 and 3 done: the design model and UI, and the primitive pipeline driving the 3D preview.
+  - Model: design model with migration, parameter registry (`src/core/schema.js`) and an undo store (80 steps; a slider drag is one step).
+  - UI: generated panels, presets, seed stepping, Randomise with locks, Basic/Advanced, open/save `.lamina.json`, and autosave to browser storage.
+  - Geometry: outlines (circle, rectangle, polygon, arch), symmetry (none, rotate, kaleidoscope, mirror, mirror both ways), five motif types, the generator and five presets.
+  - Measured with `node gallery`-style sweeps: 30 seed variants build in 33 ms on average in Node. In the browser the Orb preset builds in 31 to 94 ms in the worker.
+  - Driven in headless Edge with `tools/shot.js --eval`:
+    - seed stepping, then a three-step slider drag undone in one step;
+    - layer count to 12;
+    - adding an opening to layer 3.
+  - The M0 boot demo is gone.
 - Next slices:
-  1. Data model, SCHEMA and undo.
-  2. Outlines, primitives and symmetry.
   3. Islands, bridges and checks.
   4. Registration and spacers.
   5. Previews.
@@ -628,5 +643,8 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-06 | Default piece 290 mm; stock presets 600 x 400, 400 x 300, 300 x 300 | The lab's sheet sizes. 300 mm plus margins would not fit a 300 x 300 sheet |
 | 2026-11-06 | Cut-time warning dropped | No job time limit at the lab |
 | 2026-11-06 | M1 starts with the calibration test card | It is the first thing that can go to the lab, and its measurements feed every later check |
+| 2026-11-06 | No blanket open/close cleanup in compose; crumbs under 0.05 mm² are dropped instead | Measured: 288 of 300 ms per build for a 2 mm² area change. Thin webs go to the checks |
+| 2026-11-06 | M1 primitives are five motif types in a per-layer list, plus a seeded band generator | More creative range than one primitive per layer, and Randomise produces island-free, buildable stacks |
+| 2026-11-06 | Registry entries use `panel` for the sidebar step | `step` is a slider's increment; the duplicate key silently hid every slider (caught in the browser, now tested) |
 | 2026-11-06 | Own scope-hoisting ES-module bundler, not tenebrae's concatenation | Real module scope for a large codebase, the same files in Node tests, and a Blob worker under `file://` |
 | 2026-11-06 | three.js 0.186.1, not the newest 0.187.0 | 0.187.0 was a week old; pin a release that has had time to settle |
