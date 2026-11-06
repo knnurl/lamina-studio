@@ -417,6 +417,28 @@ button { font: inherit; color: inherit; }
 .sheet { margin: 0; }
 .sheet svg { display: block; width: 100%; height: auto; background: #ffffff; border-radius: 4px; }
 .sheet figcaption { margin-top: 6px; font-size: 12px; color: var(--ink-2); }
+
+/* Calibrate form */
+.cal-grid { display: grid; gap: 8px; }
+.cal-field { display: grid; grid-template-columns: 1fr 120px; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
+.cal-field input, .cal-field select {
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font: inherit;
+    font-size: 13px;
+    width: 100%;
+}
+.cal-result dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 4px 0; font-size: 12.5px; }
+.cal-result dt { color: var(--ink-2); }
+.cal-result dd { margin: 0; color: var(--ink); }
+.cal-problem { margin: 4px 0; font-size: 12.5px; color: var(--warn); }
+
+/* Status bar chip */
+.status-chip { margin-left: auto; color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.status-chip[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -441,7 +463,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 25 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 26 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -1365,6 +1387,7 @@ function base_design(layer_count = 8) {
         name: 'Untitled',
         seed: 1,
         palette: 'orb',
+        materials: {},
         piece: {
             outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
@@ -1407,8 +1430,9 @@ function migrate(input) {
     return design;
 }
 
+// The design's own (measured) materials override the built-in table (SPEC 5.1).
 function material_of(design, layer) {
-    return kMaterials[layer.material] ?? kMaterials.ply3;
+    return design.materials?.[layer.material] ?? kMaterials[layer.material] ?? kMaterials.ply3;
 }
 
 function layer_thickness_mm(design, layer) {
@@ -1965,8 +1989,12 @@ function at(angle_rad, r) {
     return { x: Math.round(r * Math.cos(angle_rad)), y: Math.round(r * Math.sin(angle_rad)) };
 }
 
+// The dowel hole: set explicitly, or the dowel plus the clearance measured for the drilled
+// layers' material (the test card's dowel ladder), or plus 0.1 mm until that is measured.
 function hole_d_mm(design) {
-    return design.registration.hole_d_mm ?? design.registration.dowel_d_mm + kHoleClearanceMm;
+    const drilled = design.layers[Math.min(1, design.layers.length - 1)];
+    const clearance = drilled ? material_of(design, drilled).dowel_clearance_mm : undefined;
+    return design.registration.hole_d_mm ?? design.registration.dowel_d_mm + (clearance ?? kHoleClearanceMm);
 }
 
 function place_dowels(design, built) {
@@ -2325,7 +2353,7 @@ const { layer_openings } = __m_sources_motifs_js;
 const { mm_to_um } = __m_core_units_js;
 const { material_of } = __m_core_design_js;
 const { resolve_islands } = __m_pipeline_islands_js;
-const { register_geometry, spacer_layout } = __m_pipeline_registration_js;
+const { register_geometry, spacer_layout, hole_d_mm } = __m_pipeline_registration_js;
 const { hash_str } = __m_core_rng_js;
 const { fast_checks } = __m_pipeline_checks_js;
 // Layer composition (SPEC 6.2 steps 1 to 3): openings from the layer's motifs, clipped to the area
@@ -2419,7 +2447,8 @@ function build_design(design) {
     layers.forEach((l, k) => {
         if (l.parts.length && layers[k + 1]) layers[k + 1].locators.push(...l.parts.map(p => p[0]));
     });
-    const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration));
+    // hole_d_mm follows the measured dowel clearance of the material, so it is part of the key.
+    const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration) + hole_d_mm(design));
     const geo = cached(reg_cache, reg_key, () => register_geometry(design, layers));
     layers.forEach((l, k) => {
         l.material = geo.materials[k];
@@ -3321,6 +3350,81 @@ function zip_store(files) {
 }
 return { crc32, zip_store };
 })();
+// src/core/calibrate.js
+const __m_core_calibrate_js = (function () {
+// Calibration (SPEC 9.4): the test card's ladders, and the formulas that turn its measurements
+// into physical material limits. The card is cut without kerf compensation, so:
+//   kerf             = (H - P) / 2       P: the 20 mm square piece, H: the hole it leaves
+//   scale            = (H + P) / 2       must be 20.00 +/- 0.05, or the import scale is wrong
+//   min web          = nominal - kerf    a web loses half a kerf each side
+//   min bridge       = nominal - kerf
+//   min hole         = nominal + kerf    a hole gains half a kerf each side
+//   dowel clearance  = nominal + kerf - 3     (hole minus the 3 mm dowel)
+//   fit clearance    = nominal + 2 x kerf     (notch grows, key shrinks)
+// Lamina's exports are kerf-compensated, so these physical values are what the checks use.
+// Kept free of geometry imports: the UI bundle uses it, and the test card imports its ladders.
+
+const kLadders = {
+    kerf_square_mm: 20,
+    webs_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5],
+    bridges_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0],
+    holes_mm: [0.5, 0.8, 1.0, 1.5, 2.0, 3.0],
+    dowel_mm: 3,
+    dowel_holes_mm: [2.9, 2.95, 3.0, 3.05, 3.1, 3.15, 3.2],
+    clearances_mm: [0, 0.05, 0.1, 0.15, 0.2, 0.25],
+    ramp_count: 5,
+};
+
+const kScaleTolMm = 0.05;
+const r3 = v => Math.round(v * 1000) / 1000;
+
+// m: { p_mm, h_mm, web_mm, bridge_mm, hole_mm, dowel_hole_mm, notch_mm, score_line }, the ladder
+// values read off the card. Returns the physical limits, plus problems that should stop a save.
+function calibrate(m) {
+    const problems = [];
+    const p = Number(m.p_mm);
+    const h = Number(m.h_mm);
+    if (!(p > 0 && h > 0)) problems.push('Enter both caliper readings, P and H.');
+    else if (h <= p) problems.push('H (the hole) must be larger than P (the piece).');
+    const kerf = r3((h - p) / 2);
+    const scale = r3((h + p) / 2);
+    const scale_ok = Math.abs(scale - kLadders.kerf_square_mm) <= kScaleTolMm;
+    if (p > 0 && h > p && !scale_ok) {
+        problems.push(`Scale check failed: (H + P) / 2 is ${scale.toFixed(2)} mm, not 20.00. The file was imported at the wrong size; fix the import before trusting anything else.`);
+    }
+    if (p > 0 && h > p && (kerf <= 0 || kerf > 0.6)) problems.push(`A kerf of ${kerf} mm is implausible for a CO2 laser; measure again.`);
+    return {
+        ok: problems.length === 0,
+        problems,
+        kerf_mm: kerf,
+        scale_mm: scale,
+        min_web_mm: r3(Number(m.web_mm) - kerf),
+        min_bridge_mm: r3(Number(m.bridge_mm) - kerf),
+        min_hole_mm: r3(Number(m.hole_mm) + kerf),
+        dowel_clearance_mm: r3(Number(m.dowel_hole_mm) + kerf - kLadders.dowel_mm),
+        fit_clearance_mm: r3(Number(m.notch_mm) + 2 * kerf),
+        score_line: Number(m.score_line),
+    };
+}
+
+// A material preset with measured limits, built on a base preset.
+function measured_material(base, result, measurements) {
+    return {
+        ...base,
+        label: base.label.replace(/ \(measured\)$/, '') + ' (measured)',
+        kerf_mm: result.kerf_mm,
+        min_web_mm: result.min_web_mm,
+        min_bridge_mm: result.min_bridge_mm,
+        min_hole_mm: result.min_hole_mm,
+        dowel_clearance_mm: result.dowel_clearance_mm,
+        fit_clearance_mm: result.fit_clearance_mm,
+        score_line: result.score_line,
+        measured: true,
+        measurements: { ...measurements },
+    };
+}
+return { kLadders, calibrate, measured_material };
+})();
 // src/export/test_card.js
 const __m_export_test_card_js = (function () {
 const { rect_path, rounded_rect_path, circle_path, subtract, union_all, path_area_um2 } = __m_geom_clip_js;
@@ -3329,6 +3433,7 @@ const { text_strokes } = __m_export_stroke_font_js;
 const { drawing_to_svg } = __m_export_svg_js;
 const { drawing_to_dxf } = __m_export_dxf_js;
 const { zip_store } = __m_export_zip_store_js;
+const { kLadders } = __m_core_calibrate_js;
 // Calibration test card (SPEC 9.4): one 150 x 100 mm cut, with no kerf compensation, that measures
 // kerf, import scale, minimum web, bridge, hole, dowel fit and fit clearance on the lab laser, plus
 // a five-colour score ramp. Engraved labels name every feature, and the title names the file
@@ -3341,18 +3446,19 @@ const { zip_store } = __m_export_zip_store_js;
 
 
 
+
 const kCard = {
     width_mm: 150,
     height_mm: 100,
     corner_mm: 4,
-    kerf_square: { x_mm: 6, y_mm: 61, size_mm: 20 },
-    web: { x_mm: 33, y_mm: 64, slot_w_mm: 4, slot_h_mm: 14, webs_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5] },
+    kerf_square: { x_mm: 6, y_mm: 61, size_mm: kLadders.kerf_square_mm },
+    web: { x_mm: 33, y_mm: 64, slot_w_mm: 4, slot_h_mm: 14, webs_mm: kLadders.webs_mm },
     key: { x_mm: 81, y_mm: 62, w_mm: 10, h_mm: 16 },
-    dowel: { x_mm: 101, y_mm: 72, pitch_mm: 6.5, holes_mm: [2.9, 2.95, 3.0, 3.05, 3.1, 3.15, 3.2] },
-    bridge: { x_mm: 6, y_mm: 40, pitch_mm: 12, window_mm: 9, island_mm: 5, bridges_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0] },
-    hole: { x_mm: 84, y_mm: 45, pitch_mm: 6, holes_mm: [0.5, 0.8, 1.0, 1.5, 2.0, 3.0] },
+    dowel: { x_mm: 101, y_mm: 72, pitch_mm: 6.5, holes_mm: kLadders.dowel_holes_mm },
+    bridge: { x_mm: 6, y_mm: 40, pitch_mm: 12, window_mm: 9, island_mm: 5, bridges_mm: kLadders.bridges_mm },
+    hole: { x_mm: 84, y_mm: 45, pitch_mm: 6, holes_mm: kLadders.holes_mm },
     ramp: { x_mm: 125, y0_mm: 41, y1_mm: 51, pitch_mm: 4.5, count: 5 },
-    notch: { x_mm: 8, pitch_mm: 16, base_w_mm: 10, depth_mm: 8, clearances_mm: [0, 0.05, 0.1, 0.15, 0.2, 0.25] },
+    notch: { x_mm: 8, pitch_mm: 16, base_w_mm: 10, depth_mm: 8, clearances_mm: kLadders.clearances_mm },
 };
 
 const kHoleTolUm = 5; // fine flattening for holes whose size is being measured
@@ -4146,7 +4252,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 30 modules.
+<script>// Lamina Studio bundle: src/main.js and 32 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -87103,6 +87209,7 @@ function base_design(layer_count = 8) {
         name: 'Untitled',
         seed: 1,
         palette: 'orb',
+        materials: {},
         piece: {
             outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
@@ -87145,8 +87252,9 @@ function migrate(input) {
     return design;
 }
 
+// The design's own (measured) materials override the built-in table (SPEC 5.1).
 function material_of(design, layer) {
-    return kMaterials[layer.material] ?? kMaterials.ply3;
+    return design.materials?.[layer.material] ?? kMaterials[layer.material] ?? kMaterials.ply3;
 }
 
 function layer_thickness_mm(design, layer) {
@@ -87895,7 +88003,7 @@ function options_for(entry, design) {
             return Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
         case 'all_material':
         case 'material':
-            return Object.entries(kMaterials).map(([id, m]) => [id, m.label]);
+            return Object.keys({ ...kMaterials, ...design.materials }).map(id => [id, material_of(design, { material: id }).label]);
         case 'sheet_size':
             return Object.entries(kSheetPresets).map(([id, s]) => [id, s.label]);
         default:
@@ -88627,6 +88735,7 @@ class Panels {
         if (step === 'layers') parts.push(d.layers.length, k);
         if (step === 'pattern') parts.push(k, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'structure') parts.push(k);
+        if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
     }
 
@@ -88834,7 +88943,8 @@ const { set_status } = __m_ui_shell_js;
 
 
 
-function build_make_extras(worker, checks_view, on_export) {
+// on_calibrate(container) adds the measurement form after the test card.
+function build_make_extras(worker, checks_view, on_export, on_calibrate) {
     return container => {
         const export_button = el('button', { class: 'btn', type: 'button', text: 'Export cut files' });
         export_button.addEventListener('click', async () => {
@@ -88881,6 +88991,7 @@ function build_make_extras(worker, checks_view, on_export) {
                 button.disabled = false;
             }
         });
+        on_calibrate(container);
     };
 }
 return { build_make_extras };
@@ -88951,10 +89062,182 @@ function make_checks_view(app) {
 }
 return { make_checks_view };
 })();
+// src/core/calibrate.js
+const __m_core_calibrate_js = (function () {
+// Calibration (SPEC 9.4): the test card's ladders, and the formulas that turn its measurements
+// into physical material limits. The card is cut without kerf compensation, so:
+//   kerf             = (H - P) / 2       P: the 20 mm square piece, H: the hole it leaves
+//   scale            = (H + P) / 2       must be 20.00 +/- 0.05, or the import scale is wrong
+//   min web          = nominal - kerf    a web loses half a kerf each side
+//   min bridge       = nominal - kerf
+//   min hole         = nominal + kerf    a hole gains half a kerf each side
+//   dowel clearance  = nominal + kerf - 3     (hole minus the 3 mm dowel)
+//   fit clearance    = nominal + 2 x kerf     (notch grows, key shrinks)
+// Lamina's exports are kerf-compensated, so these physical values are what the checks use.
+// Kept free of geometry imports: the UI bundle uses it, and the test card imports its ladders.
+
+const kLadders = {
+    kerf_square_mm: 20,
+    webs_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5],
+    bridges_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0],
+    holes_mm: [0.5, 0.8, 1.0, 1.5, 2.0, 3.0],
+    dowel_mm: 3,
+    dowel_holes_mm: [2.9, 2.95, 3.0, 3.05, 3.1, 3.15, 3.2],
+    clearances_mm: [0, 0.05, 0.1, 0.15, 0.2, 0.25],
+    ramp_count: 5,
+};
+
+const kScaleTolMm = 0.05;
+const r3 = v => Math.round(v * 1000) / 1000;
+
+// m: { p_mm, h_mm, web_mm, bridge_mm, hole_mm, dowel_hole_mm, notch_mm, score_line }, the ladder
+// values read off the card. Returns the physical limits, plus problems that should stop a save.
+function calibrate(m) {
+    const problems = [];
+    const p = Number(m.p_mm);
+    const h = Number(m.h_mm);
+    if (!(p > 0 && h > 0)) problems.push('Enter both caliper readings, P and H.');
+    else if (h <= p) problems.push('H (the hole) must be larger than P (the piece).');
+    const kerf = r3((h - p) / 2);
+    const scale = r3((h + p) / 2);
+    const scale_ok = Math.abs(scale - kLadders.kerf_square_mm) <= kScaleTolMm;
+    if (p > 0 && h > p && !scale_ok) {
+        problems.push(`Scale check failed: (H + P) / 2 is ${scale.toFixed(2)} mm, not 20.00. The file was imported at the wrong size; fix the import before trusting anything else.`);
+    }
+    if (p > 0 && h > p && (kerf <= 0 || kerf > 0.6)) problems.push(`A kerf of ${kerf} mm is implausible for a CO2 laser; measure again.`);
+    return {
+        ok: problems.length === 0,
+        problems,
+        kerf_mm: kerf,
+        scale_mm: scale,
+        min_web_mm: r3(Number(m.web_mm) - kerf),
+        min_bridge_mm: r3(Number(m.bridge_mm) - kerf),
+        min_hole_mm: r3(Number(m.hole_mm) + kerf),
+        dowel_clearance_mm: r3(Number(m.dowel_hole_mm) + kerf - kLadders.dowel_mm),
+        fit_clearance_mm: r3(Number(m.notch_mm) + 2 * kerf),
+        score_line: Number(m.score_line),
+    };
+}
+
+// A material preset with measured limits, built on a base preset.
+function measured_material(base, result, measurements) {
+    return {
+        ...base,
+        label: base.label.replace(/ \(measured\)$/, '') + ' (measured)',
+        kerf_mm: result.kerf_mm,
+        min_web_mm: result.min_web_mm,
+        min_bridge_mm: result.min_bridge_mm,
+        min_hole_mm: result.min_hole_mm,
+        dowel_clearance_mm: result.dowel_clearance_mm,
+        fit_clearance_mm: result.fit_clearance_mm,
+        score_line: result.score_line,
+        measured: true,
+        measurements: { ...measurements },
+    };
+}
+return { kLadders, calibrate, measured_material };
+})();
+// src/ui/calibrate_panel.js
+const __m_ui_calibrate_panel_js = (function () {
+const { kLadders, calibrate, measured_material } = __m_core_calibrate_js;
+const { kMaterials, material_of } = __m_core_design_js;
+const { el } = __m_ui_dom_js;
+// Calibrate form (SPEC 9.4): enter what the cut test card measured, see the physical limits it
+// implies, and save them as a measured material. Measurements are not design parameters, so this
+// is a plain form, not registry controls.
+
+
+
+
+function field(label, input) {
+    return el('label', { class: 'cal-field' }, [el('span', { text: label }), input]);
+}
+
+function select(values, format, initial) {
+    const s = el('select');
+    for (const v of values) s.append(el('option', { value: String(v), text: format(v) }));
+    s.value = String(initial);
+    return s;
+}
+
+function build_calibrate_panel(container, app) {
+    const ids = Object.keys({ ...kMaterials, ...app.design.materials });
+    const material = select(ids, id => material_of(app.design, { material: id }).label, app.design.layers[0].material);
+    const p = el('input', { type: 'number', step: '0.01', min: '0', placeholder: 'e.g. 19.82' });
+    const h = el('input', { type: 'number', step: '0.01', min: '0', placeholder: 'e.g. 20.18' });
+    const web = select(kLadders.webs_mm, v => `${Math.round(v * 10)} (${v} mm)`, 1.5);
+    const bridge = select(kLadders.bridges_mm, v => `${Math.round(v * 10)} (${v} mm)`, 1.2);
+    const hole = select(kLadders.holes_mm, v => `${Math.round(v * 10)} (${v} mm)`, 1.0);
+    const dowel = select(kLadders.dowel_holes_mm, v => `${Math.round(v * 100)} (${v.toFixed(2)} mm)`, 3.1);
+    const notch = select(kLadders.clearances_mm, v => (v ? `+${Math.round(v * 100)}` : '0') + ` (${v.toFixed(2)} mm)`, 0.1);
+    const score = select(Array.from({ length: kLadders.ramp_count }, (_, i) => i + 1), v => `Line ${v}`, 2);
+    const out = el('div', { class: 'cal-result', 'aria-live': 'polite' });
+    const save = el('button', { type: 'button', class: 'btn', text: 'Save measured material' });
+
+    const inputs = () => ({
+        p_mm: p.value,
+        h_mm: h.value,
+        web_mm: web.value,
+        bridge_mm: bridge.value,
+        hole_mm: hole.value,
+        dowel_hole_mm: dowel.value,
+        notch_mm: notch.value,
+        score_line: score.value,
+    });
+
+    function update() {
+        const r = calibrate(inputs());
+        out.textContent = '';
+        if (r.problems.length) {
+            for (const problem of r.problems) out.append(el('p', { class: 'cal-problem', text: problem }));
+        } else {
+            const rows = [
+                ['Kerf', `${r.kerf_mm} mm`],
+                ['Scale check', `${r.scale_mm.toFixed(2)} mm, good`],
+                ['Minimum web', `${r.min_web_mm} mm`],
+                ['Minimum bridge', `${r.min_bridge_mm} mm`],
+                ['Minimum hole', `${r.min_hole_mm} mm`],
+                ['Dowel clearance', `${r.dowel_clearance_mm} mm (hole ${(kLadders.dowel_mm + r.dowel_clearance_mm).toFixed(2)} mm for 3 mm dowels)`],
+                ['Fit clearance', `${r.fit_clearance_mm} mm`],
+            ];
+            out.append(el('dl', {}, rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })])));
+        }
+        save.disabled = !r.ok;
+    }
+
+    for (const input of [p, h]) input.addEventListener('input', update);
+    for (const s of [material, web, bridge, hole, dowel, notch, score]) s.addEventListener('change', update);
+    save.addEventListener('click', () => {
+        const r = calibrate(inputs());
+        if (!r.ok) return;
+        const base = material_of(app.design, { material: material.value });
+        app.save_measured_material(material.value, measured_material(base, r, inputs()));
+    });
+
+    container.append(
+        el('h3', { class: 'sub', text: 'Enter the measurements' }),
+        el('div', { class: 'cal-grid' }, [
+            field('Material cut', material),
+            field('P: the 20 mm piece (mm)', p),
+            field('H: its hole (mm)', h),
+            field('Thinnest web that survived', web),
+            field('Thinnest bridge that held', bridge),
+            field('Smallest clean hole', hole),
+            field('Dowel hole that fits', dowel),
+            field('Notch the key fits', notch),
+            field('Score line that marks cleanly', score),
+        ]),
+        out,
+        save,
+    );
+    update();
+}
+return { build_calibrate_panel };
+})();
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
-const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers } = __m_core_design_js;
+const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { write_param } = __m_core_actions_js;
@@ -88967,6 +89250,7 @@ const { Panels } = __m_ui_panels_js;
 const { build_header } = __m_ui_header_js;
 const { build_make_extras } = __m_ui_make_panel_js;
 const { make_checks_view } = __m_ui_checks_view_js;
+const { build_calibrate_panel } = __m_ui_calibrate_panel_js;
 const { set_status } = __m_ui_shell_js;
 const { save_bytes, el } = __m_ui_dom_js;
 // App controller: the design store, UI state, header and panels, the geometry worker and the
@@ -88989,8 +89273,21 @@ const { save_bytes, el } = __m_ui_dom_js;
 
 
 
+
 const kDesignKey = 'lamina-design';
 const kTierKey = 'lamina-tier';
+const kMaterialsKey = 'lamina-materials';
+
+// Measured materials kept in this browser, so new designs start measured.
+function material_library() {
+    try {
+        return JSON.parse(storage_get(kMaterialsKey) ?? '{}');
+    } catch {
+        return {};
+    }
+}
+
+const with_library = design => ({ ...design, materials: { ...material_library(), ...design.materials } });
 const kCheckDelayMs = 350;
 const kPolicies = ['bridge', 'glue', 'drop'];
 
@@ -89067,7 +89364,7 @@ function status_line(design, built, checks, pending) {
 }
 
 function start_app({ worker, preview, stage }) {
-    const store = new Store(restore_design() ?? preset_by_id('orb'));
+    const store = new Store(restore_design() ?? with_library(preset_by_id('orb')));
     const ui = {
         layer: 0,
         view: '3d',
@@ -89081,6 +89378,7 @@ function start_app({ worker, preview, stage }) {
     let render2d;
     let sheets_view;
     let checks_view;
+    let unmeasured;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -89131,6 +89429,8 @@ function start_app({ worker, preview, stage }) {
         const level = check_level(checks);
         set_status(level === 'ok' && !fresh ? 'busy' : level, status_line(state.built_for, state.built, checks, !fresh));
         checks_view.update(checks, !fresh);
+        const d = state.built_for;
+        unmeasured.hidden = d.layers.every(l => material_of(d, l).measured);
     }
 
     function render_ui() {
@@ -89193,7 +89493,7 @@ function start_app({ worker, preview, stage }) {
                 } else {
                     const stem = texts[0].name.replace(/\.svg$/i, '').replace(/[-_ ]*(layer)?[-_ ]*\d+$/i, '') || 'Imported';
                     ui.layer = 0;
-                    store.replace(design_from_import(result, stem));
+                    store.replace(with_library(design_from_import(result, stem)));
                     set_status('ok', `Imported ${n} layers (front first): ${size}.${extra ? ` ${extra}.` : ''}`);
                 }
             } catch (err) {
@@ -89256,9 +89556,16 @@ function start_app({ worker, preview, stage }) {
         set_seed(seed) {
             edit(d => generate_stack(d, seed, { lock_n: ui.locks.has('symmetry.n') }));
         },
+        save_measured_material(id, material) {
+            edit(d => {
+                d.materials[id] = material;
+            });
+            storage_set(kMaterialsKey, JSON.stringify({ ...material_library(), [id]: material }));
+            set_status('ok', `Saved ${material.label}: kerf ${material.kerf_mm} mm. Checks and cut files now use it.`);
+        },
         load_preset(id) {
             ui.layer = 0;
-            store.replace(preset_by_id(id));
+            store.replace(with_library(preset_by_id(id)));
         },
         undo: () => store.undo(),
         redo: () => store.redo(),
@@ -89278,6 +89585,8 @@ function start_app({ worker, preview, stage }) {
         },
     };
     checks_view = make_checks_view(app);
+    unmeasured = el('span', { class: 'chip status-chip', text: 'Material not measured yet: cut the test card (Make step)', hidden: '' });
+    document.querySelector('.status').append(unmeasured);
     layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);
@@ -89326,7 +89635,7 @@ function start_app({ worker, preview, stage }) {
     panels = new Panels(app, {
         piece: import_extras,
         layers: layer_extras,
-        make: build_make_extras(worker, checks_view, () => app.export_zip()),
+        make: build_make_extras(worker, checks_view, () => app.export_zip(), container => build_calibrate_panel(container, app)),
     });
     header = build_header(app);
     for (const tab of document.querySelectorAll('#tabs .tab')) {

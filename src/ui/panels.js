@@ -39,6 +39,7 @@ export class Panels {
         if (step === 'layers') parts.push(d.layers.length, k);
         if (step === 'pattern') parts.push(k, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'structure') parts.push(k);
+        if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
     }
 

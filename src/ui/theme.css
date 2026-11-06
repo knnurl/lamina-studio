@@ -406,3 +406,25 @@ button { font: inherit; color: inherit; }
 .sheet { margin: 0; }
 .sheet svg { display: block; width: 100%; height: auto; background: #ffffff; border-radius: 4px; }
 .sheet figcaption { margin-top: 6px; font-size: 12px; color: var(--ink-2); }
+
+/* Calibrate form */
+.cal-grid { display: grid; gap: 8px; }
+.cal-field { display: grid; grid-template-columns: 1fr 120px; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
+.cal-field input, .cal-field select {
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font: inherit;
+    font-size: 13px;
+    width: 100%;
+}
+.cal-result dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 4px 0; font-size: 12.5px; }
+.cal-result dt { color: var(--ink-2); }
+.cal-result dd { margin: 0; color: var(--ink); }
+.cal-problem { margin: 4px 0; font-size: 12.5px; color: var(--warn); }
+
+/* Status bar chip */
+.status-chip { margin-left: auto; color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.status-chip[hidden] { display: none; }

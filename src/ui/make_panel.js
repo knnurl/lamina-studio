@@ -3,7 +3,8 @@
 import { el, save_bytes } from './dom.js';
 import { set_status } from './shell.js';
 
-export function build_make_extras(worker, checks_view, on_export) {
+// on_calibrate(container) adds the measurement form after the test card.
+export function build_make_extras(worker, checks_view, on_export, on_calibrate) {
     return container => {
         const export_button = el('button', { class: 'btn', type: 'button', text: 'Export cut files' });
         export_button.addEventListener('click', async () => {
@@ -50,5 +51,6 @@ export function build_make_extras(worker, checks_view, on_export) {
                 button.disabled = false;
             }
         });
+        on_calibrate(container);
     };
 }

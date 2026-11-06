@@ -2,7 +2,7 @@
 // views. Every edit goes through the store (one undo step per action or slider drag). Every new
 // design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
 import { Store } from '../core/store.js';
-import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers } from '../core/design.js';
+import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { write_param } from '../core/actions.js';
@@ -15,11 +15,24 @@ import { Panels } from './panels.js';
 import { build_header } from './header.js';
 import { build_make_extras } from './make_panel.js';
 import { make_checks_view } from './checks_view.js';
+import { build_calibrate_panel } from './calibrate_panel.js';
 import { set_status } from './shell.js';
 import { save_bytes, el } from './dom.js';
 
 const kDesignKey = 'lamina-design';
 const kTierKey = 'lamina-tier';
+const kMaterialsKey = 'lamina-materials';
+
+// Measured materials kept in this browser, so new designs start measured.
+function material_library() {
+    try {
+        return JSON.parse(storage_get(kMaterialsKey) ?? '{}');
+    } catch {
+        return {};
+    }
+}
+
+const with_library = design => ({ ...design, materials: { ...material_library(), ...design.materials } });
 const kCheckDelayMs = 350;
 const kPolicies = ['bridge', 'glue', 'drop'];
 
@@ -96,7 +109,7 @@ function status_line(design, built, checks, pending) {
 }
 
 export function start_app({ worker, preview, stage }) {
-    const store = new Store(restore_design() ?? preset_by_id('orb'));
+    const store = new Store(restore_design() ?? with_library(preset_by_id('orb')));
     const ui = {
         layer: 0,
         view: '3d',
@@ -110,6 +123,7 @@ export function start_app({ worker, preview, stage }) {
     let render2d;
     let sheets_view;
     let checks_view;
+    let unmeasured;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -160,6 +174,8 @@ export function start_app({ worker, preview, stage }) {
         const level = check_level(checks);
         set_status(level === 'ok' && !fresh ? 'busy' : level, status_line(state.built_for, state.built, checks, !fresh));
         checks_view.update(checks, !fresh);
+        const d = state.built_for;
+        unmeasured.hidden = d.layers.every(l => material_of(d, l).measured);
     }
 
     function render_ui() {
@@ -222,7 +238,7 @@ export function start_app({ worker, preview, stage }) {
                 } else {
                     const stem = texts[0].name.replace(/\.svg$/i, '').replace(/[-_ ]*(layer)?[-_ ]*\d+$/i, '') || 'Imported';
                     ui.layer = 0;
-                    store.replace(design_from_import(result, stem));
+                    store.replace(with_library(design_from_import(result, stem)));
                     set_status('ok', `Imported ${n} layers (front first): ${size}.${extra ? ` ${extra}.` : ''}`);
                 }
             } catch (err) {
@@ -285,9 +301,16 @@ export function start_app({ worker, preview, stage }) {
         set_seed(seed) {
             edit(d => generate_stack(d, seed, { lock_n: ui.locks.has('symmetry.n') }));
         },
+        save_measured_material(id, material) {
+            edit(d => {
+                d.materials[id] = material;
+            });
+            storage_set(kMaterialsKey, JSON.stringify({ ...material_library(), [id]: material }));
+            set_status('ok', `Saved ${material.label}: kerf ${material.kerf_mm} mm. Checks and cut files now use it.`);
+        },
         load_preset(id) {
             ui.layer = 0;
-            store.replace(preset_by_id(id));
+            store.replace(with_library(preset_by_id(id)));
         },
         undo: () => store.undo(),
         redo: () => store.redo(),
@@ -307,6 +330,8 @@ export function start_app({ worker, preview, stage }) {
         },
     };
     checks_view = make_checks_view(app);
+    unmeasured = el('span', { class: 'chip status-chip', text: 'Material not measured yet: cut the test card (Make step)', hidden: '' });
+    document.querySelector('.status').append(unmeasured);
     layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);
@@ -355,7 +380,7 @@ export function start_app({ worker, preview, stage }) {
     panels = new Panels(app, {
         piece: import_extras,
         layers: layer_extras,
-        make: build_make_extras(worker, checks_view, () => app.export_zip()),
+        make: build_make_extras(worker, checks_view, () => app.export_zip(), container => build_calibrate_panel(container, app)),
     });
     header = build_header(app);
     for (const tab of document.querySelectorAll('#tabs .tab')) {
