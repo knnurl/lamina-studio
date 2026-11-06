@@ -392,6 +392,31 @@ button { font: inherit; color: inherit; }
     .status { grid-row: 4; }
     .mark span { display: none; }
 }
+
+/* Exploded-view slider over the 3D view */
+.explode {
+    position: absolute;
+    right: 14px;
+    bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: color-mix(in srgb, var(--panel) 85%, transparent);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--ink-2);
+}
+.explode[hidden] { display: none; }
+.explode input { width: 140px; accent-color: var(--acid); }
+
+/* Sheets view */
+.sheets-view { position: absolute; inset: 0; overflow: auto; padding: 16px; display: grid; gap: 18px; align-content: start; }
+.sheets-view[hidden] { display: none; }
+.sheet { margin: 0; }
+.sheet svg { display: block; width: 100%; height: auto; background: #ffffff; border-radius: 4px; }
+.sheet figcaption { margin-top: 6px; font-size: 12px; color: var(--ink-2); }
 </style>
 </head>
 <body>
@@ -3121,10 +3146,26 @@ function layout_sheets(design, parts) {
     return { sheets, unplaced };
 }
 
+// The packed sheets as drawings: [{ material, number (within its material), drawing }], plus the
+// keys of parts that fit no sheet. The Sheets view and the export share this.
+function sheet_drawings(design, parts) {
+    const by_key = new Map(parts.map(p => [p.key, p]));
+    const { sheets, unplaced } = layout_sheets(design, parts);
+    const per_material = {};
+    const out = sheets.map(sheet => {
+        per_material[sheet.material] = (per_material[sheet.material] ?? 0) + 1;
+        const placed = sheet.placements.map(pl => {
+            const part = by_key.get(pl.key.split('#')[0]);
+            return { part, move: placer(part, pl.x, pl.y, pl.rotated) };
+        });
+        return { material: sheet.material, number: per_material[sheet.material], drawing: drawing(design.sheet.w_mm, design.sheet.h_mm, placed) };
+    });
+    return { sheets: out, layout: sheets, unplaced };
+}
+
 // files for the zip, plus a summary. preview_png: optional Uint8Array from the 3D view.
 function export_design(design, built, registration, checks, { preview_png = null } = {}) {
     const parts = export_parts(design, built, registration);
-    const by_key = new Map(parts.map(p => [p.key, p]));
     const root = `lamina_${slug(design.name)}`;
     const files = [];
     const add_drawing = (path, d) => {
@@ -3132,16 +3173,12 @@ function export_design(design, built, registration, checks, { preview_png = null
         files.push({ name: `${root}/${path}.dxf`, data: drawing_to_dxf(d) });
     };
 
-    const { sheets, unplaced } = layout_sheets(design, parts);
+    const { sheets: drawn, layout: sheets, unplaced } = sheet_drawings(design, parts);
     const per_material = {};
-    sheets.forEach(sheet => {
-        per_material[sheet.material] = (per_material[sheet.material] ?? 0) + 1;
-        const placed = sheet.placements.map(pl => {
-            const part = by_key.get(pl.key.split('#')[0]);
-            return { part, move: placer(part, pl.x, pl.y, pl.rotated) };
-        });
-        add_drawing(`sheets/sheet_${pad2(per_material[sheet.material])}_${sheet.material}`, drawing(design.sheet.w_mm, design.sheet.h_mm, placed));
-    });
+    for (const s of drawn) {
+        per_material[s.material] = s.number;
+        add_drawing(`sheets/sheet_${pad2(s.number)}_${s.material}`, s.drawing);
+    }
 
     const margin = 5;
     for (const part of parts) {
@@ -3164,7 +3201,7 @@ function export_design(design, built, registration, checks, { preview_png = null
         },
     };
 }
-return { export_parts, layout_sheets, export_design };
+return { export_parts, layout_sheets, sheet_drawings, export_design };
 })();
 // src/worker/geometry_worker.js
 const __m_worker_geometry_worker_js = (function () {
@@ -3173,7 +3210,7 @@ const { slow_checks } = __m_pipeline_checks_js;
 const { dowel_length_mm } = __m_pipeline_registration_js;
 const { pack_paths } = __m_geom_pack_js;
 const { test_card_zip } = __m_export_test_card_js;
-const { export_design } = __m_export_export_design_js;
+const { export_design, export_parts, sheet_drawings } = __m_export_export_design_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
 // Protocol: request {id, type, payload}, reply {id, ok, result} or {id, ok: false, error}.
 // Typed arrays anywhere in a result are transferred, not copied.
@@ -3231,6 +3268,25 @@ function export_zip({ design, preview_png = null }) {
     return export_design(design, built.layers, built.registration, checks, { preview_png });
 }
 
+// The packed sheets for the Sheets view, as drawings with their items' points packed.
+function sheets(design) {
+    const built = built_for(design);
+    const parts = export_parts(design, built.layers, built.registration);
+    const { sheets: drawn, unplaced } = sheet_drawings(design, parts);
+    return {
+        unplaced,
+        sheets: drawn.map(s => ({
+            material: s.material,
+            number: s.number,
+            width_mm: s.drawing.width_mm,
+            height_mm: s.drawing.height_mm,
+            layers: s.drawing.items.map(i => i.layer),
+            closed: s.drawing.items.map(i => i.closed),
+            points: pack_paths(s.drawing.items.map(i => i.points)),
+        })),
+    };
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -3243,6 +3299,7 @@ const kHandlers = {
     build,
     check,
     export_zip,
+    sheets,
     test_card_zip,
 };
 
@@ -3268,7 +3325,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 26 modules.
+<script>// Lamina Studio bundle: src/main.js and 30 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -3318,9 +3375,9 @@ const kSteps = [
 
 const kTabs = [
     { id: '3d', label: '3D', ready: true },
-    { id: '2d', label: '2D', ready: false },
+    { id: '2d', label: '2D', ready: true },
     { id: 'layer', label: 'Layer', ready: true },
-    { id: 'sheets', label: 'Sheets', ready: false },
+    { id: 'sheets', label: 'Sheets', ready: true },
 ];
 
 // The body element of a design step, for panels to fill.
@@ -86321,19 +86378,26 @@ return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, d
 })();
 // src/preview/three_stack.js
 const __m_preview_three_stack_js = (function () {
-const { WebGLRenderer, Scene, PerspectiveCamera, Shape, Path, Vector2, ExtrudeGeometry, MeshStandardMaterial, Mesh, Group, AmbientLight, DirectionalLight, MathUtils } = __m_vendor_three_three_module_js;
+const { WebGLRenderer, Scene, PerspectiveCamera, Shape, Path, Vector2, ExtrudeGeometry, ShapeGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, Group, Color, AmbientLight, DirectionalLight, MathUtils } = __m_vendor_three_three_module_js;
 const { OrbitControls } = __m_vendor_three_OrbitControls_js;
 const { kUmPerMm } = __m_core_units_js;
-const { layer_thickness_mm } = __m_core_design_js;
-// 3D stack preview (SPEC 10). Extrudes each layer's paths at its thickness, stacks them front
-// (index 0, nearest the viewer, highest z) to back with their gaps, orbit and tilt with
-// OrbitControls, and renders on demand. Lighting modes, material looks and the exploded view
-// arrive in the previews slice.
+const { layer_thickness_mm, material_of } = __m_core_design_js;
+// 3D stack preview (SPEC 10). Extrudes each layer at its real thickness, stacks them front (index
+// 0, nearest the viewer, highest z) to back with their gaps, orbit and tilt with OrbitControls,
+// and renders on demand.
+// - Faces take the layer's finish; cut edges take the material's edge colour (charred ply and MDF,
+//   a darker tone for acrylic). Translucent materials are drawn see-through.
+// - Backlit: a glowing panel in the light colour, cut to the piece's silhouette, sits behind the
+//   stack; translucent layers pick up the light, and the room light dims, so openings glow.
+// - Exploded: spreads the layers apart along z for reading the stack; the design is unchanged.
 // Assumptions: paths in micrometres, outer boundaries have positive area and holes negative.
 
 
 
 
+
+const kCharColour = '#3a2516';
+const kExplodeMm = 28; // extra spacing per layer at full explode
 
 function signed_area(path) {
     let a = 0;
@@ -86372,6 +86436,32 @@ function to_shapes(paths) {
     return shapes.map(s => s.shape);
 }
 
+function materials_for(design, layer) {
+    const mat = material_of(design, layer);
+    const finish = new Color(layer.finish.colour);
+    const backlit = design.piece.lighting.mode === 'backlit';
+    const light = new Color(design.piece.lighting.colour);
+    const translucent = mat.look.translucent;
+    const face = new MeshStandardMaterial({
+        color: finish,
+        roughness: translucent ? 0.35 : 0.8,
+        metalness: 0,
+        transparent: translucent,
+        opacity: translucent ? 0.6 : 1,
+        emissive: backlit && translucent ? light : new Color(0, 0, 0),
+        emissiveIntensity: backlit && translucent ? 0.55 : 0,
+    });
+    const edge_colour = layer.material.startsWith('acr') ? finish.clone().multiplyScalar(0.7) : new Color(kCharColour);
+    const side = new MeshStandardMaterial({
+        color: edge_colour,
+        roughness: 0.9,
+        metalness: 0,
+        transparent: translucent,
+        opacity: translucent ? 0.75 : 1,
+    });
+    return [face, side];
+}
+
 class StackPreview {
     constructor(container) {
         this.container_ = container;
@@ -86381,15 +86471,15 @@ class StackPreview {
 
         this.scene_ = new Scene();
         this.camera_ = new PerspectiveCamera(32, 1, 1, 20000);
-        this.scene_.add(new AmbientLight(0xffffff, 0.55));
-        const key = new DirectionalLight(0xffffff, 2.2);
-        key.position.set(-400, 500, 900);
-        this.scene_.add(key);
-        const rim = new DirectionalLight(0x46b4ff, 0.8);
-        rim.position.set(500, -300, -200);
-        this.scene_.add(rim);
+        this.ambient_ = new AmbientLight(0xffffff, 0.55);
+        this.key_ = new DirectionalLight(0xffffff, 2.2);
+        this.key_.position.set(-400, 500, 900);
+        this.rim_ = new DirectionalLight(0x46b4ff, 0.8);
+        this.rim_.position.set(500, -300, -200);
+        this.scene_.add(this.ambient_, this.key_, this.rim_);
         this.stack_ = new Group();
         this.scene_.add(this.stack_);
+        this.explode_ = 0;
 
         this.controls_ = new OrbitControls(this.camera_, this.renderer_.domElement);
         this.controls_.addEventListener('change', () => this.render());
@@ -86399,13 +86489,13 @@ class StackPreview {
         this.resize_();
     }
 
-    // built: [{ material: paths }] front first, as the worker returned them for design. Each layer
-    // is extruded at its real thickness; the back layer sits at z = 0 and each layer in front sits
-    // on the one behind plus its gap. The camera is reframed only when the piece's size changes.
+    // built: [{ material: paths }] front first, as the worker returned them for design. The back
+    // layer sits at z = 0 and each layer in front sits on the one behind plus its gap. The camera
+    // is reframed only when the piece's size changes.
     show(design, built) {
         for (const mesh of this.stack_.children) {
             mesh.geometry.dispose();
-            mesh.material.dispose();
+            for (const m of [mesh.material].flat()) m.dispose();
         }
         this.stack_.clear();
         let z = 0;
@@ -86416,19 +86506,52 @@ class StackPreview {
             const geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
             geometry.computeBoundingSphere();
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
-            const material = new MeshStandardMaterial({ color: layer.finish.colour, roughness: 0.8, metalness: 0 });
-            const mesh = new Mesh(geometry, material);
-            mesh.position.z = z;
+            const mesh = new Mesh(geometry, materials_for(design, layer));
+            mesh.userData = { base_z: z, from_back: built.length - 1 - k };
             this.stack_.add(mesh);
             z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
         }
+
+        const backlit = design.piece.lighting.mode === 'backlit';
+        this.ambient_.intensity = backlit ? 0.22 : 0.55;
+        this.key_.intensity = backlit ? 0.9 : 2.2;
+        if (backlit && built.length) {
+            // The glow panel follows the back layer's silhouette, a few mm behind it.
+            const back = built[built.length - 1].material;
+            const outline = back.filter(p => signed_area(p) > 0).sort((a, b) => signed_area(b) - signed_area(a))[0];
+            if (outline) {
+                const glow = new Mesh(
+                    new ShapeGeometry(to_shapes([outline])),
+                    new MeshBasicMaterial({ color: new Color(design.piece.lighting.colour).multiplyScalar(1.6) }),
+                );
+                glow.userData = { base_z: -6, from_back: -1 };
+                this.stack_.add(glow);
+            }
+        }
+
+        this.place_();
         const o = design.piece.outline;
         const frame_key = `${o.kind}|${o.w_mm}|${o.h_mm}|${built.length}`;
         if (frame_key !== this.frame_key_) {
             this.frame_key_ = frame_key;
+            this.depth_mm_ = z;
             this.frame_(radius_mm, z);
         }
         this.render();
+    }
+
+    // f in 0..1 spreads the layers apart along z.
+    set_explode(f) {
+        this.explode_ = f;
+        this.place_();
+        this.render();
+    }
+
+    place_() {
+        for (const mesh of this.stack_.children) {
+            const { base_z, from_back } = mesh.userData;
+            mesh.position.z = base_z + this.explode_ * kExplodeMm * Math.max(0, from_back);
+        }
     }
 
     render() {
@@ -87240,6 +87363,237 @@ class LayerView {
 }
 return { LayerView };
 })();
+// src/preview/render2d.js
+const __m_preview_render2d_js = (function () {
+const { kUmPerMm } = __m_core_units_js;
+// 2D stacked render (SPEC 10): every layer drawn flat, back to front, in its finish colour with a
+// soft drop shadow, in the style of the AngelShadowBox preview. The fast view for very dense
+// pieces. Backlit pieces get a glow in the light colour behind the back layer's silhouette.
+// Assumptions: paths in micrometres, y up.
+
+
+class Render2D {
+    constructor(container) {
+        this.canvas_ = document.createElement('canvas');
+        this.canvas_.className = 'layer-canvas render2d';
+        this.canvas_.hidden = true;
+        container.append(this.canvas_);
+        this.data_ = null;
+        new ResizeObserver(() => this.draw_()).observe(container);
+    }
+
+    set_visible(on) {
+        this.canvas_.hidden = !on;
+        if (on) this.draw_();
+    }
+
+    show(design, built) {
+        this.data_ = { design, built };
+        if (!this.canvas_.hidden) this.draw_();
+    }
+
+    draw_() {
+        const canvas = this.canvas_;
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        if (!w || !h || !this.data_) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        const { design, built } = this.data_;
+
+        let x0 = Infinity;
+        let y0 = Infinity;
+        let x1 = -Infinity;
+        let y1 = -Infinity;
+        for (const p of built[built.length - 1].material.flat()) {
+            x0 = Math.min(x0, p.x);
+            y0 = Math.min(y0, p.y);
+            x1 = Math.max(x1, p.x);
+            y1 = Math.max(y1, p.y);
+        }
+        const scale = Math.min(w / ((x1 - x0) / kUmPerMm), h / ((y1 - y0) / kUmPerMm)) * 0.88;
+        const ox = w / 2 - (((x0 + x1) / 2) * scale) / kUmPerMm;
+        const oy = h / 2 + (((y0 + y1) / 2) * scale) / kUmPerMm;
+        const trace = paths => {
+            const path = new Path2D();
+            for (const p of paths) {
+                path.moveTo(ox + (p[0].x / kUmPerMm) * scale, oy - (p[0].y / kUmPerMm) * scale);
+                for (let i = 1; i < p.length; i++) path.lineTo(ox + (p[i].x / kUmPerMm) * scale, oy - (p[i].y / kUmPerMm) * scale);
+                path.closePath();
+            }
+            return path;
+        };
+
+        if (design.piece.lighting.mode === 'backlit') {
+            ctx.save();
+            ctx.shadowColor = design.piece.lighting.colour;
+            ctx.shadowBlur = 40;
+            ctx.fillStyle = design.piece.lighting.colour;
+            ctx.fill(trace(built[built.length - 1].material.filter(p => p.length > 2)), 'evenodd');
+            ctx.restore();
+        }
+        for (let k = built.length - 1; k >= 0; k--) {
+            const path = trace(built[k].material);
+            ctx.save();
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+            ctx.shadowBlur = 6 + Math.min(10, design.layers[k].gap_mm);
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 3;
+            ctx.fillStyle = design.layers[k].finish.colour;
+            ctx.fill(path, 'evenodd');
+            ctx.restore();
+        }
+    }
+}
+return { Render2D };
+})();
+// src/export/drawing.js
+const __m_export_drawing_js = (function () {
+// The drawing the cut-file writers consume (SPEC 9.1): a page in mm and items, each a polyline in
+// integer micrometres (y up, origin bottom-left) on one laser operation layer.
+// { width_mm, height_mm, items: [{ layer, closed, points: [{x, y}] }] }
+// Items keep their order: writers emit them as given, so callers put engraving and scoring first,
+// then cut holes, then outlines.
+// There is no guide layer: Epilog vectors every colour it is sent, mapped or not, so guides live only
+// in previews and the assembly sheet.
+
+// aci: AutoCAD colour index for DXF; rgb: the same colour for SVG. Pure RGB primaries, because
+// Epilog colour mapping matches RGB values exactly.
+const kLayers = {
+    ENGRAVE: { aci: 3, rgb: '#00FF00' },
+    RAMP_1: { aci: 5, rgb: '#0000FF' },
+    RAMP_2: { aci: 4, rgb: '#00FFFF' },
+    RAMP_3: { aci: 6, rgb: '#FF00FF' },
+    RAMP_4: { aci: 2, rgb: '#FFFF00' },
+    RAMP_5: { aci: 30, rgb: '#FF7F00' },
+    SCORE: { aci: 5, rgb: '#0000FF' },
+    CUT: { aci: 1, rgb: '#FF0000' },
+};
+
+// Layers in a stable order: the order of kLayers, filtered to those the drawing uses.
+function used_layers(drawing) {
+    const used = new Set(drawing.items.map(item => item.layer));
+    for (const name of used) if (!(name in kLayers)) throw new Error(`unknown layer "${name}"`);
+    return Object.keys(kLayers).filter(name => used.has(name));
+}
+
+// Formats an integer micrometre value as millimetres with no float noise: 12345 -> "12.345".
+function um_text(value_um) {
+    if (!Number.isInteger(value_um)) throw new Error(`not an integer micrometre value: ${value_um}`);
+    const sign = value_um < 0 ? '-' : '';
+    const abs = Math.abs(value_um);
+    const whole = Math.floor(abs / 1000);
+    const frac = String(abs % 1000).padStart(3, '0').replace(/0+$/, '');
+    return sign + whole + (frac ? '.' + frac : '');
+}
+return { kLayers, used_layers, um_text };
+})();
+// src/export/svg.js
+const __m_export_svg_js = (function () {
+const { kLayers, used_layers, um_text } = __m_export_drawing_js;
+const { mm_to_um } = __m_core_units_js;
+// SVG cut-file writer (SPEC 9.1): mm page with a mm viewBox, one group per laser layer, hairline
+// strokes in pure RGB, no fills. SVG is y down, so y is flipped against the page height.
+
+
+
+const kStrokeMm = '0.025'; // about 0.001 in: a hairline vector for the Epilog driver
+
+function drawing_to_svg(drawing) {
+    const w = um_text(mm_to_um(drawing.width_mm));
+    const h_um = mm_to_um(drawing.height_mm);
+    const point = p => `${um_text(p.x)} ${um_text(h_um - p.y)}`;
+    const lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        // \x21 is "!": the source must not contain a literal HTML comment opener, because the bundle
+        // is inlined in a script element (tools/build.js refuses it).
+        '<\x21-- Lamina Studio cut file. Open in an RGB document; units are millimetres. -->',
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}mm" height="${um_text(h_um)}mm" ` +
+            `viewBox="0 0 ${w} ${um_text(h_um)}">`,
+    ];
+    for (const name of used_layers(drawing)) {
+        lines.push(`<g id="${name}" fill="none" stroke="${kLayers[name].rgb}" stroke-width="${kStrokeMm}">`);
+        for (const item of drawing.items) {
+            if (item.layer !== name) continue;
+            const [first, ...rest] = item.points;
+            const d = `M${point(first)}` + rest.map(p => ` L${point(p)}`).join('') + (item.closed ? ' Z' : '');
+            lines.push(`<path d="${d}"/>`);
+        }
+        lines.push('</g>');
+    }
+    lines.push('</svg>', '');
+    return lines.join('\n');
+}
+return { drawing_to_svg };
+})();
+// src/preview/sheets_view.js
+const __m_preview_sheets_view_js = (function () {
+const { drawing_to_svg } = __m_export_svg_js;
+const { kMaterials } = __m_core_design_js;
+const { unpack_paths } = __m_geom_pack_js;
+// Sheets view (SPEC 10): the packed stock sheets exactly as they will be exported, one under the
+// other, as SVG (cut red, score blue, engrave green; strokes thickened for the screen).
+
+
+
+
+class SheetsView {
+    constructor(container) {
+        this.root_ = document.createElement('div');
+        this.root_.className = 'sheets-view';
+        this.root_.hidden = true;
+        container.append(this.root_);
+    }
+
+    set_visible(on) {
+        this.root_.hidden = !on;
+    }
+
+    show_message(text) {
+        this.root_.textContent = '';
+        const p = document.createElement('p');
+        p.className = 'step-note';
+        p.textContent = text;
+        this.root_.append(p);
+    }
+
+    // result: the worker's 'sheets' reply.
+    show(result) {
+        this.root_.textContent = '';
+        const total = {};
+        for (const s of result.sheets) total[s.material] = (total[s.material] ?? 0) + 1;
+        for (const s of result.sheets) {
+            const points = unpack_paths(s.points);
+            const drawing = {
+                width_mm: s.width_mm,
+                height_mm: s.height_mm,
+                items: points.map((p, i) => ({ layer: s.layers[i], closed: s.closed[i], points: p })),
+            };
+            const figure = document.createElement('figure');
+            figure.className = 'sheet';
+            figure.innerHTML = drawing_to_svg(drawing)
+                .replace(/^<\?xml[^>]*>\s*/, '')
+                .replace(/\x3c!--[\s\S]*?--\x3e\s*/, '') // \x3c is "<": no literal comment opener in an inline script
+                .replace(/stroke-width="0.025"/g, 'stroke-width="0.6"');
+            const caption = document.createElement('figcaption');
+            caption.textContent = `Sheet ${s.number} of ${total[s.material]}: ${kMaterials[s.material]?.label ?? s.material}, ${s.width_mm} x ${s.height_mm} mm`;
+            figure.append(caption);
+            this.root_.append(figure);
+        }
+        if (result.unplaced.length) {
+            const p = document.createElement('p');
+            p.className = 'step-note';
+            p.textContent = `Too big for the sheet: ${result.unplaced.join(', ')}.`;
+            this.root_.append(p);
+        }
+    }
+}
+return { SheetsView };
+})();
 // src/ui/controls.js
 const __m_ui_controls_js = (function () {
 const { el } = __m_ui_dom_js;
@@ -87709,6 +88063,8 @@ const { write_param } = __m_core_actions_js;
 const { unpack_paths } = __m_geom_pack_js;
 const { check_level } = __m_core_check_level_js;
 const { LayerView } = __m_preview_layer_view_js;
+const { Render2D } = __m_preview_render2d_js;
+const { SheetsView } = __m_preview_sheets_view_js;
 const { Panels } = __m_ui_panels_js;
 const { build_header } = __m_ui_header_js;
 const { build_make_extras } = __m_ui_make_panel_js;
@@ -87718,6 +88074,8 @@ const { save_bytes } = __m_ui_dom_js;
 // App controller: the design store, UI state, header and panels, the geometry worker and the
 // views. Every edit goes through the store (one undo step per action or slider drag). Every new
 // design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
+
+
 
 
 
@@ -87822,7 +88180,32 @@ function start_app({ worker, preview, stage }) {
     let panels;
     let header;
     let layer_view;
+    let render2d;
+    let sheets_view;
     let checks_view;
+    let sheets_timer = null;
+
+    // The exploded-view slider floats over the 3D view.
+    const explode = document.createElement('label');
+    explode.className = 'explode';
+    explode.innerHTML = '<span>Explode</span><input type="range" min="0" max="1" step="0.01" value="0" aria-label="Explode the stack">';
+    explode.querySelector('input').addEventListener('input', e => preview.set_explode?.(Number(e.target.value)));
+    stage.append(explode);
+
+    // Sheets are laid out on demand, only while the Sheets view is open.
+    function schedule_sheets() {
+        clearTimeout(sheets_timer);
+        if (ui.view !== 'sheets' || !state.built_for) return;
+        const design = state.built_for;
+        sheets_timer = setTimeout(async () => {
+            try {
+                const result = await worker.call('sheets', design);
+                if (design === store.design) sheets_view.show(result);
+            } catch (err) {
+                sheets_view.show_message(`Could not lay out the sheets: ${err.message}`);
+            }
+        }, 250);
+    }
 
     const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
     const current = d => d.layers[ui.layer];
@@ -87898,7 +88281,14 @@ function start_app({ worker, preview, stage }) {
         set_view(view) {
             ui.view = view;
             preview.set_visible(view === '3d');
+            explode.hidden = view !== '3d';
+            render2d.set_visible(view === '2d');
             layer_view.set_visible(view === 'layer');
+            sheets_view.set_visible(view === 'sheets');
+            if (view === 'sheets') {
+                sheets_view.show_message('Laying out the sheets...');
+                schedule_sheets();
+            }
             render_ui();
         },
         cycle_island(island) {
@@ -87954,6 +88344,8 @@ function start_app({ worker, preview, stage }) {
     };
     checks_view = make_checks_view(app);
     layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
+    render2d = new Render2D(stage);
+    sheets_view = new SheetsView(stage);
     app.export_zip = async () => {
         const design = store.design;
         set_status('busy', 'Exporting');
@@ -87994,7 +88386,9 @@ function start_app({ worker, preview, stage }) {
             state.built = { ...result, layers: result.layers.map(unpack_layer) };
             state.built_for = design;
             preview.show(design, state.built.layers);
+            render2d.show(design, state.built.layers);
             render_layer_view();
+            schedule_sheets();
             render_status();
             clearTimeout(check_timer);
             check_timer = setTimeout(() => run_checks(design), kCheckDelayMs);

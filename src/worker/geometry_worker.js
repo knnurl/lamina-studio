@@ -8,7 +8,7 @@ import { slow_checks } from '../pipeline/checks.js';
 import { dowel_length_mm } from '../pipeline/registration.js';
 import { pack_paths } from '../geom/pack.js';
 import { test_card_zip } from '../export/test_card.js';
-import { export_design } from '../export/export_design.js';
+import { export_design, export_parts, sheet_drawings } from '../export/export_design.js';
 
 let cache = { key: null, built: null };
 
@@ -55,6 +55,25 @@ function export_zip({ design, preview_png = null }) {
     return export_design(design, built.layers, built.registration, checks, { preview_png });
 }
 
+// The packed sheets for the Sheets view, as drawings with their items' points packed.
+function sheets(design) {
+    const built = built_for(design);
+    const parts = export_parts(design, built.layers, built.registration);
+    const { sheets: drawn, unplaced } = sheet_drawings(design, parts);
+    return {
+        unplaced,
+        sheets: drawn.map(s => ({
+            material: s.material,
+            number: s.number,
+            width_mm: s.drawing.width_mm,
+            height_mm: s.drawing.height_mm,
+            layers: s.drawing.items.map(i => i.layer),
+            closed: s.drawing.items.map(i => i.closed),
+            points: pack_paths(s.drawing.items.map(i => i.points)),
+        })),
+    };
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -67,6 +86,7 @@ const kHandlers = {
     build,
     check,
     export_zip,
+    sheets,
     test_card_zip,
 };
 

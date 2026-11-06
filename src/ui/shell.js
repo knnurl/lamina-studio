@@ -14,9 +14,9 @@ const kSteps = [
 
 const kTabs = [
     { id: '3d', label: '3D', ready: true },
-    { id: '2d', label: '2D', ready: false },
+    { id: '2d', label: '2D', ready: true },
     { id: 'layer', label: 'Layer', ready: true },
-    { id: 'sheets', label: 'Sheets', ready: false },
+    { id: 'sheets', label: 'Sheets', ready: true },
 ];
 
 // The body element of a design step, for panels to fill.

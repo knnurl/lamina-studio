@@ -136,10 +136,26 @@ export function layout_sheets(design, parts) {
     return { sheets, unplaced };
 }
 
+// The packed sheets as drawings: [{ material, number (within its material), drawing }], plus the
+// keys of parts that fit no sheet. The Sheets view and the export share this.
+export function sheet_drawings(design, parts) {
+    const by_key = new Map(parts.map(p => [p.key, p]));
+    const { sheets, unplaced } = layout_sheets(design, parts);
+    const per_material = {};
+    const out = sheets.map(sheet => {
+        per_material[sheet.material] = (per_material[sheet.material] ?? 0) + 1;
+        const placed = sheet.placements.map(pl => {
+            const part = by_key.get(pl.key.split('#')[0]);
+            return { part, move: placer(part, pl.x, pl.y, pl.rotated) };
+        });
+        return { material: sheet.material, number: per_material[sheet.material], drawing: drawing(design.sheet.w_mm, design.sheet.h_mm, placed) };
+    });
+    return { sheets: out, layout: sheets, unplaced };
+}
+
 // files for the zip, plus a summary. preview_png: optional Uint8Array from the 3D view.
 export function export_design(design, built, registration, checks, { preview_png = null } = {}) {
     const parts = export_parts(design, built, registration);
-    const by_key = new Map(parts.map(p => [p.key, p]));
     const root = `lamina_${slug(design.name)}`;
     const files = [];
     const add_drawing = (path, d) => {
@@ -147,16 +163,12 @@ export function export_design(design, built, registration, checks, { preview_png
         files.push({ name: `${root}/${path}.dxf`, data: drawing_to_dxf(d) });
     };
 
-    const { sheets, unplaced } = layout_sheets(design, parts);
+    const { sheets: drawn, layout: sheets, unplaced } = sheet_drawings(design, parts);
     const per_material = {};
-    sheets.forEach(sheet => {
-        per_material[sheet.material] = (per_material[sheet.material] ?? 0) + 1;
-        const placed = sheet.placements.map(pl => {
-            const part = by_key.get(pl.key.split('#')[0]);
-            return { part, move: placer(part, pl.x, pl.y, pl.rotated) };
-        });
-        add_drawing(`sheets/sheet_${pad2(per_material[sheet.material])}_${sheet.material}`, drawing(design.sheet.w_mm, design.sheet.h_mm, placed));
-    });
+    for (const s of drawn) {
+        per_material[s.material] = s.number;
+        add_drawing(`sheets/sheet_${pad2(s.number)}_${s.material}`, s.drawing);
+    }
 
     const margin = 5;
     for (const part of parts) {

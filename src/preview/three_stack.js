@@ -1,7 +1,11 @@
-// 3D stack preview (SPEC 10). Extrudes each layer's paths at its thickness, stacks them front
-// (index 0, nearest the viewer, highest z) to back with their gaps, orbit and tilt with
-// OrbitControls, and renders on demand. Lighting modes, material looks and the exploded view
-// arrive in the previews slice.
+// 3D stack preview (SPEC 10). Extrudes each layer at its real thickness, stacks them front (index
+// 0, nearest the viewer, highest z) to back with their gaps, orbit and tilt with OrbitControls,
+// and renders on demand.
+// - Faces take the layer's finish; cut edges take the material's edge colour (charred ply and MDF,
+//   a darker tone for acrylic). Translucent materials are drawn see-through.
+// - Backlit: a glowing panel in the light colour, cut to the piece's silhouette, sits behind the
+//   stack; translucent layers pick up the light, and the room light dims, so openings glow.
+// - Exploded: spreads the layers apart along z for reading the stack; the design is unchanged.
 // Assumptions: paths in micrometres, outer boundaries have positive area and holes negative.
 import {
     WebGLRenderer,
@@ -11,16 +15,22 @@ import {
     Path,
     Vector2,
     ExtrudeGeometry,
+    ShapeGeometry,
     MeshStandardMaterial,
+    MeshBasicMaterial,
     Mesh,
     Group,
+    Color,
     AmbientLight,
     DirectionalLight,
     MathUtils,
 } from '../vendor/three/three.module.js';
 import { OrbitControls } from '../vendor/three/OrbitControls.js';
 import { kUmPerMm } from '../core/units.js';
-import { layer_thickness_mm } from '../core/design.js';
+import { layer_thickness_mm, material_of } from '../core/design.js';
+
+const kCharColour = '#3a2516';
+const kExplodeMm = 28; // extra spacing per layer at full explode
 
 function signed_area(path) {
     let a = 0;
@@ -59,6 +69,32 @@ function to_shapes(paths) {
     return shapes.map(s => s.shape);
 }
 
+function materials_for(design, layer) {
+    const mat = material_of(design, layer);
+    const finish = new Color(layer.finish.colour);
+    const backlit = design.piece.lighting.mode === 'backlit';
+    const light = new Color(design.piece.lighting.colour);
+    const translucent = mat.look.translucent;
+    const face = new MeshStandardMaterial({
+        color: finish,
+        roughness: translucent ? 0.35 : 0.8,
+        metalness: 0,
+        transparent: translucent,
+        opacity: translucent ? 0.6 : 1,
+        emissive: backlit && translucent ? light : new Color(0, 0, 0),
+        emissiveIntensity: backlit && translucent ? 0.55 : 0,
+    });
+    const edge_colour = layer.material.startsWith('acr') ? finish.clone().multiplyScalar(0.7) : new Color(kCharColour);
+    const side = new MeshStandardMaterial({
+        color: edge_colour,
+        roughness: 0.9,
+        metalness: 0,
+        transparent: translucent,
+        opacity: translucent ? 0.75 : 1,
+    });
+    return [face, side];
+}
+
 export class StackPreview {
     constructor(container) {
         this.container_ = container;
@@ -68,15 +104,15 @@ export class StackPreview {
 
         this.scene_ = new Scene();
         this.camera_ = new PerspectiveCamera(32, 1, 1, 20000);
-        this.scene_.add(new AmbientLight(0xffffff, 0.55));
-        const key = new DirectionalLight(0xffffff, 2.2);
-        key.position.set(-400, 500, 900);
-        this.scene_.add(key);
-        const rim = new DirectionalLight(0x46b4ff, 0.8);
-        rim.position.set(500, -300, -200);
-        this.scene_.add(rim);
+        this.ambient_ = new AmbientLight(0xffffff, 0.55);
+        this.key_ = new DirectionalLight(0xffffff, 2.2);
+        this.key_.position.set(-400, 500, 900);
+        this.rim_ = new DirectionalLight(0x46b4ff, 0.8);
+        this.rim_.position.set(500, -300, -200);
+        this.scene_.add(this.ambient_, this.key_, this.rim_);
         this.stack_ = new Group();
         this.scene_.add(this.stack_);
+        this.explode_ = 0;
 
         this.controls_ = new OrbitControls(this.camera_, this.renderer_.domElement);
         this.controls_.addEventListener('change', () => this.render());
@@ -86,13 +122,13 @@ export class StackPreview {
         this.resize_();
     }
 
-    // built: [{ material: paths }] front first, as the worker returned them for design. Each layer
-    // is extruded at its real thickness; the back layer sits at z = 0 and each layer in front sits
-    // on the one behind plus its gap. The camera is reframed only when the piece's size changes.
+    // built: [{ material: paths }] front first, as the worker returned them for design. The back
+    // layer sits at z = 0 and each layer in front sits on the one behind plus its gap. The camera
+    // is reframed only when the piece's size changes.
     show(design, built) {
         for (const mesh of this.stack_.children) {
             mesh.geometry.dispose();
-            mesh.material.dispose();
+            for (const m of [mesh.material].flat()) m.dispose();
         }
         this.stack_.clear();
         let z = 0;
@@ -103,19 +139,52 @@ export class StackPreview {
             const geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
             geometry.computeBoundingSphere();
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
-            const material = new MeshStandardMaterial({ color: layer.finish.colour, roughness: 0.8, metalness: 0 });
-            const mesh = new Mesh(geometry, material);
-            mesh.position.z = z;
+            const mesh = new Mesh(geometry, materials_for(design, layer));
+            mesh.userData = { base_z: z, from_back: built.length - 1 - k };
             this.stack_.add(mesh);
             z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
         }
+
+        const backlit = design.piece.lighting.mode === 'backlit';
+        this.ambient_.intensity = backlit ? 0.22 : 0.55;
+        this.key_.intensity = backlit ? 0.9 : 2.2;
+        if (backlit && built.length) {
+            // The glow panel follows the back layer's silhouette, a few mm behind it.
+            const back = built[built.length - 1].material;
+            const outline = back.filter(p => signed_area(p) > 0).sort((a, b) => signed_area(b) - signed_area(a))[0];
+            if (outline) {
+                const glow = new Mesh(
+                    new ShapeGeometry(to_shapes([outline])),
+                    new MeshBasicMaterial({ color: new Color(design.piece.lighting.colour).multiplyScalar(1.6) }),
+                );
+                glow.userData = { base_z: -6, from_back: -1 };
+                this.stack_.add(glow);
+            }
+        }
+
+        this.place_();
         const o = design.piece.outline;
         const frame_key = `${o.kind}|${o.w_mm}|${o.h_mm}|${built.length}`;
         if (frame_key !== this.frame_key_) {
             this.frame_key_ = frame_key;
+            this.depth_mm_ = z;
             this.frame_(radius_mm, z);
         }
         this.render();
+    }
+
+    // f in 0..1 spreads the layers apart along z.
+    set_explode(f) {
+        this.explode_ = f;
+        this.place_();
+        this.render();
+    }
+
+    place_() {
+        for (const mesh of this.stack_.children) {
+            const { base_z, from_back } = mesh.userData;
+            mesh.position.z = base_z + this.explode_ * kExplodeMm * Math.max(0, from_back);
+        }
     }
 
     render() {

@@ -9,6 +9,8 @@ import { write_param } from '../core/actions.js';
 import { unpack_paths } from '../geom/pack.js';
 import { check_level } from '../core/check_level.js';
 import { LayerView } from '../preview/layer_view.js';
+import { Render2D } from '../preview/render2d.js';
+import { SheetsView } from '../preview/sheets_view.js';
 import { Panels } from './panels.js';
 import { build_header } from './header.js';
 import { build_make_extras } from './make_panel.js';
@@ -105,7 +107,32 @@ export function start_app({ worker, preview, stage }) {
     let panels;
     let header;
     let layer_view;
+    let render2d;
+    let sheets_view;
     let checks_view;
+    let sheets_timer = null;
+
+    // The exploded-view slider floats over the 3D view.
+    const explode = document.createElement('label');
+    explode.className = 'explode';
+    explode.innerHTML = '<span>Explode</span><input type="range" min="0" max="1" step="0.01" value="0" aria-label="Explode the stack">';
+    explode.querySelector('input').addEventListener('input', e => preview.set_explode?.(Number(e.target.value)));
+    stage.append(explode);
+
+    // Sheets are laid out on demand, only while the Sheets view is open.
+    function schedule_sheets() {
+        clearTimeout(sheets_timer);
+        if (ui.view !== 'sheets' || !state.built_for) return;
+        const design = state.built_for;
+        sheets_timer = setTimeout(async () => {
+            try {
+                const result = await worker.call('sheets', design);
+                if (design === store.design) sheets_view.show(result);
+            } catch (err) {
+                sheets_view.show_message(`Could not lay out the sheets: ${err.message}`);
+            }
+        }, 250);
+    }
 
     const edit = (mutate, coalesce_key = null) => store.update(mutate, { coalesce_key });
     const current = d => d.layers[ui.layer];
@@ -181,7 +208,14 @@ export function start_app({ worker, preview, stage }) {
         set_view(view) {
             ui.view = view;
             preview.set_visible(view === '3d');
+            explode.hidden = view !== '3d';
+            render2d.set_visible(view === '2d');
             layer_view.set_visible(view === 'layer');
+            sheets_view.set_visible(view === 'sheets');
+            if (view === 'sheets') {
+                sheets_view.show_message('Laying out the sheets...');
+                schedule_sheets();
+            }
             render_ui();
         },
         cycle_island(island) {
@@ -237,6 +271,8 @@ export function start_app({ worker, preview, stage }) {
     };
     checks_view = make_checks_view(app);
     layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
+    render2d = new Render2D(stage);
+    sheets_view = new SheetsView(stage);
     app.export_zip = async () => {
         const design = store.design;
         set_status('busy', 'Exporting');
@@ -277,7 +313,9 @@ export function start_app({ worker, preview, stage }) {
             state.built = { ...result, layers: result.layers.map(unpack_layer) };
             state.built_for = design;
             preview.show(design, state.built.layers);
+            render2d.show(design, state.built.layers);
             render_layer_view();
+            schedule_sheets();
             render_status();
             clearTimeout(check_timer);
             check_timer = setTimeout(() => run_checks(design), kCheckDelayMs);
