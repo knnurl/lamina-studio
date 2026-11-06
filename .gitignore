@@ -1,0 +1,12 @@
+# Private: reference art, purchased designs, photos, local fixtures
+refs/
+data/
+
+# Local outputs
+exports/
+*.zip
+
+# Tooling
+node_modules/
+.DS_Store
+Thumbs.db

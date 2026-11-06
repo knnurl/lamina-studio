@@ -1,0 +1,7 @@
+# LF everywhere: the build must be byte-identical on Windows (autocrlf) and CI (Linux).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+# Generated and vendored files: keep diffs quiet.
+index.html linguist-generated=true -diff
+src/vendor/** linguist-vendored=true -diff
