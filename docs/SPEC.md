@@ -574,8 +574,15 @@ Done when:
     - Tie-0 arc slots left micron cracks that became hairline spikes, so sectors now overlap by 5 um.
     - three.js's inline `display` beat `[hidden]`.
     - The app bundle had started pulling in Clipper2, now caught by a test.
+- 2026-11-06, slice 5 done: registration and spacers.
+  - **Dowels:**
+    - Placed in the material all layers share, inset by the hole radius plus a 3.5 mm edge, so the holes are hidden behind the undrilled front.
+    - Angles follow fixed patterns whose gaps all differ by at least 5 degrees (3 dowels: 90, 207.7, 342.3), so no rotation or flip of a layer fits.
+    - Each dowel is centred on the outermost run of shared material along its ray. The hole is the dowel plus 0.1 mm until the Calibrate panel measures it.
+  - **IDs:** "L<n> ^" at 4 mm cap height (falling back to 2.5 mm), in material hidden by the layer in front and clear of the dowels. The search runs first in a bottom band, rect-clipped with Clipper2's RectClip, which cut ID placement from about 47 ms to under 5 ms on the Orb.
+  - **Spacers:** gap / stock sheets of pucks on the dowels, or rings inside both frame rings. W-05 covers no room for dowels or an ID, and frame rings too narrow for spacer rings.
+  - **Measured:** full builds with registration take 15 to 34 ms per preset in Node (best of 3).
 - Next slices:
-  4. Registration and spacers.
   5. Previews.
   6. Packing, zip and the assembly sheet.
   7. SVG import.
@@ -661,6 +668,7 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-06 | M1 starts with the calibration test card | It is the first thing that can go to the lab, and its measurements feed every later check |
 | 2026-11-06 | No blanket open/close cleanup in compose; crumbs under 0.05 mm² are dropped instead | Measured: 288 of 300 ms per build for a 2 mm² area change. Thin webs go to the checks |
 | 2026-11-06 | M1 primitives are five motif types in a per-layer list, plus a seeded band generator | More creative range than one primitive per layer, and Randomise produces island-free, buildable stacks |
+| 2026-11-06 | Dowel angles from a fixed pattern with all-different gaps, not perturbed farthest-point picks | Deterministic, provably asymmetric for 3 or more dowels; two dowels can never stop a flip, and the control says so |
 | 2026-11-06 | Registry entries use `panel` for the sidebar step | `step` is a slider's increment; the duplicate key silently hid every slider (caught in the browser, now tested) |
 | 2026-11-06 | Own scope-hoisting ES-module bundler, not tenebrae's concatenation | Real module scope for a large codebase, the same files in Node tests, and a Blob worker under `file://` |
 | 2026-11-06 | three.js 0.186.1, not the newest 0.187.0 | 0.187.0 was a week old; pin a release that has had time to settle |
