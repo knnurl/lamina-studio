@@ -380,7 +380,14 @@ One small cut, 150 x 100 mm, which fits every lab sheet. Everything is cut **wit
 - **Fit notches**: six edge notches of 10.00 mm plus 0, 0.05, 0.10, 0.15, 0.20 and 0.25 mm, and a separate 10.00 mm key. Slide the key into each notch in the sheet's plane. Uncompensated gap = clearance + 2 x kerf. This sets tab and puzzle-joint clearances (M6).
 - **Score ramp**: five lines on `RAMP_1` to `RAMP_5`, coloured blue, cyan, magenta, yellow and orange. Map each colour to a different power in Job Manager, and see which marks cleanly without cutting through. The green labels show the engrave setting.
 
-M1 adds a "Calibrate" panel. You enter the measurements there, and it converts them to physical values (kerf, minimum web, minimum bridge, minimum hole, dowel hole, fit clearance) and saves a measured material preset.
+The Make step's "Enter the measurements" form (`src/core/calibrate.js`) turns the readings into physical values with the formulas above: kerf, minimum web, minimum bridge, minimum hole, dowel clearance and fit clearance. It refuses to save on a failed scale check, a swapped reading or an implausible kerf.
+
+The measured material is stored in the design (`design.materials`, overriding the built-in preset of the same id) and in a per-browser library, which new designs inherit. A status-bar chip shows while any material in use is unmeasured. The measured values drive:
+- the checks;
+- the dowel hole (dowel plus the measured clearance);
+- the export kerf.
+
+The test card and the calculator share one set of ladders.
 
 ### 9.5 Other outputs
 - Design JSON save and load.
@@ -611,8 +618,12 @@ Done when:
   - **Purchased mandala (private fixture):** imports at 290.88 x 290.85 mm, which resolves assumption 4. Its contour counts match the files (62, 245, 425, 473, 393, 281, 1), and it builds with no islands and no fatal finding. Its ornate front leaves no shared material for dowels, which W-05 reports.
   - **Caches:** per-layer geometry, stack registration and per-layer slow checks are cached by their inputs. On the mandala, a colour or gap edit went from about 850 ms to 7 ms, with slow checks from 590 ms to 0. A cold build of heavy imported art is still about 0.85 s (1.9 s in headless Edge).
   - **Bundler fix:** the bundler took a line such as `import_svg,` for an import statement. Fixed, and covered by a test.
+- 2026-11-06, slice 8 done: the Calibrate panel (9.4).
+  - Formulas tested exactly: for a 0.18 mm kerf card, the minimum web, bridge and hole, dowel clearance and fit clearance all come out as expected.
+  - A measured material changes the export kerf (a 290 mm layer cuts at 290.18 mm) and the dowel hole (3.23 mm).
+  - Driven in headless Edge: P and H are entered, the results appear, the material is saved, and the "not measured" chip clears.
+  - **Still TODO (owner):** the real measurements from the lab.
 - Next slices:
-  8. Calibrate panel.
   9. Performance and golden designs.
 
 ### M2: lattice
