@@ -1,5 +1,6 @@
 // Builds the static shell: the design steps in the sidebar, the view tabs and the status bar.
 // The steps follow SPEC 11 in decision order. Their controls arrive in M1 from the SCHEMA registry.
+import { el } from './dom.js';
 
 const kSteps = [
     { id: 'piece', title: 'Piece', hint: 'Outline, size and number of layers' },
@@ -18,14 +19,9 @@ const kTabs = [
     { id: 'sheets', label: 'Sheets', ready: false },
 ];
 
-function el(tag, attrs = {}, children = []) {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(attrs)) {
-        if (key === 'text') node.textContent = value;
-        else node.setAttribute(key, value);
-    }
-    for (const child of children) node.append(child);
-    return node;
+// The body element of a design step, for panels to fill.
+export function step_body(id) {
+    return document.querySelector(`.step[data-step="${id}"] .step-body`);
 }
 
 export function build_shell() {

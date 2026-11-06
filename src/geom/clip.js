@@ -6,6 +6,7 @@ import {
     union,
     difference,
     inflatePaths,
+    area,
     areaPaths,
     getBoundsPaths,
     FillRule,
@@ -22,8 +23,13 @@ export function circle_segments(r_um, tol_um = kChordTolUm) {
     return Math.max(8, Math.ceil(Math.PI / Math.acos(1 - tol_um / r_um)));
 }
 
-export function circle_path(cx_um, cy_um, r_um, tol_um = kChordTolUm) {
-    return regular_polygon_path(cx_um, cy_um, r_um, circle_segments(r_um, tol_um), 0);
+// fit 'inside' puts the vertices on the circle (the polygon lies inside it), right for parts.
+// fit 'outside' circumscribes it (the polygon's inscribed circle is r_um), right for holes that
+// must clear a pin: an inscribed 3 mm hole at 0.02 mm tolerance is up to 0.037 mm too tight.
+export function circle_path(cx_um, cy_um, r_um, { tol_um = kChordTolUm, fit = 'inside' } = {}) {
+    const n = circle_segments(r_um, tol_um);
+    const r_vertex_um = fit === 'outside' ? r_um / Math.cos(Math.PI / n) : r_um;
+    return regular_polygon_path(cx_um, cy_um, r_vertex_um, n, 0);
 }
 
 // Counter-clockwise regular polygon with circumradius r_um; rot_rad turns the first vertex.
@@ -43,6 +49,31 @@ export function rect_path(x0_um, y0_um, x1_um, y1_um) {
         { x: x1_um, y: y1_um },
         { x: x0_um, y: y1_um },
     ];
+}
+
+// Counter-clockwise rectangle with corner radius r_um (vertices on the arcs).
+export function rounded_rect_path(x0_um, y0_um, x1_um, y1_um, r_um, tol_um = kChordTolUm) {
+    if (r_um <= 0) return rect_path(x0_um, y0_um, x1_um, y1_um);
+    const quarter = Math.max(1, Math.ceil(circle_segments(r_um, tol_um) / 4));
+    const corners = [
+        [x1_um - r_um, y0_um + r_um, -Math.PI / 2],
+        [x1_um - r_um, y1_um - r_um, 0],
+        [x0_um + r_um, y1_um - r_um, Math.PI / 2],
+        [x0_um + r_um, y0_um + r_um, Math.PI],
+    ];
+    const path = [];
+    for (const [cx, cy, a0] of corners) {
+        for (let i = 0; i <= quarter; i++) {
+            const a = a0 + (Math.PI / 2) * (i / quarter);
+            path.push({ x: Math.round(cx + r_um * Math.cos(a)), y: Math.round(cy + r_um * Math.sin(a)) });
+        }
+    }
+    return path;
+}
+
+// Signed area in um2: positive for outer boundaries, negative for holes.
+export function path_area_um2(path) {
+    return area(path);
 }
 
 export function union_all(paths) {

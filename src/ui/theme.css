@@ -136,6 +136,20 @@ button { font: inherit; color: inherit; }
     color: var(--ink-2);
 }
 
+.step-note { margin: 0 0 10px; }
+.btn {
+    background: var(--acid);
+    color: var(--on-acid);
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--glow) color-mix(in srgb, var(--acid) 35%, transparent);
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.5; cursor: progress; }
+
 .view {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);

@@ -147,6 +147,20 @@ button { font: inherit; color: inherit; }
     color: var(--ink-2);
 }
 
+.step-note { margin: 0 0 10px; }
+.btn {
+    background: var(--acid);
+    color: var(--on-acid);
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--glow) color-mix(in srgb, var(--acid) 35%, transparent);
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.5; cursor: progress; }
+
 .view {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
@@ -231,7 +245,7 @@ button { font: inherit; color: inherit; }
 <div class="app">
   <header class="top">
     <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
-    <span class="chip" title="Current milestone">M0 scaffold</span>
+    <span class="chip" title="Current milestone">M1 in progress</span>
     <div class="spacer"></div>
     <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
@@ -247,7 +261,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 4 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 10 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -275,7 +289,7 @@ return { kUmPerMm, mm_to_um };
 })();
 // src/geom/clip.js
 const __m_geom_clip_js = (function () {
-const { union, difference, inflatePaths, areaPaths, getBoundsPaths, FillRule, JoinType, EndType } = __m_vendor_clipper2_clipper2_min_mjs;
+const { union, difference, inflatePaths, area, areaPaths, getBoundsPaths, FillRule, JoinType, EndType } = __m_vendor_clipper2_clipper2_min_mjs;
 const { kUmPerMm } = __m_core_units_js;
 // Geometry core over Clipper2 (SPEC 6.1). Paths are arrays of {x, y} in integer micrometres
 // (Clipper2 Path64), closed, outer boundaries positive (counter-clockwise, y up) and holes negative.
@@ -292,8 +306,13 @@ function circle_segments(r_um, tol_um = kChordTolUm) {
     return Math.max(8, Math.ceil(Math.PI / Math.acos(1 - tol_um / r_um)));
 }
 
-function circle_path(cx_um, cy_um, r_um, tol_um = kChordTolUm) {
-    return regular_polygon_path(cx_um, cy_um, r_um, circle_segments(r_um, tol_um), 0);
+// fit 'inside' puts the vertices on the circle (the polygon lies inside it), right for parts.
+// fit 'outside' circumscribes it (the polygon's inscribed circle is r_um), right for holes that
+// must clear a pin: an inscribed 3 mm hole at 0.02 mm tolerance is up to 0.037 mm too tight.
+function circle_path(cx_um, cy_um, r_um, { tol_um = kChordTolUm, fit = 'inside' } = {}) {
+    const n = circle_segments(r_um, tol_um);
+    const r_vertex_um = fit === 'outside' ? r_um / Math.cos(Math.PI / n) : r_um;
+    return regular_polygon_path(cx_um, cy_um, r_vertex_um, n, 0);
 }
 
 // Counter-clockwise regular polygon with circumradius r_um; rot_rad turns the first vertex.
@@ -313,6 +332,31 @@ function rect_path(x0_um, y0_um, x1_um, y1_um) {
         { x: x1_um, y: y1_um },
         { x: x0_um, y: y1_um },
     ];
+}
+
+// Counter-clockwise rectangle with corner radius r_um (vertices on the arcs).
+function rounded_rect_path(x0_um, y0_um, x1_um, y1_um, r_um, tol_um = kChordTolUm) {
+    if (r_um <= 0) return rect_path(x0_um, y0_um, x1_um, y1_um);
+    const quarter = Math.max(1, Math.ceil(circle_segments(r_um, tol_um) / 4));
+    const corners = [
+        [x1_um - r_um, y0_um + r_um, -Math.PI / 2],
+        [x1_um - r_um, y1_um - r_um, 0],
+        [x0_um + r_um, y1_um - r_um, Math.PI / 2],
+        [x0_um + r_um, y0_um + r_um, Math.PI],
+    ];
+    const path = [];
+    for (const [cx, cy, a0] of corners) {
+        for (let i = 0; i <= quarter; i++) {
+            const a = a0 + (Math.PI / 2) * (i / quarter);
+            path.push({ x: Math.round(cx + r_um * Math.cos(a)), y: Math.round(cy + r_um * Math.sin(a)) });
+        }
+    }
+    return path;
+}
+
+// Signed area in um2: positive for outer boundaries, negative for holes.
+function path_area_um2(path) {
+    return area(path);
 }
 
 function union_all(paths) {
@@ -345,7 +389,7 @@ function bounds_mm(paths) {
         y1: b.bottom / kUmPerMm,
     };
 }
-return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, union_all, subtract, offset, area_mm2, bounds_mm };
+return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, subtract, offset, area_mm2, bounds_mm };
 })();
 // src/dev/boot_demo.js
 const __m_dev_boot_demo_js = (function () {
@@ -385,24 +429,620 @@ function boot_demo({ layers = 6, radius_mm = 150 } = {}) {
 }
 return { boot_demo };
 })();
+// src/export/stroke_font.js
+const __m_export_stroke_font_js = (function () {
+const { mm_to_um } = __m_core_units_js;
+// Single-stroke font for engraved labels and layer IDs (SPEC 6.4). Defined in-repo, so there is no
+// font licence to carry. Glyphs sit on a 4 x 6 grid (width x cap height); corners are chamfered,
+// which suits the studio's look and keeps every glyph a few straight strokes.
+// Assumptions: uppercase only (input is upper-cased); an unknown character is an error, never
+// silently dropped. Output is open polylines in integer micrometres, y up.
+
+
+const kO = '1,0 3,0 4,1 4,5 3,6 1,6 0,5 0,1 1,0';
+const kGlyphs = {
+    A: ['0,0 0,4 2,6 4,4 4,0', '0,3 4,3'],
+    B: ['0,0 0,6 3,6 4,5 4,4 3,3 0,3', '3,3 4,2 4,1 3,0 0,0'],
+    C: ['4,1 3,0 1,0 0,1 0,5 1,6 3,6 4,5'],
+    D: ['0,0 0,6 3,6 4,5 4,1 3,0 0,0'],
+    E: ['4,0 0,0 0,6 4,6', '0,3 3,3'],
+    F: ['0,0 0,6 4,6', '0,3 3,3'],
+    G: ['4,5 3,6 1,6 0,5 0,1 1,0 3,0 4,1 4,3 2,3'],
+    H: ['0,0 0,6', '4,0 4,6', '0,3 4,3'],
+    I: ['1,0 3,0', '2,0 2,6', '1,6 3,6'],
+    J: ['4,6 4,1 3,0 1,0 0,1'],
+    K: ['0,0 0,6', '4,6 0,2', '1.5,3.5 4,0'],
+    L: ['0,6 0,0 4,0'],
+    M: ['0,0 0,6 2,3 4,6 4,0'],
+    N: ['0,0 0,6 4,0 4,6'],
+    O: [kO],
+    P: ['0,0 0,6 3,6 4,5 4,4 3,3 0,3'],
+    Q: [kO, '2,2 4,0'],
+    R: ['0,0 0,6 3,6 4,5 4,4 3,3 0,3', '2,3 4,0'],
+    S: ['4,5 3,6 1,6 0,5 0,4 1,3 3,3 4,2 4,1 3,0 1,0 0,1'],
+    T: ['0,6 4,6', '2,6 2,0'],
+    U: ['0,6 0,1 1,0 3,0 4,1 4,6'],
+    V: ['0,6 2,0 4,6'],
+    W: ['0,6 1,0 2,3 3,0 4,6'],
+    X: ['0,0 4,6', '0,6 4,0'],
+    Y: ['0,6 2,3 4,6', '2,3 2,0'],
+    Z: ['0,6 4,6 0,0 4,0'],
+    0: [kO, '1,1 3,5'],
+    1: ['1,5 2,6 2,0', '1,0 3,0'],
+    2: ['0,5 1,6 3,6 4,5 4,4 0,0 4,0'],
+    3: ['0,5 1,6 3,6 4,5 4,4 3,3 1,3', '3,3 4,2 4,1 3,0 1,0 0,1'],
+    4: ['3,0 3,6 0,2 4,2'],
+    5: ['4,6 0,6 0,3 3,3 4,2 4,1 3,0 0,0'],
+    6: ['4,5 3,6 1,6 0,5 0,1 1,0 3,0 4,1 4,2 3,3 0,3'],
+    7: ['0,6 4,6 1,0'],
+    8: ['1,3 0,4 0,5 1,6 3,6 4,5 4,4 3,3 1,3 0,2 0,1 1,0 3,0 4,1 4,2 3,3'],
+    9: ['4,3 1,3 0,4 0,5 1,6 3,6 4,5 4,1 3,0 1,0 0,1'],
+    '.': ['1.6,0 2.4,0 2.4,0.8 1.6,0.8 1.6,0'],
+    ',': ['2.4,0.8 2.4,0 1.6,-1'],
+    ':': ['1.6,1 2.4,1 2.4,1.8 1.6,1.8 1.6,1', '1.6,4 2.4,4 2.4,4.8 1.6,4.8 1.6,4'],
+    '-': ['0.5,3 3.5,3'],
+    '+': ['0,3 4,3', '2,1 2,5'],
+    '=': ['0,2 4,2', '0,4 4,4'],
+    '/': ['0,0 4,6'],
+    '(': ['3,6 1,4 1,2 3,0'],
+    ')': ['1,6 3,4 3,2 1,0'],
+    '^': ['2,0 2,6', '0,4 2,6 4,4'],
+    ' ': [],
+};
+
+const kGlyphW = 4;
+const kCapH = 6;
+const kAdvance = 6; // glyph width plus a 2-unit gap
+
+const kStrokes = Object.fromEntries(
+    Object.entries(kGlyphs).map(([ch, strokes]) => [
+        ch,
+        strokes.map(s => s.split(' ').map(p => p.split(',').map(Number))),
+    ]),
+);
+
+function has_glyph(ch) {
+    return ch in kStrokes;
+}
+
+function text_width_mm(text, cap_mm) {
+    if (!text.length) return 0;
+    return ((text.length - 1) * kAdvance + kGlyphW) * (cap_mm / kCapH);
+}
+
+// Returns open polylines ({x, y} in micrometres) for text with its baseline at y_mm.
+// align: 'left' starts at x_mm, 'centre' centres the text on x_mm, 'right' ends it at x_mm.
+function text_strokes(text, { x_mm, y_mm, cap_mm, align = 'left' }) {
+    const upper = String(text).toUpperCase();
+    const unit = cap_mm / kCapH;
+    const width = text_width_mm(upper, cap_mm);
+    const x0 = { left: x_mm, centre: x_mm - width / 2, right: x_mm - width }[align];
+    if (x0 === undefined) throw new Error(`unknown text align "${align}"`);
+    const out = [];
+    [...upper].forEach((ch, i) => {
+        if (!has_glyph(ch)) throw new Error(`stroke font has no glyph for "${ch}"`);
+        const left = x0 + i * kAdvance * unit;
+        for (const stroke of kStrokes[ch]) {
+            out.push(stroke.map(([gx, gy]) => ({ x: mm_to_um(left + gx * unit), y: mm_to_um(y_mm + gy * unit) })));
+        }
+    });
+    return out;
+}
+return { has_glyph, text_width_mm, text_strokes };
+})();
+// src/export/drawing.js
+const __m_export_drawing_js = (function () {
+// The drawing the cut-file writers consume (SPEC 9.1): a page in mm and items, each a polyline in
+// integer micrometres (y up, origin bottom-left) on one laser operation layer.
+// { width_mm, height_mm, items: [{ layer, closed, points: [{x, y}] }] }
+// Items keep their order: writers emit them as given, so callers put engraving and scoring first,
+// then cut holes, then outlines.
+// There is no guide layer: Epilog vectors every colour it is sent, mapped or not, so guides live only
+// in previews and the assembly sheet.
+
+// aci: AutoCAD colour index for DXF; rgb: the same colour for SVG. Pure RGB primaries, because
+// Epilog colour mapping matches RGB values exactly.
+const kLayers = {
+    ENGRAVE: { aci: 3, rgb: '#00FF00' },
+    RAMP_1: { aci: 5, rgb: '#0000FF' },
+    RAMP_2: { aci: 4, rgb: '#00FFFF' },
+    RAMP_3: { aci: 6, rgb: '#FF00FF' },
+    RAMP_4: { aci: 2, rgb: '#FFFF00' },
+    RAMP_5: { aci: 30, rgb: '#FF7F00' },
+    SCORE: { aci: 5, rgb: '#0000FF' },
+    CUT: { aci: 1, rgb: '#FF0000' },
+};
+
+// Layers in a stable order: the order of kLayers, filtered to those the drawing uses.
+function used_layers(drawing) {
+    const used = new Set(drawing.items.map(item => item.layer));
+    for (const name of used) if (!(name in kLayers)) throw new Error(`unknown layer "${name}"`);
+    return Object.keys(kLayers).filter(name => used.has(name));
+}
+
+// Formats an integer micrometre value as millimetres with no float noise: 12345 -> "12.345".
+function um_text(value_um) {
+    if (!Number.isInteger(value_um)) throw new Error(`not an integer micrometre value: ${value_um}`);
+    const sign = value_um < 0 ? '-' : '';
+    const abs = Math.abs(value_um);
+    const whole = Math.floor(abs / 1000);
+    const frac = String(abs % 1000).padStart(3, '0').replace(/0+$/, '');
+    return sign + whole + (frac ? '.' + frac : '');
+}
+return { kLayers, used_layers, um_text };
+})();
+// src/export/svg.js
+const __m_export_svg_js = (function () {
+const { kLayers, used_layers, um_text } = __m_export_drawing_js;
+const { mm_to_um } = __m_core_units_js;
+// SVG cut-file writer (SPEC 9.1): mm page with a mm viewBox, one group per laser layer, hairline
+// strokes in pure RGB, no fills. SVG is y down, so y is flipped against the page height.
+
+
+
+const kStrokeMm = '0.025'; // about 0.001 in: a hairline vector for the Epilog driver
+
+function drawing_to_svg(drawing) {
+    const w = um_text(mm_to_um(drawing.width_mm));
+    const h_um = mm_to_um(drawing.height_mm);
+    const point = p => `${um_text(p.x)} ${um_text(h_um - p.y)}`;
+    const lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        // \x21 is "!": the source must not contain a literal HTML comment opener, because the bundle
+        // is inlined in a script element (tools/build.js refuses it).
+        '<\x21-- Lamina Studio cut file. Open in an RGB document; units are millimetres. -->',
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}mm" height="${um_text(h_um)}mm" ` +
+            `viewBox="0 0 ${w} ${um_text(h_um)}">`,
+    ];
+    for (const name of used_layers(drawing)) {
+        lines.push(`<g id="${name}" fill="none" stroke="${kLayers[name].rgb}" stroke-width="${kStrokeMm}">`);
+        for (const item of drawing.items) {
+            if (item.layer !== name) continue;
+            const [first, ...rest] = item.points;
+            const d = `M${point(first)}` + rest.map(p => ` L${point(p)}`).join('') + (item.closed ? ' Z' : '');
+            lines.push(`<path d="${d}"/>`);
+        }
+        lines.push('</g>');
+    }
+    lines.push('</svg>', '');
+    return lines.join('\n');
+}
+return { drawing_to_svg };
+})();
+// src/export/dxf.js
+const __m_export_dxf_js = (function () {
+const { kLayers, used_layers, um_text } = __m_export_drawing_js;
+const { mm_to_um } = __m_core_units_js;
+// DXF R12 (AC1009) cut-file writer (SPEC 9.1). Header carries $INSUNITS 4 (mm) and $MEASUREMENT 1,
+// like the DXFs already proven at the lab. One LAYER table entry per operation with its colour;
+// every item is a POLYLINE (closed for cuts, open for strokes) with VERTEX entities in mm, y up.
+// R12 needs no handles, so the file stays small and hard to get wrong.
+
+
+
+function drawing_to_dxf(drawing) {
+    const out = [];
+    const put = (code, value) => out.push(String(code).padStart(3, ' '), String(value));
+    const layers = used_layers(drawing);
+
+    put(0, 'SECTION');
+    put(2, 'HEADER');
+    put(9, '$ACADVER');
+    put(1, 'AC1009');
+    put(9, '$INSUNITS');
+    put(70, 4);
+    put(9, '$MEASUREMENT');
+    put(70, 1);
+    put(9, '$EXTMIN');
+    put(10, '0.0');
+    put(20, '0.0');
+    put(9, '$EXTMAX');
+    put(10, um_text(mm_to_um(drawing.width_mm)));
+    put(20, um_text(mm_to_um(drawing.height_mm)));
+    put(0, 'ENDSEC');
+
+    put(0, 'SECTION');
+    put(2, 'TABLES');
+    put(0, 'TABLE');
+    put(2, 'LTYPE');
+    put(70, 1);
+    put(0, 'LTYPE');
+    put(2, 'CONTINUOUS');
+    put(70, 0);
+    put(3, 'Solid line');
+    put(72, 65);
+    put(73, 0);
+    put(40, '0.0');
+    put(0, 'ENDTAB');
+    put(0, 'TABLE');
+    put(2, 'LAYER');
+    put(70, layers.length);
+    for (const name of layers) {
+        put(0, 'LAYER');
+        put(2, name);
+        put(70, 0);
+        put(62, kLayers[name].aci);
+        put(6, 'CONTINUOUS');
+    }
+    put(0, 'ENDTAB');
+    put(0, 'ENDSEC');
+
+    put(0, 'SECTION');
+    put(2, 'ENTITIES');
+    for (const item of drawing.items) {
+        put(0, 'POLYLINE');
+        put(8, item.layer);
+        put(66, 1);
+        put(10, '0.0');
+        put(20, '0.0');
+        put(30, '0.0');
+        put(70, item.closed ? 1 : 0);
+        for (const p of item.points) {
+            put(0, 'VERTEX');
+            put(8, item.layer);
+            put(10, um_text(p.x));
+            put(20, um_text(p.y));
+            put(30, '0.0');
+        }
+        put(0, 'SEQEND');
+        put(8, item.layer);
+    }
+    put(0, 'ENDSEC');
+    put(0, 'EOF');
+    return out.join('\n') + '\n';
+}
+return { drawing_to_dxf };
+})();
+// src/export/zip_store.js
+const __m_export_zip_store_js = (function () {
+// Store-only (uncompressed) zip writer (SPEC 9.2). Every timestamp is the DOS epoch (1980-01-01)
+// and entries keep their given order, so the same files always give byte-identical zips.
+// Assumptions: fewer than 65535 entries and under 4 GB in total (no zip64); names are UTF-8.
+
+const kCrcTable = (() => {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        table[n] = c >>> 0;
+    }
+    return table;
+})();
+
+function crc32(bytes) {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) c = kCrcTable[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+}
+
+const kDosDate = 0x0021; // 1980-01-01
+const kUtf8Flag = 0x0800;
+
+// files: [{ name, data: string | Uint8Array }] -> Uint8Array
+function zip_store(files) {
+    const encoder = new TextEncoder();
+    const entries = files.map(f => {
+        const data = typeof f.data === 'string' ? encoder.encode(f.data) : f.data;
+        return { name: encoder.encode(f.name), data, crc: crc32(data) };
+    });
+    let size = 22;
+    for (const e of entries) size += 30 + e.name.length + e.data.length + 46 + e.name.length;
+    const buf = new Uint8Array(size);
+    const view = new DataView(buf.buffer);
+    let at = 0;
+    const u16 = v => {
+        view.setUint16(at, v, true);
+        at += 2;
+    };
+    const u32 = v => {
+        view.setUint32(at, v, true);
+        at += 4;
+    };
+    const bytes = b => {
+        buf.set(b, at);
+        at += b.length;
+    };
+    const header_fields = e => {
+        u16(20); // version needed: 2.0
+        u16(kUtf8Flag);
+        u16(0); // method: stored
+        u16(0); // time
+        u16(kDosDate);
+        u32(e.crc);
+        u32(e.data.length);
+        u32(e.data.length);
+        u16(e.name.length);
+        u16(0); // extra length
+    };
+
+    for (const e of entries) {
+        e.offset = at;
+        u32(0x04034b50);
+        header_fields(e);
+        bytes(e.name);
+        bytes(e.data);
+    }
+    const dir_start = at;
+    for (const e of entries) {
+        u32(0x02014b50);
+        u16(20); // version made by
+        header_fields(e);
+        u16(0); // comment length
+        u16(0); // disk number
+        u16(0); // internal attributes
+        u32(0); // external attributes
+        u32(e.offset);
+        bytes(e.name);
+    }
+    const dir_size = at - dir_start;
+    u32(0x06054b50);
+    u16(0);
+    u16(0);
+    u16(entries.length);
+    u16(entries.length);
+    u32(dir_size);
+    u32(dir_start);
+    u16(0);
+    return buf;
+}
+return { crc32, zip_store };
+})();
+// src/export/test_card.js
+const __m_export_test_card_js = (function () {
+const { rect_path, rounded_rect_path, circle_path, subtract, union_all, path_area_um2 } = __m_geom_clip_js;
+const { mm_to_um } = __m_core_units_js;
+const { text_strokes } = __m_export_stroke_font_js;
+const { drawing_to_svg } = __m_export_svg_js;
+const { drawing_to_dxf } = __m_export_dxf_js;
+const { zip_store } = __m_export_zip_store_js;
+// Calibration test card (SPEC 9.4): one 150 x 100 mm cut, with no kerf compensation, that measures
+// kerf, import scale, minimum web, bridge, hole, dowel fit and fit clearance on the lab laser, plus
+// a five-colour score ramp. Engraved labels name every feature, and the title names the file
+// format, so a cut card records which import route it came from.
+// Assumptions: y up, origin at the card's bottom-left corner, all dimensions nominal (as drawn).
+
+
+
+
+
+
+
+const kCard = {
+    width_mm: 150,
+    height_mm: 100,
+    corner_mm: 4,
+    kerf_square: { x_mm: 6, y_mm: 61, size_mm: 20 },
+    web: { x_mm: 33, y_mm: 64, slot_w_mm: 4, slot_h_mm: 14, webs_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5] },
+    key: { x_mm: 81, y_mm: 62, w_mm: 10, h_mm: 16 },
+    dowel: { x_mm: 101, y_mm: 72, pitch_mm: 6.5, holes_mm: [2.9, 2.95, 3.0, 3.05, 3.1, 3.15, 3.2] },
+    bridge: { x_mm: 6, y_mm: 40, pitch_mm: 12, window_mm: 9, island_mm: 5, bridges_mm: [0.6, 0.8, 1.0, 1.2, 1.5, 2.0] },
+    hole: { x_mm: 84, y_mm: 45, pitch_mm: 6, holes_mm: [0.5, 0.8, 1.0, 1.5, 2.0, 3.0] },
+    ramp: { x_mm: 125, y0_mm: 41, y1_mm: 51, pitch_mm: 4.5, count: 5 },
+    notch: { x_mm: 8, pitch_mm: 16, base_w_mm: 10, depth_mm: 8, clearances_mm: [0, 0.05, 0.1, 0.15, 0.2, 0.25] },
+};
+
+const kHoleTolUm = 5; // fine flattening for holes whose size is being measured
+
+const um = mm_to_um;
+const rect_mm = (x0, y0, x1, y1) => rect_path(um(x0), um(y0), um(x1), um(y1));
+const hole_mm = (cx, cy, d) => circle_path(um(cx), um(cy), um(d / 2), { tol_um: kHoleTolUm, fit: 'outside' });
+const tenths = v => String(Math.round(v * 10));
+const hundredths = v => String(Math.round(v * 100));
+
+// The card's cut geometry: holes, notches and drop-outs removed, bridged islands added back.
+function card_material() {
+    const c = kCard;
+    const holes = [];
+    const keep = [];
+
+    const ks = c.kerf_square;
+    holes.push(rect_mm(ks.x_mm, ks.y_mm, ks.x_mm + ks.size_mm, ks.y_mm + ks.size_mm));
+
+    let x = c.web.x_mm;
+    for (let i = 0; i <= c.web.webs_mm.length; i++) {
+        holes.push(rect_mm(x, c.web.y_mm, x + c.web.slot_w_mm, c.web.y_mm + c.web.slot_h_mm));
+        x += c.web.slot_w_mm + (c.web.webs_mm[i] ?? 0);
+    }
+
+    holes.push(rect_mm(c.key.x_mm, c.key.y_mm, c.key.x_mm + c.key.w_mm, c.key.y_mm + c.key.h_mm));
+
+    c.dowel.holes_mm.forEach((d, i) => holes.push(hole_mm(c.dowel.x_mm + i * c.dowel.pitch_mm, c.dowel.y_mm, d)));
+
+    const b = c.bridge;
+    const inset = (b.window_mm - b.island_mm) / 2;
+    b.bridges_mm.forEach((w, i) => {
+        const x0 = b.x_mm + i * b.pitch_mm;
+        const y_mid = b.y_mm + b.window_mm / 2;
+        holes.push(rect_mm(x0, b.y_mm, x0 + b.window_mm, b.y_mm + b.window_mm));
+        keep.push(rect_mm(x0 + inset, b.y_mm + inset, x0 + inset + b.island_mm, b.y_mm + inset + b.island_mm));
+        // Bridges overlap the card and the island by 0.5 mm so the union joins them.
+        keep.push(rect_mm(x0 - 0.5, y_mid - w / 2, x0 + inset + 0.5, y_mid + w / 2));
+        keep.push(rect_mm(x0 + b.window_mm - inset - 0.5, y_mid - w / 2, x0 + b.window_mm + 0.5, y_mid + w / 2));
+    });
+
+    c.hole.holes_mm.forEach((d, i) => holes.push(hole_mm(c.hole.x_mm + i * c.hole.pitch_mm, c.hole.y_mm, d)));
+
+    const n = c.notch;
+    n.clearances_mm.forEach((cl, i) => {
+        const x0 = n.x_mm + i * n.pitch_mm;
+        holes.push(rect_mm(x0, -1, x0 + n.base_w_mm + cl, n.depth_mm));
+    });
+
+    const outline = rounded_rect_path(0, 0, um(c.width_mm), um(c.height_mm), um(c.corner_mm));
+    return union_all([...subtract([outline], holes), ...keep]);
+}
+
+function card_labels(format) {
+    const c = kCard;
+    const out = [];
+    const text = (s, x_mm, y_mm, cap_mm, align = 'left') => out.push(...text_strokes(s, { x_mm, y_mm, cap_mm, align }));
+    const header_y = 83.5;
+    const row3_header_y = 54.5;
+
+    text(`LAMINA TEST CARD ${format}`, 6, 91.5, 3.5);
+    text('NO KERF COMP', 144, 91.5, 2.2, 'right');
+
+    const ks = c.kerf_square;
+    text('KERF 20', ks.x_mm + ks.size_mm / 2, header_y, 2.2, 'centre');
+    text('P', ks.x_mm + ks.size_mm / 2, ks.y_mm + 7.5, 5, 'centre');
+
+    text('WEB 1/10 MM', c.web.x_mm, header_y, 2.2);
+    let x = c.web.x_mm + c.web.slot_w_mm;
+    for (const w of c.web.webs_mm) {
+        text(tenths(w), x + w / 2, c.web.y_mm - 3.5, 1.8, 'centre');
+        x += w + c.web.slot_w_mm;
+    }
+
+    text('KEY', c.key.x_mm + c.key.w_mm / 2, c.key.y_mm + 7, 2.2, 'centre');
+
+    text('DOWEL 1/100 MM', 98, header_y, 2.2);
+    c.dowel.holes_mm.forEach((d, i) =>
+        text(hundredths(d), c.dowel.x_mm + i * c.dowel.pitch_mm, c.dowel.y_mm - 6, 1.8, 'centre'),
+    );
+
+    const b = c.bridge;
+    text('BRIDGE 1/10 MM', b.x_mm, row3_header_y, 2.2);
+    b.bridges_mm.forEach((w, i) =>
+        text(tenths(w), b.x_mm + i * b.pitch_mm + b.window_mm / 2, b.y_mm - 3.5, 1.8, 'centre'),
+    );
+
+    text('HOLE 1/10 MM', c.hole.x_mm - 2, row3_header_y, 2.2);
+    c.hole.holes_mm.forEach((d, i) =>
+        text(tenths(d), c.hole.x_mm + i * c.hole.pitch_mm, c.hole.y_mm - 7.5, 1.8, 'centre'),
+    );
+
+    text('SCORE', c.ramp.x_mm - 1, row3_header_y, 2.2);
+    for (let i = 0; i < c.ramp.count; i++) {
+        text(String(i + 1), c.ramp.x_mm + i * c.ramp.pitch_mm, c.ramp.y0_mm - 4.5, 1.8, 'centre');
+    }
+
+    const n = c.notch;
+    text('FIT NOTCH +1/100 MM', n.x_mm, 14.5, 2.2);
+    n.clearances_mm.forEach((cl, i) => {
+        const label = cl === 0 ? '0' : `+${hundredths(cl)}`;
+        text(label, n.x_mm + i * n.pitch_mm + (n.base_w_mm + cl) / 2, n.depth_mm + 2, 1.8, 'centre');
+    });
+
+    text('KERF = (H-P)/2', 104, 26, 2);
+    text('(H+P)/2 = 20.00', 104, 21, 2);
+    text('WIDTH 150.00', 104, 16, 2);
+    return out;
+}
+
+// format: 'SVG' or 'DXF', engraved in the title.
+function build_test_card(format) {
+    const c = kCard;
+    const items = card_labels(format).map(points => ({ layer: 'ENGRAVE', closed: false, points }));
+    for (let i = 0; i < c.ramp.count; i++) {
+        const x = um(c.ramp.x_mm + i * c.ramp.pitch_mm);
+        items.push({
+            layer: `RAMP_${i + 1}`,
+            closed: false,
+            points: [
+                { x, y: um(c.ramp.y0_mm) },
+                { x, y: um(c.ramp.y1_mm) },
+            ],
+        });
+    }
+    const material = card_material();
+    const holes = material.filter(p => path_area_um2(p) < 0);
+    const outers = material.filter(p => path_area_um2(p) > 0);
+    for (const points of [...holes, ...outers]) items.push({ layer: 'CUT', closed: true, points });
+    return { width_mm: c.width_mm, height_mm: c.height_mm, items };
+}
+
+function test_card_instructions() {
+    return `LAMINA STUDIO CALIBRATION TEST CARD
+===================================
+
+test_card.svg and test_card.dxf are the same 150 x 100 mm card. Cut ONE of
+them; the engraved title says which. Nothing is kerf compensated: every
+feature is cut at its nominal (drawn) size.
+
+IN ADOBE ILLUSTRATOR
+1. Use an RGB document (File > Document Color Mode > RGB). CMYK shifts the
+   colours, and Epilog colour mapping then misses them.
+2. DXF: import at original size, units millimetres. SVG: open it directly.
+3. Before printing, check the card measures 150 x 100 mm on the artboard.
+
+EPILOG JOB MANAGER COLOUR MAPPING (all vector)
+  Green    #00FF00  ENGRAVE  labels: light marking
+  Blue     #0000FF  RAMP 1   score test: lowest power
+  Cyan     #00FFFF  RAMP 2
+  Magenta  #FF00FF  RAMP 3
+  Yellow   #FFFF00  RAMP 4
+  Orange   #FF7F00  RAMP 5   score test: highest power
+  Red      #FF0000  CUT      through cut
+Run the green and ramp colours before red, so parts are marked before they
+drop out.
+
+MEASURE (calipers)
+  P = the 20 mm square piece that drops out (engraved P)
+  H = the square hole it leaves
+  kerf = (H - P) / 2
+  Scale check: (H + P) / 2 must be 20.00 +/- 0.05 mm. If it is not, the
+  import scale is wrong. Fix the import before trusting anything else.
+  The card's width should be 150.00 mm minus about one kerf.
+
+RECORD
+  WEB    (tenths of a mm) thinnest web that survived intact.
+         Physical web = nominal - kerf.
+  BRIDGE (tenths) thinnest bridge that held during cutting, and the
+         thinnest one that snaps off cleanly by hand.
+  HOLE   (tenths) smallest hole that cut cleanly and opened fully.
+         Physical hole = nominal + kerf.
+  DOWEL  (hundredths) the hole a 3 mm dowel slides into snugly.
+  FIT    (+hundredths) the notch the KEY slides into snugly, flat in the
+         plane of the sheet. Gap = clearance + 2 x kerf.
+  SCORE  the ramp line that marks cleanly without cutting through.
+  Also: material, thickness, and Epilog speed, power and frequency for each
+  colour, lens and focus.
+
+Keep the card and these numbers. Lamina's Calibrate panel turns them into
+a measured material preset.
+`;
+}
+
+function test_card_zip() {
+    const bytes = zip_store([
+        { name: 'test_card.svg', data: drawing_to_svg(build_test_card('SVG')) },
+        { name: 'test_card.dxf', data: drawing_to_dxf(build_test_card('DXF')) },
+        { name: 'test_card_instructions.txt', data: test_card_instructions() },
+    ]);
+    return { name: 'lamina_test_card.zip', bytes };
+}
+return { kCard, build_test_card, test_card_instructions, test_card_zip };
+})();
 // src/worker/geometry_worker.js
 const __m_worker_geometry_worker_js = (function () {
 const { boot_demo } = __m_dev_boot_demo_js;
+const { test_card_zip } = __m_export_test_card_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
 // Protocol: request {id, type, payload}, reply {id, ok, result} or {id, ok: false, error}.
+// A result's top-level Uint8Array fields are transferred, not copied.
+
 
 
 const kHandlers = {
     ping: () => ({ pong: true }),
     boot_demo,
+    test_card_zip,
 };
+
+function transferables(result) {
+    if (!result || typeof result !== 'object') return [];
+    return Object.values(result)
+        .filter(v => v instanceof Uint8Array)
+        .map(v => v.buffer);
+}
 
 self.onmessage = event => {
     const { id, type, payload } = event.data;
     try {
         const handler = kHandlers[type];
         if (!handler) throw new Error(`unknown request "${type}"`);
-        self.postMessage({ id, ok: true, result: handler(payload) });
+        const result = handler(payload);
+        self.postMessage({ id, ok: true, result }, transferables(result));
     } catch (err) {
         self.postMessage({ id, ok: false, error: String((err && err.message) || err) });
     }
@@ -411,14 +1051,43 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 8 modules.
+<script>// Lamina Studio bundle: src/main.js and 10 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
+// src/ui/dom.js
+const __m_ui_dom_js = (function () {
+// Small DOM helpers shared by the UI modules.
+
+// el('button', { class: 'btn', text: 'Go' }, [children]): 'text' sets textContent, other keys are
+// attributes.
+function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+        if (key === 'text') node.textContent = value;
+        else node.setAttribute(key, value);
+    }
+    for (const child of children) node.append(child);
+    return node;
+}
+
+// Hands bytes to the browser as a download.
+function save_bytes(name, bytes, type = 'application/octet-stream') {
+    const url = URL.createObjectURL(new Blob([bytes], { type }));
+    const link = el('a', { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+return { el, save_bytes };
+})();
 // src/ui/shell.js
 const __m_ui_shell_js = (function () {
+const { el } = __m_ui_dom_js;
 // Builds the static shell: the design steps in the sidebar, the view tabs and the status bar.
 // The steps follow SPEC 11 in decision order. Their controls arrive in M1 from the SCHEMA registry.
+
 
 const kSteps = [
     { id: 'piece', title: 'Piece', hint: 'Outline, size and number of layers' },
@@ -437,14 +1106,9 @@ const kTabs = [
     { id: 'sheets', label: 'Sheets', ready: false },
 ];
 
-function el(tag, attrs = {}, children = []) {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(attrs)) {
-        if (key === 'text') node.textContent = value;
-        else node.setAttribute(key, value);
-    }
-    for (const child of children) node.append(child);
-    return node;
+// The body element of a design step, for panels to fill.
+function step_body(id) {
+    return document.querySelector(`.step[data-step="${id}"] .step-body`);
 }
 
 function build_shell() {
@@ -490,7 +1154,7 @@ function show_stage_message(text) {
     const stage = document.getElementById('stage');
     stage.append(el('div', { class: 'stage-msg', text }));
 }
-return { build_shell, set_status, show_stage_message };
+return { step_body, build_shell, set_status, show_stage_message };
 })();
 // src/ui/theme.js
 const __m_ui_theme_js = (function () {
@@ -531,6 +1195,44 @@ function init_theme(button) {
     });
 }
 return { init_theme };
+})();
+// src/ui/make_panel.js
+const __m_ui_make_panel_js = (function () {
+const { el, save_bytes } = __m_ui_dom_js;
+const { step_body, set_status } = __m_ui_shell_js;
+// Make step (SPEC 11). M1 starts with the calibration test card; sheets, checks and export follow.
+
+
+
+function build_make_panel(worker) {
+    const body = step_body('make');
+    body.textContent = '';
+    body.closest('details').open = true;
+    const button = el('button', { class: 'btn', type: 'button', text: 'Download calibration test card' });
+    body.append(
+        el('p', {
+            class: 'step-note',
+            text:
+                'Cut this first on a new laser or material. It measures kerf, import scale, minimum ' +
+                'web, bridge, hole, dowel fit and fit clearance. Instructions are in the zip.',
+        }),
+        button,
+    );
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        set_status('busy', 'Building the test card');
+        try {
+            const { name, bytes } = await worker.call('test_card_zip');
+            save_bytes(name, bytes, 'application/zip');
+            set_status('ok', `Saved ${name}: SVG, DXF and instructions.`);
+        } catch (err) {
+            set_status('bad', `Test card failed: ${err.message}`);
+        } finally {
+            button.disabled = false;
+        }
+    });
+}
+return { build_make_panel };
 })();
 // src/worker/client.js
 const __m_worker_client_js = (function () {
@@ -82991,10 +83693,13 @@ return { StackPreview };
 const __m_main_js = (function () {
 const { build_shell, set_status, show_stage_message } = __m_ui_shell_js;
 const { init_theme } = __m_ui_theme_js;
+const { build_make_panel } = __m_ui_make_panel_js;
 const { start_worker } = __m_worker_client_js;
 const { StackPreview } = __m_preview_three_stack_js;
-// Lamina Studio entry: builds the shell, starts the geometry worker and shows the M0 boot stack,
-// which proves the worker, Clipper2 and the three.js preview work together from a single file.
+// Lamina Studio entry: builds the shell, starts the geometry worker, fills the panels that exist so
+// far and shows the M0 boot stack, which proves the worker, Clipper2 and the three.js preview work
+// together from a single file.
+
 
 
 
@@ -83004,6 +83709,8 @@ async function boot() {
     build_shell();
     init_theme(document.getElementById('theme-toggle'));
     set_status('busy', 'Starting the geometry worker');
+    const worker = start_worker();
+    build_make_panel(worker);
 
     let preview;
     try {
@@ -83015,7 +83722,6 @@ async function boot() {
     }
 
     try {
-        const worker = start_worker();
         const t0 = performance.now();
         const demo = await worker.call('boot_demo', { layers: 6, radius_mm: 150 });
         const t1 = performance.now();
