@@ -597,7 +597,7 @@ Done when:
   - **Backlit:** a glow panel cut to the back layer's silhouette, translucent layers lit in the light colour, and the room light dimmed.
   - **Exploded:** a slider over the 3D view spreads the layers by up to 28 mm each.
   - **2D tab:** a stacked render with drop shadows, plus a glow when backlit.
-  - **Sheets tab:** the packed sheets exactly as exported, through the same  the export uses, laid out only while the tab is open.
+  - **Sheets tab:** the packed sheets exactly as exported, through the same `sheet_drawings` the export uses, laid out only while the tab is open.
 - Next slices:
   7. SVG import.
   8. Calibrate panel.
