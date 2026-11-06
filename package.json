@@ -1,0 +1,16 @@
+{
+  "name": "lamina-studio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Design layered, laser-cut art and export cut-ready files.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node tools/build.js",
+    "check": "node tools/build.js --check",
+    "test": "node --test tests/"
+  }
+}
