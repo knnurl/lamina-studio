@@ -25,15 +25,17 @@ const kRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const kSrc = path.join(kRoot, 'src');
 const kOut = path.join(kRoot, 'index.html');
 
+// "import" must be followed by whitespace, a brace, a star or a quote, never by an identifier
+// character: a line such as "    import_svg," in an object literal is not an import.
 const kImportRe =
-    /^[ \t]*import\s*(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\}\s*|\*\s*as\s+([\w$]+)\s*)?(?:from\s*)?(['"])([^'"\n]+)\4[ \t]*;?/gm;
+    /^[ \t]*import(?=[\s{*'"])\s*(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\}\s*|\*\s*as\s+([\w$]+)\s*)?(?:from\s*)?(['"])([^'"\n]+)\4[ \t]*;?/gm;
 const kExportListRe = /^[ \t]*export\s*\{([^}]*)\}\s*(?:from\s*(['"])([^'"\n]+)\2)?[ \t]*;?/gm;
 const kExportStarRe = /^[ \t]*export\s*\*\s*(?:as\s+([\w$]+)\s*)?from\s*(['"])([^'"\n]+)\2[ \t]*;?/gm;
 const kExportDeclRe =
     /^([ \t]*)export\s+(default\s+)?((?:async\s+)?function\s*\*?\s*([\w$]+)|class\s+([\w$]+)|(?:const|let|var)\s+([\w$]+))/gm;
 const kExportDefaultRe = /^([ \t]*)export\s+default\s+/gm;
 const kTrailingExportRe = /(^|[;}\s])export\s*\{([^}]*)\}\s*;?\s*$/;
-const kLeftoverRe = /^[ \t]*(?:import\s*(?:[{*'"]|[\w$]+\s*(?:,|from\b))|export\b)/m;
+const kLeftoverRe = /^[ \t]*(?:import(?:\s*[{*'"]|\s+[\w$]+\s*(?:,|from\b))|export\b)/m;
 
 const rel = abs => path.relative(kRoot, abs).split(path.sep).join('/');
 

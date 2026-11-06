@@ -73,6 +73,22 @@ test('supported import and export forms work at runtime', () => {
     assert.equal(out.side, true);
 });
 
+test('identifiers that start with import or export are not statements', () => {
+    const dir = project({
+        'entry.js': [
+            "import { importer } from './a.js';",
+            'const handlers = {',
+            '    import_svg: 1,',
+            '    importer,',
+            '    export_zip: 2,',
+            '};',
+            'out.keys = Object.keys(handlers).join(",");',
+        ].join('\n'),
+        'a.js': 'export const importer = 3;',
+    });
+    assert.equal(run(bundle(path.join(dir, 'entry.js')).code).keys, 'import_svg,importer,export_zip');
+});
+
 test('module scopes stay separate', () => {
     const dir = project({
         'entry.js': "import { one } from './a.js';\nimport { two } from './b.js';\nout.v = [one(), two()];",
