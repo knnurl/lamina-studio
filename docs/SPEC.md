@@ -557,8 +557,24 @@ Done when:
     - layer count to 12;
     - adding an opening to layer 3.
   - The M0 boot demo is gone.
+- 2026-11-06, slice 4 done: islands, bridges, island policies and checks.
+  - **Islands:** found as material components, with stable IDs. Each bridges to the boundary of the opening that encloses it, so nested rings chain to the body.
+  - **Bridges:** scored by length, rejected if they cross another island, spread at least 60 degrees apart. One, two or three per island depending on its area.
+  - **Policies:** glue-on islands become separate parts with a scored locator on the layer behind; drop deletes the island.
+  - **Checks:**
+    - G-01 to G-04, W-01 to W-04, W-06 and W-07 are implemented.
+    - Fast checks run with every build. Morphological checks run in the worker after edits pause (350 ms), on a cached build.
+    - Measured: slow checks take 11 to 72 ms per preset.
+    - Thin-web detection uses miter joins with limit 20, plus a 10 um re-opening to drop rounding slivers.
+    - Bridge zones are excluded from W-01, because bridges are meant to be thinner than webs.
+    - Verified exact on synthetic webs: 1.0 mm gives W-01 with a 1.00 x 20.00 box; 0.1 mm gives G-02.
+    - No preset has a fatal finding.
+  - **UI:** the Layer tab is a 2D inspector (click an island to cycle bridge, glue, drop; wheel zoom, drag pan). The Make step shows the check report with Show and Allow. The Structure step holds island policy, bridge width and the bridge cap.
+  - **Found and fixed:**
+    - Tie-0 arc slots left micron cracks that became hairline spikes, so sectors now overlap by 5 um.
+    - three.js's inline `display` beat `[hidden]`.
+    - The app bundle had started pulling in Clipper2, now caught by a test.
 - Next slices:
-  3. Islands, bridges and checks.
   4. Registration and spacers.
   5. Previews.
   6. Packing, zip and the assembly sheet.
