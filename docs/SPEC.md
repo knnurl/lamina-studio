@@ -42,7 +42,7 @@ Agreed in the scoping interview on 2026-11-06. Changes go in the decision log (s
 | Lighting | Per piece: unlit or static backlight. Psyight LED layout export in M7, but the data model carries LED fields from M1 |
 | Pattern families | Lattice/key-fret (M2), circuit/pipe (M3), radial mandala (M4), image to layers (M5) |
 | Artwork source | Generators, hand edits and import, all of them |
-| Machine | Lab Epilog Fusion Pro 48, 120 W CO2, bed 1219 x 914 mm. Kerf unknown: calibration test card. Stock sheet size is configurable |
+| Machine | Lab Epilog Fusion Pro 48, 120 W CO2, bed 1219 x 914 mm, driven from Adobe Illustrator through Epilog Job Manager. Stock sheets 600 x 400, 400 x 300 and 300 x 300 mm. No job time limit. Kerf unknown: calibration test card |
 | Materials | 3 mm plywood, 3 mm MDF, acrylic (opaque, translucent). Custom presets |
 | Colour | Per piece: paint or stain, coloured material, or light |
 | Depth | Per-layer gap (0 means glued). Both "depth field sliced" and "per-layer source" modes |
@@ -71,7 +71,8 @@ A piece is an ordered stack of **layers**, front (L1, nearest the viewer) to bac
 
 - Layer count: 1 to 40.
 - Size: up to the stock sheet size in M1. The default stock is 600 x 400 mm; the Epilog bed caps it at 1219 x 914 mm. Larger pieces need puzzle-joint tiling (M6).
-- Default piece: 300 mm circle, 8 layers of 3 mm plywood, all gaps 0.
+- Default piece: 290 mm circle, 8 layers of 3 mm plywood, all gaps 0. At 290 mm, one layer fits a 300 x 300 sheet and two fit a 600 x 400 sheet, both with 5 mm margins.
+- Stock sheet presets: 600 x 400 (default), 400 x 300 and 300 x 300 mm, the lab's sizes. Custom sizes are allowed, up to the bed.
 
 ### 4.2 Layer
 Each layer has:
@@ -252,7 +253,6 @@ Every check has an ID, a severity, a rule and a default threshold. Results show 
 | W-05 | Warning | Not enough hidden area for dowels or IDs. Fewer dowels are placed, or the ID is skipped |
 | W-06 | Warning | Backlit piece with an opaque, solid back layer |
 | W-07 | Warning | Front layer frame ring is 0 and the connectivity margin is thin |
-| W-08 | Warning | Cut length or estimated cut time over budget `[Verify]`: lab slots are time-limited |
 | I-01 | Info | Per-layer and total cut length, sheet count, material area used |
 
 Randomise with checks: Randomise tries up to 10 variations and keeps the first with no fatal checks, as tenebrae does. Warnings are allowed, because visual creativity comes first.
@@ -323,11 +323,16 @@ Randomise with checks: Randomise tries up to 10 variations and keeps the first w
   - Guide geometry sits in a separate group named `guide` that the laser should ignore.
   - Stroke width 0.025 mm (about 0.001 in), so the driver treats every line as a hairline vector. `[Verify the threshold on the lab's Job Manager setup]`
   - Vector paths have no fill.
-- **DXF R12** (AC1009, the most compatible):
-  - Closed `POLYLINE`/`VERTEX` entities in mm.
-  - Layers `CUT` (colour 1), `SCORE` (5), `ENGRAVE` (3) and `GUIDE` (8).
+- **DXF R12** (AC1009):
+  - Header `$INSUNITS` 4 (mm) and `$MEASUREMENT` 1. The DXFs already proven at the lab (AngelShadowBox, written by ezdxf as AC1024) carry the same two values. R12 keeps the writer small, with no handles to get wrong.
+  - A `LAYER` table and `POLYLINE`/`VERTEX` entities in mm: closed for cuts, open for score lines and engraved text strokes.
+  - Layers `CUT` (colour 1), `SCORE` (5), `ENGRAVE` (3) and `GUIDE` (8). The test card's score ramp adds `RAMP_1` to `RAMP_5`, using ACI colours 5, 4, 6, 2 and 30, which are RGB blue, cyan, magenta, yellow and orange.
   - No splines and no bulges: everything is flattened.
 - **Order**: within each part, inner contours first, then the outline.
+- **Lab workflow** (Adobe Illustrator printing to Epilog Job Manager):
+  - Open or place the file in an **RGB** document. A CMYK document shifts the pure colours, and colour mapping then misses them.
+  - Import DXF at original size in millimetres.
+  - The test card has a built-in scale check (9.4), so a wrong import scale is caught before any real piece is cut. `[Verify SVG import in Illustrator: DXF is proven, SVG is untried]`
 
 ### 9.2 Sheets and zip
 - Parts are packed onto sheets (`sheet.w_mm` by `sheet.h_mm`, margin and spacing) with a bounding-box skyline packer.
@@ -355,16 +360,20 @@ lamina_<name>/
 - Check overrides, and the cut length per sheet.
 
 ### 9.4 Calibration test card
-A single small cut, about 140 x 90 mm `[Verify fits the lab bed]`, with engraved labels:
-- **Kerf**: a 20.000 mm square and a 10.000 mm hole, cut with no compensation. Kerf = 20 − measured outer size, cross-checked against the hole.
-- **Min web ladder**: webs of 0.6, 0.8, 1.0, 1.2, 1.5, 2.0 and 2.5 mm between slots, each 15 mm long.
-- **Bridge ladder**: islands held by bridges of 0.6 to 2.0 mm. Note which survive cutting and which snap cleanly by hand.
-- **Min hole ladder**: 0.5 to 3.0 mm.
-- **Dowel fit**: holes at dowel diameter plus −0.10 to +0.20 mm in 0.05 mm steps.
-- **Puzzle joint fit** (used in M6, cut from M1): joint pairs at clearances of 0 to 0.25 mm.
-- **Score and engrave ramp**: five colour-coded score lines and ID samples, for the user to map to power settings in the lab software.
+One small cut, 150 x 100 mm, which fits every lab sheet. Everything is cut **without kerf compensation**, and engraved labels name each feature. Files: `test_card.svg`, `test_card.dxf` and `test_card_instructions.txt`, in one zip. The engraved title says which format the card was cut from.
 
-The studio has a "Calibrate" panel. You enter the measured values and save them as a measured material preset.
+- **Kerf and scale**:
+  - A 20.00 mm square is cut free as a part P, which leaves a square hole H. Measure both with calipers.
+  - Kerf = (H − P) / 2.
+  - Scale check: (H + P) / 2 must be 20.00 ± 0.05 mm. If it isn't, the import scale is wrong: stop and fix the import before trusting anything else. The 150.00 mm card width is a second check.
+- **Web ladder**: webs of 0.6, 0.8, 1.0, 1.2, 1.5, 2.0 and 2.5 mm between 4 mm slots, each 14 mm long. Physical web = nominal − kerf.
+- **Bridge ladder**: 5 x 5 mm islands in 9 x 9 mm windows, each held by two bridges of 0.6, 0.8, 1.0, 1.2, 1.5 or 2.0 mm. Note which survive cutting and which snap off cleanly by hand.
+- **Hole ladder**: 0.5, 0.8, 1.0, 1.5, 2.0 and 3.0 mm. Physical hole = nominal + kerf.
+- **Dowel fit**: for 3 mm dowels, holes of 2.90 to 3.20 mm in 0.05 mm steps.
+- **Fit notches**: six edge notches of 10.00 mm plus 0, 0.05, 0.10, 0.15, 0.20 and 0.25 mm, and a separate 10.00 mm key. Slide the key into each notch in the sheet's plane. Uncompensated gap = clearance + 2 x kerf. This sets tab and puzzle-joint clearances (M6).
+- **Score ramp**: five lines on `RAMP_1` to `RAMP_5`, coloured blue, cyan, magenta, yellow and orange. Map each colour to a different power in Job Manager, and see which marks cleanly without cutting through. The green labels show the engrave setting.
+
+M1 adds a "Calibrate" panel. You enter the measurements there, and it converts them to physical values (kerf, minimum web, minimum bridge, minimum hole, dowel hole, fit clearance) and saves a measured material preset.
 
 ### 9.5 Other outputs
 - Design JSON save and load.
@@ -573,14 +582,13 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 
 ## 17. Assumptions to verify
 1. The default kerf, min web and min hole values in 5.1. Replaced by test card measurements.
-2. The lab workflow for the Epilog Fusion Pro 48:
-   - which design software prints to Epilog Job Manager (Illustrator, CorelDRAW or Inkscape), and whether SVG or DXF opens cleanly in it;
-   - the hairline threshold;
-   - the RGB colour mapping;
-   - the stock sheet sizes the lab sells or allows.
+2. Mostly resolved 2026-11-06 (owner):
+   - The lab prints from Adobe Illustrator to Epilog Job Manager.
+   - DXF works well there; SVG is untried.
+   - Stock sheets are 600 x 400, 400 x 300 and 300 x 300 mm.
 
-   The bed size (1219 x 914 mm) is known.
-3. Whether the lab limits job time, which would make W-08 a real constraint.
+   Still to verify with the first test card: SVG import scale in Illustrator, the hairline threshold, and the RGB colour mapping.
+3. Resolved 2026-11-06: there is no job time limit, so the cut-time warning was dropped.
 4. That the purchased mandala's SVG px are 72 DPI points (it should import at about 291 mm).
 5. Resolved 2026-11-06: clipper2-ts 2.0.1-18 is BSL-1.0 (from its package metadata and LICENSE file).
 6. Resolved 2026-11-06: tenebrae concatenates classic scripts. Lamina uses its own ES-module bundler instead (section 13.2).
@@ -599,5 +607,9 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-06 | Depth Anything V2 Small only | The only Apache-2.0 size; the others are non-commercial |
 | 2026-11-06 | Lab machine: Epilog Fusion Pro 48, 120 W CO2, bed 1219 x 914 mm | Owner. Default stock stays 600 x 400 mm; the bed only caps the sheet size |
 | 2026-11-06 | Pure RGB primaries and hairline strokes in SVG | Epilog colour mapping works on RGB vector artwork |
+| 2026-11-06 | Lab route is Illustrator to Job Manager; DXF R12 carries `$INSUNITS` 4 and `$MEASUREMENT` 1 | Owner: DXF works well at the lab; those are the unit values in the lab-proven Angel DXFs |
+| 2026-11-06 | Default piece 290 mm; stock presets 600 x 400, 400 x 300, 300 x 300 | The lab's sheet sizes. 300 mm plus margins would not fit a 300 x 300 sheet |
+| 2026-11-06 | Cut-time warning dropped | No job time limit at the lab |
+| 2026-11-06 | M1 starts with the calibration test card | It is the first thing that can go to the lab, and its measurements feed every later check |
 | 2026-11-06 | Own scope-hoisting ES-module bundler, not tenebrae's concatenation | Real module scope for a large codebase, the same files in Node tests, and a Blob worker under `file://` |
 | 2026-11-06 | three.js 0.186.1, not the newest 0.187.0 | 0.187.0 was a week old; pin a release that has had time to settle |
