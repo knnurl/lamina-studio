@@ -1,0 +1,205 @@
+// The design document (SPEC 5): the single source of truth. Every output is a pure function of it.
+// Units are mm here; geometry converts to integer micrometres. A null material-dependent value
+// means "use the material preset".
+import { kMotifTypes, kMotifParams } from './schema.js';
+
+export const kSchemaVersion = 1;
+
+// Starting values; the calibration test card replaces them (SPEC 5.1, 9.4).
+export const kMaterials = {
+    ply3: {
+        label: 'Birch plywood 3 mm',
+        thickness_mm: 3,
+        kerf_mm: 0.2,
+        min_web_mm: 1.5,
+        min_bridge_mm: 1.2,
+        min_hole_mm: 1.0,
+        look: { colour: '#d8b98c', translucent: false },
+        measured: false,
+    },
+    mdf3: {
+        label: 'MDF 3 mm',
+        thickness_mm: 3,
+        kerf_mm: 0.2,
+        min_web_mm: 1.5,
+        min_bridge_mm: 1.2,
+        min_hole_mm: 1.0,
+        look: { colour: '#9c7b5b', translucent: false },
+        measured: false,
+    },
+    acr3: {
+        label: 'Acrylic 3 mm, opaque',
+        thickness_mm: 3,
+        kerf_mm: 0.15,
+        min_web_mm: 2.0,
+        min_bridge_mm: 1.5,
+        min_hole_mm: 1.0,
+        look: { colour: '#202024', translucent: false },
+        measured: false,
+    },
+    acr3t: {
+        label: 'Acrylic 3 mm, translucent',
+        thickness_mm: 3,
+        kerf_mm: 0.15,
+        min_web_mm: 2.0,
+        min_bridge_mm: 1.5,
+        min_hole_mm: 1.0,
+        look: { colour: '#f2f2f2', translucent: true },
+        measured: false,
+    },
+};
+
+// Finish palettes, front to back. Colours are interpolated across however many layers there are.
+export const kPalettes = {
+    orb: { label: 'Orb', stops: ['#a7a9b0', '#ff4a2a', '#3a7bd5', '#e9e4da', '#c8321e', '#243a8f', '#14101c'] },
+    acid: { label: 'Acid', stops: ['#c4f24a', '#8cc152', '#5e8f3a', '#5b2f80', '#331a4d', '#120a1c'] },
+    ember: { label: 'Ember', stops: ['#ffd27a', '#ffb340', '#ff7a2e', '#e0482a', '#9c2a2a', '#2a1010'] },
+    ice: { label: 'Ice', stops: ['#eef7ff', '#a9d4ff', '#5aa8f0', '#2f6fd0', '#243b8a', '#0d1230'] },
+    walnut: { label: 'Walnut to birch', stops: ['#2a1d14', '#4a3424', '#78553a', '#a8814f', '#d9bf8f', '#efe3c6'] },
+    mono: { label: 'Mono', stops: ['#f2f2f2', '#c8c8c8', '#9a9a9a', '#6c6c6c', '#404040', '#161616'] },
+};
+
+export const kSheetPresets = {
+    '600x400': { label: '600 x 400 mm', w_mm: 600, h_mm: 400 },
+    '400x300': { label: '400 x 300 mm', w_mm: 400, h_mm: 300 },
+    '300x300': { label: '300 x 300 mm', w_mm: 300, h_mm: 300 },
+};
+
+function hex_to_rgb(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+function rgb_to_hex(rgb) {
+    return '#' + rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('');
+}
+
+// Colour for layer k of n from a palette's stops, interpolated in RGB.
+export function palette_colour(palette_id, k, n) {
+    const stops = kPalettes[palette_id].stops;
+    if (n <= 1) return stops[0];
+    const t = (k / (n - 1)) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(t));
+    const f = t - i;
+    const a = hex_to_rgb(stops[i]);
+    const b = hex_to_rgb(stops[i + 1]);
+    return rgb_to_hex(a.map((c, j) => c + (b[j] - c) * f));
+}
+
+export function default_layer(k, n, palette_id = 'orb') {
+    return {
+        id: `L${k + 1}`,
+        material: 'ply3',
+        thickness_mm: null,
+        gap_mm: 0,
+        finish: { kind: 'paint', colour: palette_colour(palette_id, k, n) },
+        frame_ring_mm: 12,
+        locked: false,
+        source: { kind: 'primitive', motifs: [] },
+        island_policy: 'bridge',
+        bridge: { w_mm: null, max: 4 },
+        overrides: { islands: {}, bridges: [], locks: [], edits: [] },
+    };
+}
+
+export function base_design(layer_count = 8) {
+    return {
+        app: 'lamina',
+        schema: kSchemaVersion,
+        name: 'Untitled',
+        seed: 1,
+        palette: 'orb',
+        piece: {
+            outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
+            symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
+            lighting: { mode: 'unlit', colour: '#ff5b2e' },
+            depth_mode: 'per_layer',
+        },
+        machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
+        sheet: { w_mm: 600, h_mm: 400, margin_mm: 5, spacing_mm: 3 },
+        registration: { dowel_d_mm: 3, count: 3, through_front: false, ids: true },
+        spacers: { style: 'pucks', stock_material: 'ply3' },
+        layers: Array.from({ length: layer_count }, (_, k) => default_layer(k, layer_count)),
+        frame: null,
+        tiling: null,
+        check_overrides: [],
+    };
+}
+
+const is_plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Copies keys missing from target out of defaults, recursively for plain objects.
+function fill_missing(target, defaults) {
+    for (const [key, value] of Object.entries(defaults)) {
+        if (!(key in target)) target[key] = structuredClone(value);
+        else if (is_plain(value) && is_plain(target[key])) fill_missing(target[key], value);
+    }
+    return target;
+}
+
+// Opens any saved design: checks it is a Lamina file, upgrades older schemas, fills new fields.
+export function migrate(input) {
+    if (!is_plain(input) || input.app !== 'lamina') throw new Error('not a Lamina design file');
+    if (!Number.isInteger(input.schema) || input.schema > kSchemaVersion) {
+        throw new Error(`design schema ${input.schema} is newer than this studio (${kSchemaVersion})`);
+    }
+    const design = structuredClone(input);
+    const n = Array.isArray(design.layers) && design.layers.length ? design.layers.length : 8;
+    fill_missing(design, base_design(n));
+    design.layers = design.layers.map((layer, k) => fill_missing(layer, default_layer(k, n, design.palette)));
+    design.schema = kSchemaVersion;
+    return design;
+}
+
+export function material_of(design, layer) {
+    return kMaterials[layer.material] ?? kMaterials.ply3;
+}
+
+export function layer_thickness_mm(design, layer) {
+    return layer.thickness_mm ?? material_of(design, layer).thickness_mm;
+}
+
+export function piece_radius_mm(piece) {
+    const o = piece.outline;
+    if (o.kind === 'rect' || o.kind === 'arch') return Math.min(o.w_mm, o.h_mm) / 2;
+    return o.w_mm / 2;
+}
+
+// Applies a palette to every layer's finish colour.
+export function apply_palette(design, palette_id) {
+    design.palette = palette_id;
+    const n = design.layers.length;
+    design.layers.forEach((layer, k) => {
+        layer.finish.colour = palette_colour(palette_id, k, n);
+    });
+}
+
+// Sets the layer count. New layers are copies of the last patterned layer, inserted before the
+// back layer, so the back stays solid; removal takes from just in front of the back.
+export function set_layer_count(design, count) {
+    const n = Math.max(1, Math.min(40, Math.round(count)));
+    const layers = design.layers;
+    while (layers.length < n) {
+        const template = layers.length > 1 ? layers[layers.length - 2] : layers[0];
+        layers.splice(Math.max(layers.length - 1, 0), 0, structuredClone(template));
+    }
+    while (layers.length > n) layers.splice(Math.max(layers.length - 2, 0), 1);
+    layers.forEach((layer, k) => {
+        layer.id = `L${k + 1}`;
+    });
+    apply_palette(design, design.palette);
+}
+
+// Scales every length a motif has (positions and sizes, not structural widths such as ties), so a
+// pattern follows the piece when the piece is resized.
+export function scale_motifs(design, factor) {
+    for (const layer of design.layers) {
+        for (const motif of layer.source.motifs ?? []) {
+            for (const key of kMotifTypes[motif.type]?.params ?? []) {
+                if (kMotifParams[key].scales && typeof motif[key] === 'number') {
+                    motif[key] = Math.round(motif[key] * factor * 100) / 100;
+                }
+            }
+        }
+    }
+}

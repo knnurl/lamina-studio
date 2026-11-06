@@ -5,6 +5,7 @@
 import {
     union,
     difference,
+    intersect,
     inflatePaths,
     area,
     areaPaths,
@@ -82,6 +83,10 @@ export function union_all(paths) {
 
 export function subtract(subject, clip) {
     return difference(subject, clip, FillRule.NonZero);
+}
+
+export function intersect_paths(subject, clip) {
+    return intersect(subject, clip, FillRule.NonZero);
 }
 
 const kJoin = { round: JoinType.Round, miter: JoinType.Miter, square: JoinType.Square };
