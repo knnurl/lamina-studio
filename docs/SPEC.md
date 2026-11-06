@@ -431,9 +431,11 @@ src/
   export/              svg, dxf_r12, zip_store, pack, assembly, test_card
   preview/             three_stack, render2d, layer_view, sheets_view
   ui/                  sidebar, controls, header, status, tour, theme.css
-  worker/              geometry worker entry
+  worker/              geometry worker entry and its UI-thread client
+  dev/                 M0 boot self-test stack (removed in M1)
   vendor/              clipper2-ts, three (pinned, with licence files)
 tools/build.js         bundles src/ into one index.html
+tools/shot.js          headless browser check: status, console errors, screenshot
 tests/                 node:test suites + synthetic fixtures
 .github/workflows/pages.yml
 refs/  data/           gitignored
@@ -503,10 +505,10 @@ The zip writer, DXF writer, SVG writer, stroke font, packer and marching squares
 
 ### M0: scaffold
 Done when:
-- [ ] The repo has `src/`, `tools/build.js`, `tests/`, `pages.yml`, `LICENSE`, `CLAUDE.md`, `.gitignore`.
-- [ ] `node tools/build.js` produces `index.html`, which opens from `file://` and shows the themed empty shell.
-- [ ] `node --test tests/` runs a smoke test. CI fails on a stale `index.html`.
-- [ ] clipper2-ts and three.js are vendored at pinned versions with their licence files, and a test exercises a Clipper union and offset.
+- [x] The repo has `src/`, `tools/build.js`, `tests/`, `pages.yml`, `LICENSE`, `CLAUDE.md`, `.gitignore`.
+- [x] `node tools/build.js` produces `index.html`, which opens from `file://` and shows the themed empty shell. Checked with `node tools/shot.js` in headless Edge, dark and light, with no console errors. The shell also renders a 6-layer boot stack, built by Clipper2 in the worker and drawn by three.js, to prove the whole chain.
+- [x] `node --test tests/` runs: 17 tests covering the bundler, the built page, the worker bundle and the geometry core. CI fails on a stale `index.html` (`node tools/build.js --check`).
+- [x] clipper2-ts and three.js are vendored at pinned versions with their licence files (`src/vendor/README.md`). Tests exercise a Clipper union, the kerf offset (10 mm square to 10.2 mm, 10 mm hole to 9.8 mm) and circle flattening.
 
 ### M1: layer engine
 Done when:

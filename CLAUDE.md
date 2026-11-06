@@ -21,13 +21,15 @@ When trade-offs conflict, follow this order and state which priority drove the d
 
 ## Current milestone
 
-M0 then M1 (SPEC section 15). Don't build ahead of the current milestone.
+M1, the layer engine (SPEC section 15). M0 is done. Don't build ahead of the current milestone.
+`src/dev/boot_demo.js` is the M0 self-test stack; delete it once the M1 pipeline drives the preview.
 
 ## Commands
 
-- Build: `node tools/build.js` writes `index.html` from `src/`
+- Build: `node tools/build.js` writes `index.html` from `src/`. `--check` exits 1 if it is stale.
 - Test: `node --test tests/`
 - Run: open `index.html` in a browser (works from `file://`)
+- Check in a real browser: `node tools/shot.js <out.png> [--light] [--size=1400x860]`. It drives headless Edge or Chrome, waits for the status light, prints the status and any console errors, and saves a screenshot. Exit 1 on errors.
 
 Keep this section accurate.
 
