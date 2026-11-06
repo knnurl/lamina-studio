@@ -9,6 +9,8 @@ function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, 
     Object.assign(design.piece.outline, outline);
     Object.assign(design.piece.symmetry, symmetry);
     if (lighting) Object.assign(design.piece.lighting, lighting);
+    // A backlit piece needs light to get through: translucent acrylic at the back.
+    if (design.piece.lighting.mode === 'backlit') design.layers.at(-1).material = 'acr3t';
     if (frame_ring_mm !== undefined) for (const layer of design.layers) layer.frame_ring_mm = frame_ring_mm;
     apply_palette(design, palette);
     generate_stack(design, seed, { lock_n: true });

@@ -10,6 +10,7 @@ import {
     apply_palette,
     scale_motifs,
     piece_radius_mm,
+    material_of,
 } from './design.js';
 
 export function options_for(entry, design) {
@@ -35,6 +36,10 @@ function scope_root(entry, design, layer_index) {
 
 export function read_param(entry, design, layer_index) {
     if (entry.get) return entry.get(design, design.layers[layer_index]);
+    if (entry.id === 'bridge.w_mm') {
+        const layer = design.layers[layer_index];
+        return layer.bridge.w_mm ?? material_of(design, layer).min_bridge_mm;
+    }
     return get_path(scope_root(entry, design, layer_index), entry.id);
 }
 

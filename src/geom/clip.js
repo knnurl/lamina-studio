@@ -93,9 +93,9 @@ const kJoin = { round: JoinType.Round, miter: JoinType.Miter, square: JoinType.S
 
 // Grows (delta_um > 0) or shrinks closed regions. Holes move the opposite way, so +kerf/2 on a
 // layer grows its outline and shrinks its openings, which is what kerf compensation needs.
-export function offset(paths, delta_um, join = 'round', tol_um = kChordTolUm) {
+export function offset(paths, delta_um, join = 'round', tol_um = kChordTolUm, miter_limit = 2.0) {
     if (!(join in kJoin)) throw new Error(`offset: unknown join "${join}"`);
-    return inflatePaths(paths, delta_um, kJoin[join], EndType.Polygon, 2.0, tol_um);
+    return inflatePaths(paths, delta_um, kJoin[join], EndType.Polygon, miter_limit, tol_um);
 }
 
 export function area_mm2(paths) {

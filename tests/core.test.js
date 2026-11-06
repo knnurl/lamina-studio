@@ -43,7 +43,7 @@ test('migrate fills missing fields, keeps values and rejects foreign files', () 
 });
 
 test('every registry entry sits in a real panel, and range entries have a numeric step', () => {
-    const panels = ['piece', 'material', 'layers', 'pattern', 'light', 'make'];
+    const panels = ['piece', 'material', 'layers', 'pattern', 'structure', 'light', 'make'];
     for (const entry of SCHEMA) {
         assert.ok(panels.includes(entry.panel), `${entry.id} has panel "${entry.panel}"`);
         if (entry.type === 'range') assert.equal(typeof entry.step, 'number', entry.id);

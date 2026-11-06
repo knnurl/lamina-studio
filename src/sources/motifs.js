@@ -45,7 +45,10 @@ function ring_path(m, wedge_rad) {
     const r_out = r + w / 2;
     const r_in = Math.max(0, r - w / 2);
     const tie_rad = r > 0 ? mm_to_um(m.tie_mm ?? 0) / r : 0;
-    const half = wedge_rad / 2 - tie_rad / 2;
+    // With no tie, neighbouring sectors would meet edge to edge, and vertex rounding leaves a
+    // micron crack that survives as a hairline spike of material. Overlap them by about 5 um.
+    const overlap_rad = tie_rad > 0 ? 0 : 5 / Math.max(r_in, 1000);
+    const half = wedge_rad / 2 - tie_rad / 2 + overlap_rad;
     if (half <= 0) return [];
     if (half >= Math.PI - 1e-9) {
         // A full annulus: outer circle plus an inner hole (clockwise). This cuts an island free;
