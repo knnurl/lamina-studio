@@ -20,9 +20,9 @@ function result(design, id, severity, layer, message, boxes = []) {
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-// built: build_design() layers, front first.
-export function fast_checks(design, built) {
-    const out = [];
+// built: build_design() layers, front first; registration: register_stack() output.
+export function fast_checks(design, built, registration = { warnings: [] }) {
+    const out = registration.warnings.map(w => result(design, w.id, 'warn', w.layer, w.message));
     const n = design.layers.length;
     built.forEach((b, k) => {
         const layer = design.layers[k];

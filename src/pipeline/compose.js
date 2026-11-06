@@ -10,6 +10,7 @@ import { layer_openings } from '../sources/motifs.js';
 import { mm_to_um } from '../core/units.js';
 import { material_of } from '../core/design.js';
 import { resolve_islands } from './islands.js';
+import { register_stack } from './registration.js';
 import { fast_checks } from './checks.js';
 
 const kMicroAreaUm2 = 50000; // 0.05 mm2
@@ -41,28 +42,25 @@ function perimeter_mm(paths) {
     return sum / 1000;
 }
 
-// Every layer, front first, with islands resolved, then the stack-level parts: locators for
-// glue-on islands are scored on the layer behind. Returns layers, the fast checks and the time.
+// Every layer, front first, with islands resolved, then the stack-level stages: locators for
+// glue-on islands are scored on the layer behind, and registration adds dowel holes, engraved IDs
+// and spacers. Returns layers, registration, the fast checks and the time taken.
 export function build_design(design) {
     const t0 = performance.now();
     const layers = design.layers.map((layer, k) => {
         const { outline, material: raw } = compose_layer(design, k);
         const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
-        const resolved = resolve_islands(raw, layer, bridge_w_mm);
-        const solid_mm2 = area_mm2(outline);
-        const area = area_mm2(resolved.material);
-        return {
-            id: layer.id,
-            ...resolved,
-            locators: [],
-            area_mm2: area,
-            open_fraction: solid_mm2 > 0 ? 1 - area / solid_mm2 : 0,
-            cut_length_mm: perimeter_mm(resolved.material) + perimeter_mm(resolved.parts.flat()),
-        };
+        return { id: layer.id, ...resolve_islands(raw, layer, bridge_w_mm), locators: [], solid_mm2: area_mm2(outline) };
     });
     layers.forEach((l, k) => {
         if (l.parts.length && layers[k + 1]) layers[k + 1].locators.push(...l.parts.map(p => p[0]));
     });
-    const checks = fast_checks(design, layers);
-    return { layers, checks, ms: performance.now() - t0 };
+    const registration = register_stack(design, layers);
+    for (const l of layers) {
+        l.area_mm2 = area_mm2(l.material);
+        l.open_fraction = l.solid_mm2 > 0 ? 1 - l.area_mm2 / l.solid_mm2 : 0;
+        l.cut_length_mm = perimeter_mm(l.material) + perimeter_mm(l.parts.flat());
+    }
+    const checks = fast_checks(design, layers, registration);
+    return { layers, registration, checks, ms: performance.now() - t0 };
 }

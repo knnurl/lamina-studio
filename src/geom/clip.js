@@ -6,6 +6,7 @@ import {
     union,
     difference,
     intersect,
+    rectClip,
     inflatePaths,
     area,
     areaPaths,
@@ -87,6 +88,13 @@ export function subtract(subject, clip) {
 
 export function intersect_paths(subject, clip) {
     return intersect(subject, clip, FillRule.NonZero);
+}
+
+// Fast clip of every path to an axis-aligned rectangle (Clipper2's RectClip, linear time).
+// Each path is clipped on its own, so holes keep their orientation.
+export function clip_to_rect(paths, x0_um, y0_um, x1_um, y1_um) {
+    if (!paths.length) return [];
+    return rectClip({ left: Math.round(x0_um), top: Math.round(y0_um), right: Math.round(x1_um), bottom: Math.round(y1_um) }, paths);
 }
 
 const kJoin = { round: JoinType.Round, miter: JoinType.Miter, square: JoinType.Square };
