@@ -535,18 +535,18 @@ Done when:
 
 ### M1: layer engine
 Done when:
-- [ ] The data model (section 5) is complete, with schema migration and design JSON save and load.
-- [ ] Outlines work: circle, rectangle, arch, regular polygon, custom SVG.
-- [ ] Primitives work (8.1), with symmetry: none, rotational, dihedral, mirror X, mirror X+Y.
-- [ ] SVG import is unit-correct. The purchased 7-layer mandala (a local fixture) imports at about 291 mm with its layers in order.
-- [ ] The full per-layer and stack pipeline runs (6.2, 6.3): frame ring, islands, bridges, the glue-on and drop policies, kerf, dowels, IDs, spacers (pucks and rings).
-- [ ] Every check in section 7 for M1 scope works, with the overlay, report, status light and the override flow.
-- [ ] Previews work: 3D (orbit, tilt, exploded, unlit and backlit), 2D stacked, Layer view (click an island to cycle its policy), Sheets view.
-- [ ] Exports work: per-layer and per-sheet SVG and DXF R12, the zip, the assembly sheet, the test card, PNG and `checks.txt`.
-- [ ] The UI is generated from `SCHEMA`, with Basic and Advanced, presets (at least 5 primitive demos), seed, lock, randomise with checks, 80-step undo, and the theme.
-- [ ] The tests in section 16 pass, including the determinism test.
-- [ ] Performance targets for M1 are measured and recorded in `docs/PERF.md`.
-- [ ] Physical proof: the test card is cut on the lab laser and its measurements are entered. A 4-layer, 120 mm primitive piece is cut and assembled, with bridges, dowels, IDs and spacers all working.
+- [x] The data model (section 5) is complete, with schema migration and design JSON save and load.
+- [x] Outlines work: circle, rectangle, arch, regular polygon, custom SVG.
+- [x] Primitives work (8.1), with symmetry: none, rotational, dihedral, mirror X, mirror X+Y.
+- [x] SVG import is unit-correct. The purchased 7-layer mandala (a local fixture) imports at about 291 mm with its layers in order.
+- [x] The full per-layer and stack pipeline runs (6.2, 6.3): frame ring, islands, bridges, the glue-on and drop policies, kerf, dowels, IDs, spacers (pucks and rings).
+- [x] Every check in section 7 for M1 scope works, with the overlay, report, status light and the override flow.
+- [x] Previews work: 3D (orbit, tilt, exploded, unlit and backlit), 2D stacked, Layer view (click an island to cycle its policy), Sheets view.
+- [x] Exports work: per-layer and per-sheet SVG and DXF R12, the zip, the assembly sheet, the test card, PNG and `checks.txt`.
+- [x] The UI is generated from `SCHEMA`, with Basic and Advanced, presets (at least 5 primitive demos), seed, lock, randomise with checks, 80-step undo, and the theme.
+- [x] The tests in section 16 pass, including the determinism test.
+- [x] Performance targets for M1 are measured and recorded in `docs/PERF.md`. The 3D frame rate still needs the owner's GPU; headless Edge renders in software.
+- [ ] **TODO (owner)** Physical proof: the test card is cut on the lab laser and its measurements are entered. A 4-layer, 120 mm primitive piece is cut and assembled, with bridges, dowels, IDs and spacers all working.
 
 **Progress** (M1 is built in slices, the test card first):
 - 2026-11-06, slice 1 done: the calibration test card (9.4) downloads from the Make step as a zip of SVG, DXF and instructions.
@@ -623,8 +623,13 @@ Done when:
   - A measured material changes the export kerf (a 290 mm layer cuts at 290.18 mm) and the dowel hole (3.23 mm).
   - Driven in headless Edge: P and H are entered, the results appear, the material is saved, and the "not measured" chip clears.
   - **Still TODO (owner):** the real measurements from the lab.
-- Next slices:
-  9. Performance and golden designs.
+- 2026-11-06, slice 9 done: performance and golden designs.
+  - `tools/bench.js` (geometry targets, exits 1 on a miss) and `tools/slider_latency.page.js` (browser latency). Results are in `docs/PERF.md`.
+    - Slider change: 50 ms in Node, 92 ms end to end in the browser.
+    - 20 layers at 600 mm through build, checks and export: about 0.33 s.
+  - Golden designs: the 5 presets, a nested-islands design (bridge, glue, drop, spacers) and a synthetic two-file SVG import. Stored metrics are in `tests/golden/metrics.json`; regenerate with `node tools/golden.js --update` and review the diff. They match exactly on Node 24 and 26.
+  - Randomise now keeps the first of up to 10 seeds whose variation has no fatal finding (worker-side, deterministic for a given seed).
+- **M1 status:** every item except the physical proof is done. That proof waits on the owner's test card cut and a 4-layer test piece.
 
 ### M2: lattice
 Square, 45-degree and polar grids. Meander, key-fret, window lattice and band generators. Field-sliced depth mode. Cell paint and erase with live symmetry, region lock and mask, and bridge drag. Done when an orb-style piece of about 12 layers can be made in Basic mode from a preset and passes the checks. A physical cut is recommended.
