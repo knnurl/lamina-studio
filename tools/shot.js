@@ -6,7 +6,8 @@
 // No dependencies: Node 22+ has fetch and WebSocket built in.
 //
 // Usage: node tools/shot.js [out.png] [--light] [--size=1400x860] [--timeout=20000]
-//                           [--click=<css selector>]
+//                           [--click=<css selector>] [--eval=<js expression>]
+// --eval prints the JSON value of an expression evaluated in the page once it is ready.
 // Set LAMINA_BROWSER to a browser executable to override the search.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -36,6 +37,7 @@ const [width, height] = flag('size', '1400x860').split('x').map(Number);
 const timeout_ms = Number(flag('timeout', '20000'));
 const light = args.includes('--light');
 const click = flag('click', null);
+const evaluate = flag('eval', null);
 const download_dir = path.join(path.dirname(out_png), 'downloads');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -134,7 +136,7 @@ async function main() {
         await cdp.send('Page.navigate', { url: page_url });
 
         const read = async expr =>
-            (await cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true })).result.value;
+            (await cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })).result.value;
         const read_level = () => read("document.getElementById('status-light')?.dataset.level ?? null");
         const read_text = () => read("document.getElementById('status-text')?.textContent ?? ''");
         const t0 = Date.now();
@@ -165,6 +167,7 @@ async function main() {
                 console.log(`download: ${path.join(download_dir, f)} (${fs.statSync(path.join(download_dir, f)).size} bytes)`);
             }
         }
+        if (evaluate) console.log(`eval: ${JSON.stringify(await read(evaluate))}`);
         const text = await read_text();
         await sleep(200); // let the last frame present
         const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
