@@ -1,9 +1,12 @@
 // Headless check of the built index.html in Edge or Chrome over the DevTools protocol: loads the
 // page from file://, waits until the status light leaves "busy", reports the status text and any
 // console errors or exceptions, and saves a screenshot. Exit code 1 on a "bad" status or errors.
+// With --click it then clicks an element, waits for the status to change, and reports any file the
+// page downloaded (saved to a downloads/ folder next to the screenshot).
 // No dependencies: Node 22+ has fetch and WebSocket built in.
 //
 // Usage: node tools/shot.js [out.png] [--light] [--size=1400x860] [--timeout=20000]
+//                           [--click=<css selector>]
 // Set LAMINA_BROWSER to a browser executable to override the search.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -26,12 +29,14 @@ const kCandidates = [
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
     const hit = args.find(a => a.startsWith(`--${name}=`));
-    return hit ? hit.split('=')[1] : fallback;
+    return hit ? hit.slice(name.length + 3) : fallback;
 };
 const out_png = path.resolve(args.find(a => !a.startsWith('--')) || 'shot.png');
 const [width, height] = flag('size', '1400x860').split('x').map(Number);
 const timeout_ms = Number(flag('timeout', '20000'));
 const light = args.includes('--light');
+const click = flag('click', null);
+const download_dir = path.join(path.dirname(out_png), 'downloads');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -121,18 +126,46 @@ async function main() {
                 source: "try { localStorage.setItem('lamina-theme', 'light'); } catch {}",
             });
         }
+        if (click) {
+            fs.rmSync(download_dir, { recursive: true, force: true });
+            fs.mkdirSync(download_dir, { recursive: true });
+            await cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: download_dir });
+        }
         await cdp.send('Page.navigate', { url: page_url });
 
         const read = async expr =>
             (await cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true })).result.value;
+        const read_level = () => read("document.getElementById('status-light')?.dataset.level ?? null");
+        const read_text = () => read("document.getElementById('status-text')?.textContent ?? ''");
         const t0 = Date.now();
         let level = null;
         while (Date.now() - t0 < timeout_ms) {
-            level = await read("document.getElementById('status-light')?.dataset.level ?? null");
+            level = await read_level();
             if (level && level !== 'busy') break;
             await sleep(100);
         }
-        const text = await read("document.getElementById('status-text')?.textContent ?? ''");
+
+        if (click) {
+            const before = await read_text();
+            const clicked = await read(
+                `(() => { const el = document.querySelector(${JSON.stringify(click)});` +
+                    ' if (!el) return false; el.click(); return true; })()',
+            );
+            if (!clicked) problems.push(`no element matches ${click}`);
+            const t1 = Date.now();
+            while (clicked && Date.now() - t1 < timeout_ms) {
+                level = await read_level();
+                if (level !== 'busy' && (await read_text()) !== before) break;
+                await sleep(100);
+            }
+            const done = () => fs.readdirSync(download_dir).filter(f => !f.endsWith('.crdownload'));
+            const t2 = Date.now();
+            while (Date.now() - t2 < 5000 && !done().length) await sleep(100);
+            for (const f of done()) {
+                console.log(`download: ${path.join(download_dir, f)} (${fs.statSync(path.join(download_dir, f)).size} bytes)`);
+            }
+        }
+        const text = await read_text();
         await sleep(200); // let the last frame present
         const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
         fs.writeFileSync(out_png, Buffer.from(shot.data, 'base64'));
