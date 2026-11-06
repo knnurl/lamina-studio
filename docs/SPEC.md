@@ -71,7 +71,7 @@ A piece is an ordered stack of **layers**, front (L1, nearest the viewer) to bac
 
 - Layer count: 1 to 40.
 - Size: up to the stock sheet size in M1. The default stock is 600 x 400 mm; the Epilog bed caps it at 1219 x 914 mm. Larger pieces need puzzle-joint tiling (M6).
-- Default piece: 290 mm circle, 8 layers of 3 mm plywood, all gaps 0. At 290 mm, one layer fits a 300 x 300 sheet and two fit a 600 x 400 sheet, both with 5 mm margins.
+- Default piece: 290 mm circle, 8 layers of 3 mm plywood, all gaps 0. At 290 mm, one layer fits a 300 x 300 sheet and two fit a 600 x 400 sheet, both with 4 mm margins (the kerf makes a 290 mm layer cut at 290.2 mm, which 5 mm margins would push over 300).
 - Stock sheet presets: 600 x 400 (default), 400 x 300 and 300 x 300 mm, the lab's sizes. Custom sizes are allowed, up to the bed.
 
 ### 4.2 Layer
@@ -353,10 +353,10 @@ lamina_<name>/
   design.json
   checks.txt
   assembly.html
-  preview.png
-  sheets/sheet_01.svg  sheet_01.dxf ...
+  preview.png                         (the 3D view, when available)
+  sheets/sheet_01_ply3.svg  .dxf ...  (numbered per material)
   layers/L01.svg  L01.dxf ...
-  parts/spacers_*.svg  islands_*.svg ...
+  parts/gap03_puck_x6.svg  L02_glue_01.svg ...
 ```
 
 ### 9.3 Assembly sheet
@@ -582,9 +582,18 @@ Done when:
   - **IDs:** "L<n> ^" at 4 mm cap height (falling back to 2.5 mm), in material hidden by the layer in front and clear of the dowels. The search runs first in a bottom band, rect-clipped with Clipper2's RectClip, which cut ID placement from about 47 ms to under 5 ms on the Orb.
   - **Spacers:** gap / stock sheets of pucks on the dowels, or rings inside both frame rings. W-05 covers no room for dowels or an ID, and frame rings too narrow for spacer rings.
   - **Measured:** full builds with registration take 15 to 34 ms per preset in Node (best of 3).
+- 2026-11-06, slice 6 done (brought ahead of previews, because export is what the lab needs): packing, export zip and the assembly sheet.
+  - **Kerf:** cut paths are the design offset by +kerf/2 with round joins. A 290 mm layer cuts at 290.2 mm, and holes shrink by the kerf; both are tested.
+  - **Packing:** skyline bottom-left, rotation 0 or 90 degrees, largest first, first fit across open sheets, one sheet set per material. Small parts fill earlier sheets' spare strips.
+  - **Zip:** sheets, per-layer and per-part SVG and DXF, design.json, checks.txt, assembly.html, and preview.png from the 3D view.
+    - Byte-identical for the same design when no PNG is included.
+    - The Orb exports in 61 ms (1.76 MB, 29 files).
+    - All 13 of the Orb's DXFs audit clean with ezdxf 1.4.5 (AC1009, mm).
+  - **Export rules:** an un-allowed fatal finding blocks export, and the worker re-runs every check before writing. G-05 (part larger than the sheet inside its margin) is a fast check.
+  - **Assembly sheet:** summary cards, the stack table, build steps, layer thumbnails and findings, in a light print theme, with the design name escaped.
+  - Clicked in headless Edge: the zip downloads with a real 3D snapshot.
 - Next slices:
   5. Previews.
-  6. Packing, zip and the assembly sheet.
   7. SVG import.
   8. Calibrate panel.
   9. Performance and golden designs.
@@ -668,6 +677,8 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-06 | M1 starts with the calibration test card | It is the first thing that can go to the lab, and its measurements feed every later check |
 | 2026-11-06 | No blanket open/close cleanup in compose; crumbs under 0.05 mm² are dropped instead | Measured: 288 of 300 ms per build for a 2 mm² area change. Thin webs go to the checks |
 | 2026-11-06 | M1 primitives are five motif types in a per-layer list, plus a seeded band generator | More creative range than one primitive per layer, and Randomise produces island-free, buildable stacks |
+| 2026-11-06 | Default sheet margin 4 mm, not 5 | Kerf makes a 290 mm layer 290.2 mm; with 5 mm margins it would not fit the lab's 300 x 300 stock |
+| 2026-11-06 | Export before preview polish in M1 | Buildability outranks interactivity, and export is what the lab needs |
 | 2026-11-06 | Dowel angles from a fixed pattern with all-different gaps, not perturbed farthest-point picks | Deterministic, provably asymmetric for 3 or more dowels; two dowels can never stop a flip, and the control says so |
 | 2026-11-06 | Registry entries use `panel` for the sidebar step | `step` is a slider's increment; the duplicate key silently hid every slider (caught in the browser, now tested) |
 | 2026-11-06 | Own scope-hoisting ES-module bundler, not tenebrae's concatenation | Real module scope for a large codebase, the same files in Node tests, and a Blob worker under `file://` |
