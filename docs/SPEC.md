@@ -592,8 +592,13 @@ Done when:
   - **Export rules:** an un-allowed fatal finding blocks export, and the worker re-runs every check before writing. G-05 (part larger than the sheet inside its margin) is a fast check.
   - **Assembly sheet:** summary cards, the stack table, build steps, layer thumbnails and findings, in a light print theme, with the design name escaped.
   - Clicked in headless Edge: the zip downloads with a real 3D snapshot.
+- 2026-11-06, slice 5 done: previews.
+  - **3D:** faces in the finish colour; charred edges on ply and MDF, darker edges on acrylic; translucent acrylic drawn see-through.
+  - **Backlit:** a glow panel cut to the back layer's silhouette, translucent layers lit in the light colour, and the room light dimmed.
+  - **Exploded:** a slider over the 3D view spreads the layers by up to 28 mm each.
+  - **2D tab:** a stacked render with drop shadows, plus a glow when backlit.
+  - **Sheets tab:** the packed sheets exactly as exported, through the same  the export uses, laid out only while the tab is open.
 - Next slices:
-  5. Previews.
   7. SVG import.
   8. Calibrate panel.
   9. Performance and golden designs.
