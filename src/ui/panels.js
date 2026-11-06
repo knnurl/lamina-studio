@@ -35,8 +35,9 @@ export class Panels {
         const layer = d.layers[k];
         const shown = SCHEMA.filter(e => e.panel === step && visible(e, d, layer, tier)).map(e => e.id);
         const parts = [tier, shown.join(',')];
+        if (step === 'piece') parts.push(d.piece.outline.custom ? 'custom' : '');
         if (step === 'layers') parts.push(d.layers.length, k);
-        if (step === 'pattern') parts.push(k, layer.source.motifs.map(m => m.type).join(','));
+        if (step === 'pattern') parts.push(k, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'structure') parts.push(k);
         return parts.join('|');
     }
@@ -108,6 +109,28 @@ export class Panels {
         const tier = app.ui.tier;
         const layer = app.design.layers[k];
         body.append(el('h3', { class: 'sub', text: `Pattern of layer ${k + 1}` }));
+
+        if (layer.source.kind === 'svg') {
+            const src = layer.source;
+            body.append(el('p', { class: 'step-note', text: `Imported artwork: ${src.name}, ${src.paths.length} contours.` }));
+            const rule = make_control(
+                {
+                    type: 'select',
+                    label: 'Holes come from',
+                    options: [
+                        ['evenodd', 'Nesting (cut-line files)'],
+                        ['nonzero', 'Direction (filled artwork)'],
+                    ],
+                },
+                value => app.set_layer_fill_rule(value),
+            );
+            rule.refresh(src.fill_rule ?? 'evenodd');
+            refreshers.push(() => rule.refresh(app.design.layers[app.ui.layer].source.fill_rule ?? 'evenodd'));
+            const remove = el('button', { type: 'button', class: 'btn ghost', text: 'Remove artwork' });
+            remove.addEventListener('click', () => app.remove_artwork());
+            body.append(rule.el, remove);
+            return;
+        }
 
         const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value =>
             app.set_layer_locked(value),

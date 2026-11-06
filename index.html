@@ -441,7 +441,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 23 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 25 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -543,6 +543,12 @@ function union_all(paths) {
     return union(paths, FillRule.NonZero);
 }
 
+// Union under a chosen fill rule: even-odd for cut-line artwork, where nested contours alternate
+// between material and hole whatever their direction.
+function union_fill(paths, even_odd) {
+    return union(paths, even_odd ? FillRule.EvenOdd : FillRule.NonZero);
+}
+
 function subtract(subject, clip) {
     return difference(subject, clip, FillRule.NonZero);
 }
@@ -580,15 +586,63 @@ function bounds_mm(paths) {
         y1: b.bottom / kUmPerMm,
     };
 }
-return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, subtract, intersect_paths, clip_to_rect, offset, area_mm2, bounds_mm };
+return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, union_fill, subtract, intersect_paths, clip_to_rect, offset, area_mm2, bounds_mm };
+})();
+// src/geom/pack.js
+const __m_geom_pack_js = (function () {
+// Packs paths into typed arrays for postMessage: transferring two buffers is far cheaper than
+// structured-cloning thousands of {x, y} objects. Coordinates are micrometres in Int32 (+-2.1 km).
+
+function pack_paths(paths) {
+    let n = 0;
+    for (const p of paths) n += p.length;
+    const xy = new Int32Array(n * 2);
+    const starts = new Uint32Array(paths.length + 1);
+    let at = 0;
+    paths.forEach((path, i) => {
+        starts[i] = at;
+        for (const p of path) {
+            xy[2 * at] = p.x;
+            xy[2 * at + 1] = p.y;
+            at++;
+        }
+    });
+    starts[paths.length] = at;
+    return { xy, starts };
+}
+
+// Flat integer arrays for the design JSON (imported artwork, custom outlines):
+// [[x0, y0, x1, y1, ...], ...] in micrometres.
+const to_flat = paths => paths.map(p => p.flatMap(q => [q.x, q.y]));
+
+function from_flat(flat) {
+    return flat.map(a => {
+        const p = [];
+        for (let i = 0; i + 1 < a.length; i += 2) p.push({ x: a[i], y: a[i + 1] });
+        return p;
+    });
+}
+
+function unpack_paths({ xy, starts }) {
+    const paths = [];
+    for (let i = 0; i + 1 < starts.length; i++) {
+        const path = [];
+        for (let k = starts[i]; k < starts[i + 1]; k++) path.push({ x: xy[2 * k], y: xy[2 * k + 1] });
+        paths.push(path);
+    }
+    return paths;
+}
+return { pack_paths, to_flat, from_flat, unpack_paths };
 })();
 // src/geom/outline.js
 const __m_geom_outline_js = (function () {
 const { circle_path, rounded_rect_path, regular_polygon_path, circle_segments } = __m_geom_clip_js;
 const { mm_to_um } = __m_core_units_js;
+const { from_flat } = __m_geom_pack_js;
 // Piece outlines (SPEC 4.1), centred on the origin, which is also the symmetry centre. For an arch
 // the origin is the centre of its round top, so radial patterns sit in the arch like a halo.
 // Returns paths in micrometres, counter-clockwise.
+
 
 
 
@@ -623,6 +677,9 @@ function outline_paths(outline) {
         }
         case 'arch':
             return [arch_path(w, h)];
+        case 'custom':
+            // An imported silhouette, kept in the design as flat micrometre arrays.
+            return from_flat(outline.custom ?? []);
         default:
             throw new Error(`unknown outline "${outline.kind}"`);
     }
@@ -749,11 +806,12 @@ const SCHEMA = [
         panel: 'piece',
         label: 'Outline',
         type: 'select',
-        options: [
+        options: d => [
             ['circle', 'Circle'],
             ['rect', 'Rectangle'],
             ['polygon', 'Polygon'],
             ['arch', 'Arch'],
+            ...(d.piece.outline.custom ? [['custom', 'Imported silhouette']] : []),
         ],
         tier: 'basic',
     },
@@ -769,6 +827,7 @@ const SCHEMA = [
         unit: 'mm',
         tier: 'basic',
         desc: 'Diameter for circles and polygons. The pattern scales with it.',
+        show_if: d => d.piece.outline.kind !== 'custom',
     },
     {
         id: 'outline.h_mm',
@@ -1387,6 +1446,46 @@ function set_layer_count(design, count) {
     apply_palette(design, design.palette);
 }
 
+const svg_source = l => ({ kind: 'svg', name: l.name, fill_rule: 'evenodd', paths: l.paths });
+
+// A new design from imported SVG layers (front first): a custom outline from the artwork's
+// silhouette, no symmetry, no frame rings (the artwork brings its own border).
+// imported: the worker's import_svg result (paths and outline as flat micrometre arrays).
+function design_from_import(imported, name) {
+    const n = imported.layers.length;
+    const design = base_design(n);
+    design.name = name;
+    design.piece.outline = {
+        kind: 'custom',
+        w_mm: Math.round(imported.size_mm.w * 10) / 10,
+        h_mm: Math.round(imported.size_mm.h * 10) / 10,
+        sides: 8,
+        corner_r_mm: 0,
+        custom: imported.outline,
+    };
+    design.piece.symmetry = { kind: 'none', n: 8, phase_deg: 0 };
+    design.layers.forEach((layer, k) => {
+        layer.frame_ring_mm = 0;
+        layer.source = svg_source(imported.layers[k]);
+    });
+    return design;
+}
+
+// Puts one imported layer's artwork on layer k of an existing design.
+function import_into_layer(design, k, imported_layer) {
+    design.layers[k].source = svg_source(imported_layer);
+    design.layers[k].frame_ring_mm = 0;
+}
+
+// Reverses the stack (front becomes back), renumbering layers and reapplying the palette.
+function reverse_layers(design) {
+    design.layers.reverse();
+    design.layers.forEach((layer, k) => {
+        layer.id = `L${k + 1}`;
+    });
+    apply_palette(design, design.palette);
+}
+
 // Scales every length a motif has (positions and sizes, not structural widths such as ties), so a
 // pattern follows the piece when the piece is resized.
 function scale_motifs(design, factor) {
@@ -1400,7 +1499,7 @@ function scale_motifs(design, factor) {
         }
     }
 }
-return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, scale_motifs };
+return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
 // src/core/rng.js
 const __m_core_rng_js = (function () {
@@ -1799,7 +1898,7 @@ return { has_glyph, text_width_mm, text_strokes };
 })();
 // src/pipeline/registration.js
 const __m_pipeline_registration_js = (function () {
-const { offset, intersect_paths, subtract, circle_path, area_mm2, clip_to_rect } = __m_geom_clip_js;
+const { offset, intersect_paths, subtract, circle_path, area_mm2, clip_to_rect, path_area_um2 } = __m_geom_clip_js;
 const { outline_paths } = __m_geom_outline_js;
 const { text_strokes, text_width_mm } = __m_export_stroke_font_js;
 const { material_of } = __m_core_design_js;
@@ -1873,8 +1972,14 @@ function hole_d_mm(design) {
 function place_dowels(design, built) {
     const reg = design.registration;
     const r_hole = mm_to_um(hole_d_mm(design) / 2);
-    let shared = built[0].material;
-    for (const l of built.slice(1)) shared = intersect_paths(shared, l.material);
+    // Sparsest layer first keeps every intersection small. (Windowed intersections were tried and
+    // measured slower: the overlapping windows process about twice the area.)
+    const order = [...built].sort((a, b) => area_mm2(a.material) - area_mm2(b.material));
+    let shared = order[0].material;
+    for (const l of order.slice(1)) {
+        if (!shared.length) break;
+        shared = intersect_paths(shared, l.material);
+    }
     const region = shared.length ? offset(shared, -(r_hole + mm_to_um(kDowelEdgeMm)), 'round') : [];
     const dowels = [];
     for (const angle_deg of dowel_angles(reg.count)) {
@@ -1890,6 +1995,31 @@ function place_dowels(design, built) {
         }
     }
     return { dowels, r_hole };
+}
+
+function bounds_of(design) {
+    const outline = outline_paths(design.piece.outline)[0];
+    return {
+        x0: Math.min(...outline.map(p => p.x)),
+        y0: Math.min(...outline.map(p => p.y)),
+        x1: Math.max(...outline.map(p => p.x)),
+        y1: Math.max(...outline.map(p => p.y)),
+    };
+}
+
+// Overlapping search windows [x0, y0, x1, y1], bottom first: bands along each edge, then the
+// middle. Overlaps keep anything near a window's edge inside another window.
+function windows({ x0, y0, x1, y1 }) {
+    const w = x1 - x0;
+    const h = y1 - y0;
+    const f = 0.4;
+    return [
+        [x0, y0, x1, y0 + h * f],
+        [x0, y0, x0 + w * f, y1],
+        [x1 - w * f, y0, x1, y1],
+        [x0, y1 - h * f, x1, y1],
+        [x0 + w * 0.25, y0 + h * 0.25, x1 - w * 0.25, y1 - h * 0.25],
+    ];
 }
 
 // Searches rays from the bottom (270 degrees) outwards, up to max_steps 5-degree steps each way,
@@ -1914,17 +2044,20 @@ function search_id(text, room, max_steps) {
 }
 
 // Where layer k's ID can go: material of layer k that the layer in front hides, clear of dowels.
-// Tried first in a band along the bottom (cheap: both layers are rect-clipped before the boolean
-// work), then over the whole layer.
+// Searched window by window, bottom first; both layers are rect-clipped to the window before the
+// boolean work, which keeps dense artwork fast.
 function place_id(text, material, front, keep_out, bounds) {
-    const room_in = (a, b) => {
-        const hidden = offset(intersect_paths(a, b), -mm_to_um(0.5));
-        return keep_out.length && hidden.length ? subtract(hidden, keep_out) : hidden;
-    };
-    const { x0, y0, x1, y1 } = bounds;
-    const band_top = y0 + (y1 - y0) * 0.3;
-    const near = room_in(clip_to_rect(material, x0, y0, x1, band_top), clip_to_rect(front, x0, y0, x1, band_top));
-    return (near.length && search_id(text, near, 12)) || search_id(text, room_in(material, front), 36);
+    // The smallest label box: a window whose largest hidden piece is smaller cannot hold it.
+    const cap = kIdCaps[kIdCaps.length - 1];
+    const min_box_um2 = mm_to_um(text_width_mm(text, cap) + 2 * kIdMarginMm) * mm_to_um(cap + 2 * kIdMarginMm);
+    for (const w of windows(bounds)) {
+        const hidden = offset(intersect_paths(clip_to_rect(material, ...w), clip_to_rect(front, ...w)), -mm_to_um(0.5));
+        if (!hidden.some(p => path_area_um2(p) >= min_box_um2)) continue;
+        const room = keep_out.length ? subtract(hidden, keep_out) : hidden;
+        const strokes = room.length ? search_id(text, room, 36) : null;
+        if (strokes) return strokes;
+    }
+    return null;
 }
 
 function spacer_parts(design, dowels, r_hole, k) {
@@ -1945,10 +2078,13 @@ function spacer_parts(design, dowels, r_hole, k) {
     return { kind: 'puck', gap: k, copies: copies * dowels.length, paths: puck };
 }
 
-// Adds dowel holes and IDs to the built layers, and returns the stack-level results.
-function register_stack(design, built) {
+// The geometric part of registration: dowels, each layer's material with its dowel holes, and
+// engraved IDs. A pure function of the layers' geometry and the registration settings, so the
+// caller can cache it. Does not modify built.
+// Returns { dowels, r_hole, hole_d_mm, materials, ids, warnings }.
+function register_geometry(design, built) {
     const reg = design.registration;
-    const out = { dowels: [], hole_d_mm: hole_d_mm(design), spacers: [], warnings: [] };
+    const out = { dowels: [], r_hole: 0, hole_d_mm: hole_d_mm(design), materials: built.map(l => l.material), ids: built.map(() => []), warnings: [] };
     if (!built.length) return out;
     const { dowels, r_hole } = built.length > 1 || reg.through_front ? place_dowels(design, built) : { dowels: [], r_hole: 0 };
     out.dowels = dowels;
@@ -1957,36 +2093,49 @@ function register_stack(design, built) {
     }
     const holes = dowels.map(p => circle_path(p.x, p.y, r_hole, { tol_um: 5, fit: 'outside' }));
     const keep_out = dowels.map(p => circle_path(p.x, p.y, r_hole + mm_to_um(kDowelEdgeMm)));
-    built.forEach((l, k) => {
-        l.ids = [];
-        if (holes.length && (k > 0 || reg.through_front)) l.material = subtract(l.material, holes);
-    });
+    out.materials = built.map((l, k) => (holes.length && (k > 0 || reg.through_front) ? subtract(l.material, holes) : l.material));
+    out.ids = built.map(() => []);
     if (reg.ids) {
-        const outline = outline_paths(design.piece.outline)[0];
-        const bounds = {
-            x0: Math.min(...outline.map(p => p.x)),
-            y0: Math.min(...outline.map(p => p.y)),
-            x1: Math.max(...outline.map(p => p.x)),
-            y1: Math.max(...outline.map(p => p.y)),
-        };
+        const bounds = bounds_of(design);
         built.forEach((l, k) => {
             if (k === 0) return;
-            const strokes = place_id(`L${k + 1} ^`, l.material, built[k - 1].material, keep_out, bounds);
-            if (strokes) l.ids = strokes;
+            const strokes = place_id(`L${k + 1} ^`, out.materials[k], out.materials[k - 1], keep_out, bounds);
+            if (strokes) out.ids[k] = strokes;
             else out.warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: no hidden spot large enough for its engraved ID.` });
         });
     }
+    out.r_hole = r_hole;
+    return out;
+}
+
+// Spacers for every gap: they depend on gaps and the dowels, not on layer geometry, so they are
+// worked out after the (cached) geometric registration.
+function spacer_layout(design, dowels, r_hole) {
+    const spacers = [];
+    const warnings = [];
     design.layers.forEach((layer, k) => {
         if (k < design.layers.length - 1 && layer.gap_mm > 0) {
             const part = spacer_parts(design, dowels, r_hole, k);
-            if (part) out.spacers.push(part);
+            if (part) spacers.push(part);
             else {
                 const why = design.spacers.style === 'rings' ? 'frame rings too narrow for spacer rings; use pucks' : 'no dowels to put spacer pucks on';
-                out.warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: ${why}.` });
+                warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: ${why}.` });
             }
         }
     });
-    return out;
+    return { spacers, warnings };
+}
+
+// Dowels, holes, IDs and spacers in one go: sets each built layer's material (with holes) and
+// ids, and returns { dowels, hole_d_mm, spacers, warnings }.
+function register_stack(design, built) {
+    const geo = register_geometry(design, built);
+    built.forEach((l, k) => {
+        l.material = geo.materials[k];
+        l.ids = geo.ids[k];
+    });
+    const { spacers, warnings } = spacer_layout(design, geo.dowels, geo.r_hole);
+    return { dowels: geo.dowels, hole_d_mm: geo.hole_d_mm, spacers, warnings: [...geo.warnings, ...warnings] };
 }
 
 // Total length a dowel needs: every drilled layer plus the gaps between them.
@@ -2000,7 +2149,7 @@ function dowel_length_mm(design) {
     });
     return Math.round(total * 10) / 10;
 }
-return { kDowelEdgeMm, dowel_angles, hole_d_mm, register_stack, dowel_length_mm };
+return { kDowelEdgeMm, dowel_angles, hole_d_mm, register_geometry, spacer_layout, register_stack, dowel_length_mm };
 })();
 // src/pipeline/checks.js
 const __m_pipeline_checks_js = (function () {
@@ -2088,8 +2237,9 @@ function fast_checks(design, built, registration = { warnings: [] }) {
     if (design.piece.lighting.mode === 'backlit' && !material_of(design, back).look.translucent && back_built && back_built.open_fraction < 0.01) {
         out.push(result(design, 'W-06', 'warn', n - 1, 'Backlit, but the back layer is solid and opaque, so no light gets through.'));
     }
+    // Frame rings belong to generated layers; imported artwork brings its own border.
     const front_mat = material_of(design, design.layers[0]);
-    if (design.layers[0].frame_ring_mm < front_mat.min_web_mm) {
+    if (design.layers[0].source.kind === 'primitive' && design.layers[0].frame_ring_mm < front_mat.min_web_mm) {
         out.push(result(design, 'W-07', 'warn', 0, `The front frame ring is thinner than the ${front_mat.min_web_mm} mm minimum web.`));
     }
     return out;
@@ -2113,33 +2263,54 @@ function thin_regions(material, width_mm, min_area_mm2) {
     return denoised.filter(p => path_area_um2(p) > min_um2);
 }
 
+// The morphological findings for one layer, before overrides: [{ id, severity, message, boxes }].
+function slow_layer(b, k, mat) {
+    const out = [];
+    const min_area = Math.max(0.05, 0.1 * mat.min_web_mm * mat.min_web_mm);
+    // Bridges are meant to be thinner than webs and have their own check (W-03).
+    const bridge_zone = b.bridges.length ? offset(b.bridges.map(br => br.rect), mm_to_um(0.5), 'miter') : [];
+    const not_bridge = (paths, area_mm2) => {
+        if (!bridge_zone.length || !paths.length) return paths;
+        return subtract(paths, bridge_zone).filter(p => path_area_um2(p) > area_mm2 * kUmPerMm * kUmPerMm);
+    };
+    const thin = not_bridge(thin_regions(b.material, mat.min_web_mm, min_area), min_area);
+    if (thin.length) {
+        const severe = not_bridge(thin_regions(b.material, mat.kerf_mm, 0.01), 0.01);
+        if (severe.length) {
+            out.push({ id: 'G-02', severity: 'fatal', message: `Layer ${k + 1}: webs thinner than the ${mat.kerf_mm} mm kerf would be cut away.`, boxes: severe.map(p => bbox_mm([p])) });
+        }
+        out.push({ id: 'W-01', severity: 'warn', message: `Layer ${k + 1}: ${plural(thin.length, 'web is', 'webs are')} thinner than ${mat.min_web_mm} mm.`, boxes: thin.map(p => bbox_mm([p])) });
+    }
+    const small = b.material.filter(p => {
+        if (path_area_um2(p) >= 0) return false;
+        const box = bbox_mm([p]);
+        return Math.min(box.x1 - box.x0, box.y1 - box.y0) < mat.min_hole_mm;
+    });
+    if (small.length) {
+        out.push({ id: 'W-02', severity: 'warn', message: `Layer ${k + 1}: ${plural(small.length, 'hole is', 'holes are')} smaller than ${mat.min_hole_mm} mm.`, boxes: small.map(p => bbox_mm([p])) });
+    }
+    return out;
+}
+
+// Per-layer findings are cached by the layer's final geometry (build_design's cache_key) and its
+// material limits; overrides are applied afterwards, so allowing a finding needs no recompute.
+const slow_cache = new Map();
+const kSlowCacheSize = 64;
+
 function slow_checks(design, built) {
     const out = [];
     built.forEach((b, k) => {
         const mat = material_of(design, design.layers[k]);
-        const min_area = Math.max(0.05, 0.1 * mat.min_web_mm * mat.min_web_mm);
-        // Bridges are meant to be thinner than webs and have their own check (W-03).
-        const bridge_zone = b.bridges.length ? offset(b.bridges.map(br => br.rect), mm_to_um(0.5), 'miter') : [];
-        const not_bridge = (paths, area_mm2) => {
-            if (!bridge_zone.length || !paths.length) return paths;
-            return subtract(paths, bridge_zone).filter(p => path_area_um2(p) > area_mm2 * kUmPerMm * kUmPerMm);
-        };
-        const thin = not_bridge(thin_regions(b.material, mat.min_web_mm, min_area), min_area);
-        if (thin.length) {
-            const severe = not_bridge(thin_regions(b.material, mat.kerf_mm, 0.01), 0.01);
-            if (severe.length) {
-                out.push(result(design, 'G-02', 'fatal', k, `Layer ${k + 1}: webs thinner than the ${mat.kerf_mm} mm kerf would be cut away.`, severe.map(p => bbox_mm([p]))));
+        const key = b.cache_key ? `${k}/${b.cache_key}/${mat.min_web_mm}/${mat.kerf_mm}/${mat.min_hole_mm}` : null;
+        let raw = key ? slow_cache.get(key) : undefined;
+        if (!raw) {
+            raw = slow_layer(b, k, mat);
+            if (key) {
+                slow_cache.set(key, raw);
+                if (slow_cache.size > kSlowCacheSize) slow_cache.delete(slow_cache.keys().next().value);
             }
-            out.push(result(design, 'W-01', 'warn', k, `Layer ${k + 1}: ${plural(thin.length, 'web is', 'webs are')} thinner than ${mat.min_web_mm} mm.`, thin.map(p => bbox_mm([p]))));
         }
-        const small = b.material.filter(p => {
-            if (path_area_um2(p) >= 0) return false;
-            const box = bbox_mm([p]);
-            return Math.min(box.x1 - box.x0, box.y1 - box.y0) < mat.min_hole_mm;
-        });
-        if (small.length) {
-            out.push(result(design, 'W-02', 'warn', k, `Layer ${k + 1}: ${plural(small.length, 'hole is', 'holes are')} smaller than ${mat.min_hole_mm} mm.`, small.map(p => bbox_mm([p]))));
-        }
+        for (const r of raw) out.push(result(design, r.id, r.severity, k, r.message, r.boxes));
     });
     return out;
 }
@@ -2147,13 +2318,15 @@ return { fast_checks, slow_checks };
 })();
 // src/pipeline/compose.js
 const __m_pipeline_compose_js = (function () {
-const { offset, subtract, intersect_paths, area_mm2, path_area_um2 } = __m_geom_clip_js;
+const { offset, subtract, intersect_paths, area_mm2, path_area_um2, union_fill } = __m_geom_clip_js;
+const { from_flat } = __m_geom_pack_js;
 const { outline_paths } = __m_geom_outline_js;
 const { layer_openings } = __m_sources_motifs_js;
 const { mm_to_um } = __m_core_units_js;
 const { material_of } = __m_core_design_js;
 const { resolve_islands } = __m_pipeline_islands_js;
-const { register_stack } = __m_pipeline_registration_js;
+const { register_geometry, spacer_layout } = __m_pipeline_registration_js;
+const { hash_str } = __m_core_rng_js;
 const { fast_checks } = __m_pipeline_checks_js;
 // Layer composition (SPEC 6.2 steps 1 to 3): openings from the layer's motifs, clipped to the area
 // inside its frame ring, cut from the piece outline. Contours under kMicroAreaUm2 (boolean
@@ -2161,6 +2334,8 @@ const { fast_checks } = __m_pipeline_checks_js;
 // of a 300 ms build and changed the area by 2 mm2 in 464,000. Thin webs are found by the checks,
 // which compute that morphology once anyway.
 // Assumptions: geometry in micrometres, origin at the symmetry centre.
+
+
 
 
 
@@ -2179,6 +2354,11 @@ function drop_crumbs(paths) {
 function compose_layer(design, k) {
     const layer = design.layers[k];
     const outline = outline_paths(design.piece.outline);
+    if (layer.source.kind === 'svg') {
+        // Imported artwork is material (SPEC 8.1): filled by its rule, clipped to the outline.
+        const art = union_fill(from_flat(layer.source.paths ?? []), layer.source.fill_rule !== 'nonzero');
+        return { outline, inner: outline, material: drop_crumbs(intersect_paths(art, outline)) };
+    }
     const ring_um = mm_to_um(layer.frame_ring_mm ?? 0);
     const inner = ring_um > 0 ? offset(outline, -ring_um) : outline;
     const openings = layer_openings(layer, design.piece.symmetry);
@@ -2199,20 +2379,55 @@ function perimeter_mm(paths) {
     return sum / 1000;
 }
 
+// Stage caches (SPEC 6.2): geometry is a pure function of its inputs, so edits that do not touch a
+// layer's geometry (colour, gaps, lighting, sheet) reuse it. Least recently used entries go first.
+const kCacheSize = 64;
+const layer_cache = new Map();
+const reg_cache = new Map();
+
+function cached(map, key, make) {
+    if (map.has(key)) {
+        const value = map.get(key);
+        map.delete(key);
+        map.set(key, value);
+        return value;
+    }
+    const value = make();
+    map.set(key, value);
+    if (map.size > kCacheSize) map.delete(map.keys().next().value);
+    return value;
+}
+
+const short_key = text => `${hash_str(text).toString(36)}.${text.length}`;
+
 // Every layer, front first, with islands resolved, then the stack-level stages: locators for
 // glue-on islands are scored on the layer behind, and registration adds dowel holes, engraved IDs
 // and spacers. Returns layers, registration, the fast checks and the time taken.
+// Each layer carries cache_key, which changes whenever its final geometry can change.
 function build_design(design) {
     const t0 = performance.now();
+    const shape_key = JSON.stringify([design.piece.outline, design.piece.symmetry]);
     const layers = design.layers.map((layer, k) => {
-        const { outline, material: raw } = compose_layer(design, k);
         const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
-        return { id: layer.id, ...resolve_islands(raw, layer, bridge_w_mm), locators: [], solid_mm2: area_mm2(outline) };
+        const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm]));
+        const geo = cached(layer_cache, key, () => {
+            const { outline, material: raw } = compose_layer(design, k);
+            return { ...resolve_islands(raw, layer, bridge_w_mm), solid_mm2: area_mm2(outline) };
+        });
+        return { id: layer.id, key, ...geo, locators: [] };
     });
     layers.forEach((l, k) => {
         if (l.parts.length && layers[k + 1]) layers[k + 1].locators.push(...l.parts.map(p => p[0]));
     });
-    const registration = register_stack(design, layers);
+    const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration));
+    const geo = cached(reg_cache, reg_key, () => register_geometry(design, layers));
+    layers.forEach((l, k) => {
+        l.material = geo.materials[k];
+        l.ids = geo.ids[k];
+        l.cache_key = `${l.key}/${reg_key}`;
+    });
+    const spacing = spacer_layout(design, geo.dowels, geo.r_hole);
+    const registration = { dowels: geo.dowels, hole_d_mm: geo.hole_d_mm, spacers: spacing.spacers, warnings: [...geo.warnings, ...spacing.warnings] };
     for (const l of layers) {
         l.area_mm2 = area_mm2(l.material);
         l.open_fraction = l.solid_mm2 > 0 ? 1 - l.area_mm2 / l.solid_mm2 : 0;
@@ -2223,39 +2438,631 @@ function build_design(design) {
 }
 return { compose_layer, build_design };
 })();
-// src/geom/pack.js
-const __m_geom_pack_js = (function () {
-// Packs paths into typed arrays for postMessage: transferring two buffers is far cheaper than
-// structured-cloning thousands of {x, y} objects. Coordinates are micrometres in Int32 (+-2.1 km).
+// src/sources/svg_path.js
+const __m_sources_svg_path_js = (function () {
+// SVG path data and curve flattening (SPEC 8.1, import). Parses a path's "d" into subpaths of
+// segments (line, cubic; quadratics and arcs become cubics), then flattens them after an affine
+// transform, so the chord tolerance holds at real size.
+// Assumptions: coordinates are SVG user units; the transform maps them to mm.
 
-function pack_paths(paths) {
-    let n = 0;
-    for (const p of paths) n += p.length;
-    const xy = new Int32Array(n * 2);
-    const starts = new Uint32Array(paths.length + 1);
-    let at = 0;
-    paths.forEach((path, i) => {
-        starts[i] = at;
-        for (const p of path) {
-            xy[2 * at] = p.x;
-            xy[2 * at + 1] = p.y;
-            at++;
+const kNumber = /[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/y;
+
+function tokens(d) {
+    const out = [];
+    let i = 0;
+    while (i < d.length) {
+        const c = d[i];
+        if (/[\s,]/.test(c)) {
+            i++;
+        } else if (/[MmLlHhVvCcSsQqTtAaZz]/.test(c)) {
+            out.push(c);
+            i++;
+        } else {
+            kNumber.lastIndex = i;
+            const m = kNumber.exec(d);
+            if (!m) throw new Error(`bad path data near "${d.slice(i, i + 12)}"`);
+            out.push({ n: Number(m[0]), raw: m[0] }); // raw text: arc flags may run together
+            i = kNumber.lastIndex;
         }
-    });
-    starts[paths.length] = at;
-    return { xy, starts };
+    }
+    return out;
 }
 
-function unpack_paths({ xy, starts }) {
-    const paths = [];
-    for (let i = 0; i + 1 < starts.length; i++) {
-        const path = [];
-        for (let k = starts[i]; k < starts[i + 1]; k++) path.push({ x: xy[2 * k], y: xy[2 * k + 1] });
-        paths.push(path);
+const is_num = t => typeof t === 'object';
+
+// Arc flags are single characters that may run on into the next number ("a1 1 0 01 5 5" or
+// "a1 1 0 1110 10"), so a flag takes the first character of a number token and leaves the rest.
+function arc_args(toks, at) {
+    const vals = [];
+    let i = at;
+    while (vals.length < 7 && i < toks.length && is_num(toks[i])) {
+        const t = toks[i];
+        if ((vals.length === 3 || vals.length === 4) && t.raw.length > 1 && /^[01]/.test(t.raw)) {
+            vals.push(Number(t.raw[0]));
+            const rest = t.raw.slice(1);
+            toks[i] = { n: Number(rest), raw: rest };
+            continue;
+        }
+        vals.push(t.n);
+        i++;
     }
-    return paths;
+    return { vals, next: i };
 }
-return { pack_paths, unpack_paths };
+
+// Endpoint arc to cubic Beziers (at most 90 degrees each).
+function arc_to_cubics(x1, y1, rx, ry, phi_deg, large, sweep, x2, y2) {
+    if (rx === 0 || ry === 0 || (x1 === x2 && y1 === y2)) return [['L', x2, y2]];
+    rx = Math.abs(rx);
+    ry = Math.abs(ry);
+    const phi = (phi_deg * Math.PI) / 180;
+    const cos = Math.cos(phi);
+    const sin = Math.sin(phi);
+    const dx = (x1 - x2) / 2;
+    const dy = (y1 - y2) / 2;
+    const x1p = cos * dx + sin * dy;
+    const y1p = -sin * dx + cos * dy;
+    const lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+    if (lambda > 1) {
+        rx *= Math.sqrt(lambda);
+        ry *= Math.sqrt(lambda);
+    }
+    const num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+    const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+    const coef = (large === sweep ? -1 : 1) * Math.sqrt(Math.max(0, num / den));
+    const cxp = (coef * rx * y1p) / ry;
+    const cyp = (-coef * ry * x1p) / rx;
+    const cx = cos * cxp - sin * cyp + (x1 + x2) / 2;
+    const cy = sin * cxp + cos * cyp + (y1 + y2) / 2;
+    const angle = (ux, uy, vx, vy) => {
+        const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+        return a;
+    };
+    const t1 = angle(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry);
+    let dt = angle((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry);
+    if (!sweep && dt > 0) dt -= 2 * Math.PI;
+    else if (sweep && dt < 0) dt += 2 * Math.PI;
+    const n = Math.ceil(Math.abs(dt) / (Math.PI / 2) - 1e-9);
+    const out = [];
+    const step = dt / n;
+    const k = (4 / 3) * Math.tan(step / 4);
+    const point = t => {
+        const ex = rx * Math.cos(t);
+        const ey = ry * Math.sin(t);
+        return [cos * ex - sin * ey + cx, sin * ex + cos * ey + cy];
+    };
+    const deriv = t => {
+        const ex = -rx * Math.sin(t);
+        const ey = ry * Math.cos(t);
+        return [cos * ex - sin * ey, sin * ex + cos * ey];
+    };
+    for (let i = 0; i < n; i++) {
+        const a = t1 + i * step;
+        const b = a + step;
+        const p0 = point(a);
+        const p3 = point(b);
+        const d0 = deriv(a);
+        const d3 = deriv(b);
+        out.push(['C', p0[0] + k * d0[0], p0[1] + k * d0[1], p3[0] - k * d3[0], p3[1] - k * d3[1], p3[0], p3[1]]);
+    }
+    return out;
+}
+
+// Parses d into subpaths: [{ start: [x, y], segs: [['L', x, y] | ['C', x1, y1, x2, y2, x, y]], closed }]
+function parse_path(d) {
+    const toks = tokens(d);
+    const subpaths = [];
+    let cur = null;
+    let x = 0;
+    let y = 0;
+    let sx = 0;
+    let sy = 0;
+    let last_ctrl = null; // for S/T reflection: [x, y, kind]
+    let i = 0;
+    let cmd = null;
+    const begin = () => {
+        cur = { start: [x, y], segs: [], closed: false };
+        subpaths.push(cur);
+    };
+    const need = () => {
+        if (!cur) begin();
+    };
+    while (i < toks.length) {
+        if (typeof toks[i] === 'string') cmd = toks[i++];
+        else if (!cmd) throw new Error('path data must start with a command');
+        const rel = cmd !== cmd.toUpperCase();
+        const C = cmd.toUpperCase();
+        const num = () => {
+            if (!is_num(toks[i])) throw new Error(`missing number after ${cmd}`);
+            return toks[i++].n;
+        };
+        switch (C) {
+            case 'M': {
+                const nx = num() + (rel ? x : 0);
+                const ny = num() + (rel ? y : 0);
+                x = nx;
+                y = ny;
+                sx = x;
+                sy = y;
+                begin();
+                cmd = rel ? 'l' : 'L'; // following pairs are line-tos
+                last_ctrl = null;
+                break;
+            }
+            case 'L':
+            case 'H':
+            case 'V': {
+                need();
+                if (C === 'L') {
+                    x = num() + (rel ? x : 0);
+                    y = num() + (rel ? y : 0);
+                } else if (C === 'H') x = num() + (rel ? x : 0);
+                else y = num() + (rel ? y : 0);
+                cur.segs.push(['L', x, y]);
+                last_ctrl = null;
+                break;
+            }
+            case 'C':
+            case 'S': {
+                need();
+                let x1;
+                let y1;
+                if (C === 'C') {
+                    x1 = num() + (rel ? x : 0);
+                    y1 = num() + (rel ? y : 0);
+                } else if (last_ctrl && last_ctrl[2] === 'C') {
+                    x1 = 2 * x - last_ctrl[0];
+                    y1 = 2 * y - last_ctrl[1];
+                } else {
+                    x1 = x;
+                    y1 = y;
+                }
+                const x2 = num() + (rel ? x : 0);
+                const y2 = num() + (rel ? y : 0);
+                const nx = num() + (rel ? x : 0);
+                const ny = num() + (rel ? y : 0);
+                cur.segs.push(['C', x1, y1, x2, y2, nx, ny]);
+                last_ctrl = [x2, y2, 'C'];
+                x = nx;
+                y = ny;
+                break;
+            }
+            case 'Q':
+            case 'T': {
+                need();
+                let qx;
+                let qy;
+                if (C === 'Q') {
+                    qx = num() + (rel ? x : 0);
+                    qy = num() + (rel ? y : 0);
+                } else if (last_ctrl && last_ctrl[2] === 'Q') {
+                    qx = 2 * x - last_ctrl[0];
+                    qy = 2 * y - last_ctrl[1];
+                } else {
+                    qx = x;
+                    qy = y;
+                }
+                const nx = num() + (rel ? x : 0);
+                const ny = num() + (rel ? y : 0);
+                cur.segs.push(['C', x + (2 / 3) * (qx - x), y + (2 / 3) * (qy - y), nx + (2 / 3) * (qx - nx), ny + (2 / 3) * (qy - ny), nx, ny]);
+                last_ctrl = [qx, qy, 'Q'];
+                x = nx;
+                y = ny;
+                break;
+            }
+            case 'A': {
+                need();
+                const { vals, next } = arc_args(toks, i);
+                if (vals.length < 7) throw new Error('arc needs 7 numbers');
+                i = next;
+                const nx = vals[5] + (rel ? x : 0);
+                const ny = vals[6] + (rel ? y : 0);
+                cur.segs.push(...arc_to_cubics(x, y, vals[0], vals[1], vals[2], vals[3] ? 1 : 0, vals[4] ? 1 : 0, nx, ny));
+                x = nx;
+                y = ny;
+                last_ctrl = null;
+                break;
+            }
+            case 'Z': {
+                if (cur) cur.closed = true;
+                x = sx;
+                y = sy;
+                cur = null;
+                last_ctrl = null;
+                cmd = null;
+                break;
+            }
+            default:
+                throw new Error(`unknown path command ${cmd}`);
+        }
+    }
+    return subpaths;
+}
+
+function apply(m, x, y) {
+    return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+}
+
+function flatten_cubic(p0, p1, p2, p3, tol, out, depth = 0) {
+    // Flat enough when both control points are within tol of the chord.
+    const dx = p3[0] - p0[0];
+    const dy = p3[1] - p0[1];
+    const len = Math.hypot(dx, dy) || 1e-12;
+    const d1 = Math.abs((p1[0] - p0[0]) * dy - (p1[1] - p0[1]) * dx) / len;
+    const d2 = Math.abs((p2[0] - p0[0]) * dy - (p2[1] - p0[1]) * dx) / len;
+    if ((d1 <= tol && d2 <= tol) || depth >= 18) {
+        out.push(p3);
+        return;
+    }
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const p01 = mid(p0, p1);
+    const p12 = mid(p1, p2);
+    const p23 = mid(p2, p3);
+    const p012 = mid(p01, p12);
+    const p123 = mid(p12, p23);
+    const m = mid(p012, p123);
+    flatten_cubic(p0, p01, p012, m, tol, out, depth + 1);
+    flatten_cubic(m, p123, p23, p3, tol, out, depth + 1);
+}
+
+// Flattens parsed subpaths through transform m (2 x 3 affine, user units to mm) at tol_mm.
+// Returns { closed: [[[x, y], ...]], open: count }.
+function flatten_subpaths(subpaths, m, tol_mm) {
+    const closed = [];
+    let open = 0;
+    for (const sp of subpaths) {
+        const pts = [apply(m, ...sp.start)];
+        let prev = sp.start;
+        for (const s of sp.segs) {
+            if (s[0] === 'L') pts.push(apply(m, s[1], s[2]));
+            else flatten_cubic(apply(m, ...prev), apply(m, s[1], s[2]), apply(m, s[3], s[4]), apply(m, s[5], s[6]), tol_mm, pts);
+            prev = s[0] === 'L' ? [s[1], s[2]] : [s[5], s[6]];
+        }
+        const first = pts[0];
+        const last = pts[pts.length - 1];
+        const ends_meet = Math.hypot(first[0] - last[0], first[1] - last[1]) < 1e-6;
+        if (sp.closed || (ends_meet && pts.length > 3)) {
+            if (ends_meet) pts.pop();
+            if (pts.length >= 3) closed.push(pts);
+        } else if (sp.segs.length) {
+            open++;
+        }
+    }
+    return { closed, open };
+}
+return { parse_path, flatten_subpaths };
+})();
+// src/sources/svg_import.js
+const __m_sources_svg_import_js = (function () {
+const { parse_path, flatten_subpaths } = __m_sources_svg_path_js;
+const { union_all, union_fill, path_area_um2 } = __m_geom_clip_js;
+// SVG import (SPEC 8.1). Pure JS (no DOMParser), so it runs in the worker and in Node tests.
+// - Units: width/height/viewBox honoured with mm, cm, in, pt, pc, px. A px is 1/96 in, except in
+//   Illustrator files, whose px are points (1/72 in): the purchased 7-layer mandala, 824.7 px
+//   square, is about 291 mm from Illustrator and would be 218 mm at 96 per inch.
+// - Shapes: path, rect (rounded too), circle, ellipse, polygon, under nested transforms. Curves
+//   and arcs are flattened at 0.02 mm after transforming to mm. Open paths, lines and polylines
+//   cannot be material and are counted, not drawn. Text, defs, clip paths and hidden elements are
+//   skipped.
+// - Layers: one file gives one layer, unless its top level holds two or more groups with
+//   geometry; then each group is a layer, the last drawn being the front.
+// - Every closed shape is material; the layer's fill rule (even-odd by default, the cut-file
+//   convention) decides holes.
+
+
+
+const kTolMm = 0.02;
+const kSkip = new Set(['defs', 'clipPath', 'mask', 'symbol', 'pattern', 'marker', 'title', 'desc', 'metadata', 'style', 'script', 'linearGradient', 'radialGradient', 'filter']);
+
+function decode(s) {
+    return s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (m, e) => {
+        const k = e.toLowerCase();
+        if (k === 'amp') return '&';
+        if (k === 'lt') return '<';
+        if (k === 'gt') return '>';
+        if (k === 'quot') return '"';
+        if (k === 'apos') return "'";
+        if (k.startsWith('#x')) return String.fromCodePoint(parseInt(k.slice(2), 16));
+        return String.fromCodePoint(parseInt(k.slice(1), 10));
+    });
+}
+
+// A minimal XML reader: elements and attributes. Comments, processing instructions, CDATA and
+// DOCTYPE (with an internal subset, as Illustrator writes) are skipped; text is ignored.
+function parse_xml(text) {
+    const root = { name: '#root', attrs: {}, children: [] };
+    const stack = [root];
+    const n = text.length;
+    let i = 0;
+    while (i < n) {
+        const lt = text.indexOf('<', i);
+        if (lt < 0) break;
+        // \x3c is "<": the source must not hold a literal comment opener (it is inlined in a script).
+        if (text.startsWith('\x3c!--', lt)) {
+            const e = text.indexOf('-->', lt + 4);
+            i = e < 0 ? n : e + 3;
+            continue;
+        }
+        if (text.startsWith('<![CDATA[', lt)) {
+            const e = text.indexOf(']]>', lt);
+            i = e < 0 ? n : e + 3;
+            continue;
+        }
+        if (text.startsWith('<?', lt)) {
+            const e = text.indexOf('?>', lt);
+            i = e < 0 ? n : e + 2;
+            continue;
+        }
+        if (text.startsWith('<!', lt)) {
+            let depth = 0;
+            let j = lt + 2;
+            for (; j < n; j++) {
+                const c = text[j];
+                if (c === '[') depth++;
+                else if (c === ']') depth--;
+                else if (c === '>' && depth <= 0) break;
+            }
+            i = j + 1;
+            continue;
+        }
+        let j = lt + 1;
+        let quote = null;
+        for (; j < n; j++) {
+            const c = text[j];
+            if (quote) {
+                if (c === quote) quote = null;
+            } else if (c === '"' || c === "'") quote = c;
+            else if (c === '>') break;
+        }
+        const body = text.slice(lt + 1, j);
+        i = j + 1;
+        if (body.startsWith('/')) {
+            if (stack.length > 1) stack.pop();
+            continue;
+        }
+        const self_closing = body.endsWith('/');
+        const inner = self_closing ? body.slice(0, -1) : body;
+        const m = /^([^\s/>]+)/.exec(inner);
+        if (!m) continue;
+        const el = { name: m[1], attrs: {}, children: [] };
+        const re = /([^\s=]+)\s*=\s*("([^"]*)"|'([^']*)')/g;
+        const rest = inner.slice(m[0].length);
+        let a;
+        while ((a = re.exec(rest))) el.attrs[a[1]] = decode(a[3] ?? a[4]);
+        stack[stack.length - 1].children.push(el);
+        if (!self_closing) stack.push(el);
+    }
+    return root;
+}
+
+const kUnitMm = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, pc: 25.4 / 6, q: 0.25 };
+
+function length_mm(value, dpi) {
+    const m = /^\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*(mm|cm|in|pt|pc|px|q)?\s*$/i.exec(value ?? '');
+    if (!m) return null;
+    const unit = (m[2] || 'px').toLowerCase();
+    return Number(m[1]) * (unit === 'px' ? 25.4 / dpi : kUnitMm[unit]);
+}
+
+const mul = (p, q) => [
+    p[0] * q[0] + p[2] * q[1],
+    p[1] * q[0] + p[3] * q[1],
+    p[0] * q[2] + p[2] * q[3],
+    p[1] * q[2] + p[3] * q[3],
+    p[0] * q[4] + p[2] * q[5] + p[4],
+    p[1] * q[4] + p[3] * q[5] + p[5],
+];
+
+function parse_transform(s) {
+    let m = [1, 0, 0, 1, 0, 0];
+    if (!s) return m;
+    const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/g;
+    let t;
+    while ((t = re.exec(s))) {
+        const v = t[2].trim().split(/[\s,]+/).filter(Boolean).map(Number);
+        let k;
+        switch (t[1]) {
+            case 'matrix':
+                k = v.slice(0, 6);
+                break;
+            case 'translate':
+                k = [1, 0, 0, 1, v[0] ?? 0, v[1] ?? 0];
+                break;
+            case 'scale':
+                k = [v[0], 0, 0, v[1] ?? v[0], 0, 0];
+                break;
+            case 'rotate': {
+                const r = ((v[0] ?? 0) * Math.PI) / 180;
+                const rot = [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0];
+                k = v.length >= 3 ? mul(mul([1, 0, 0, 1, v[1], v[2]], rot), [1, 0, 0, 1, -v[1], -v[2]]) : rot;
+                break;
+            }
+            case 'skewX':
+                k = [1, 0, Math.tan(((v[0] ?? 0) * Math.PI) / 180), 1, 0, 0];
+                break;
+            case 'skewY':
+                k = [1, Math.tan(((v[0] ?? 0) * Math.PI) / 180), 0, 1, 0, 0];
+                break;
+        }
+        m = mul(m, k);
+    }
+    return m;
+}
+
+const num = (v, d = 0) => (v === undefined || v === '' ? d : Number.parseFloat(v));
+
+function hidden(el) {
+    const style = el.attrs.style ?? '';
+    return el.attrs.display === 'none' || el.attrs.visibility === 'hidden' || /display\s*:\s*none/.test(style) || /visibility\s*:\s*hidden/.test(style);
+}
+
+// Path data for the basic shapes, so everything goes through one parser and flattener.
+function shape_d(el) {
+    const a = el.attrs;
+    switch (el.name) {
+        case 'path':
+            return a.d ?? '';
+        case 'rect': {
+            const x = num(a.x);
+            const y = num(a.y);
+            const w = num(a.width);
+            const h = num(a.height);
+            if (!(w > 0 && h > 0)) return '';
+            let rx = a.rx !== undefined ? num(a.rx) : a.ry !== undefined ? num(a.ry) : 0;
+            let ry = a.ry !== undefined ? num(a.ry) : rx;
+            rx = Math.min(rx, w / 2);
+            ry = Math.min(ry, h / 2);
+            if (!(rx > 0 && ry > 0)) return `M${x},${y}H${x + w}V${y + h}H${x}Z`;
+            return (
+                `M${x + rx},${y}H${x + w - rx}A${rx},${ry} 0 0 1 ${x + w},${y + ry}V${y + h - ry}` +
+                `A${rx},${ry} 0 0 1 ${x + w - rx},${y + h}H${x + rx}A${rx},${ry} 0 0 1 ${x},${y + h - ry}` +
+                `V${y + ry}A${rx},${ry} 0 0 1 ${x + rx},${y}Z`
+            );
+        }
+        case 'circle':
+        case 'ellipse': {
+            const cx = num(a.cx);
+            const cy = num(a.cy);
+            const rx = el.name === 'circle' ? num(a.r) : num(a.rx);
+            const ry = el.name === 'circle' ? num(a.r) : num(a.ry);
+            if (!(rx > 0 && ry > 0)) return '';
+            return `M${cx - rx},${cy}A${rx},${ry} 0 1 0 ${cx + rx},${cy}A${rx},${ry} 0 1 0 ${cx - rx},${cy}Z`;
+        }
+        case 'polygon': {
+            const v = (a.points ?? '').trim().split(/[\s,]+/).filter(Boolean).map(Number);
+            if (v.length < 6) return '';
+            let d = `M${v[0]},${v[1]}`;
+            for (let i = 2; i + 1 < v.length; i += 2) d += `L${v[i]},${v[i + 1]}`;
+            return d + 'Z';
+        }
+        default:
+            return null;
+    }
+}
+
+// Collects closed polygons (mm) under el into acc.
+function walk(el, m, acc) {
+    if (kSkip.has(el.name) || hidden(el)) return;
+    const here = mul(m, parse_transform(el.attrs.transform));
+    if (el.name === 'line' || el.name === 'polyline') {
+        acc.open++;
+        return;
+    }
+    if (el.name === 'text' || el.name === 'use' || el.name === 'image') {
+        acc.skipped++;
+        return;
+    }
+    const d = shape_d(el);
+    if (d) {
+        const { closed, open } = flatten_subpaths(parse_path(d), here, kTolMm);
+        acc.polys.push(...closed);
+        acc.open += open;
+        return;
+    }
+    for (const child of el.children) walk(child, here, acc);
+}
+
+const has_geometry = el => ['path', 'rect', 'circle', 'ellipse', 'polygon'].includes(el.name) || el.children.some(has_geometry);
+
+function group_name(el, i) {
+    return el.attrs['inkscape:label'] ?? el.attrs['data-name'] ?? el.attrs.id ?? `Layer ${i + 1}`;
+}
+
+// Parses one SVG file into layers of closed polygons in mm (y up, in the file's own frame).
+// Returns { layers: [{ name, polys, open, skipped }], dpi, illustrator }, layers front first.
+function read_svg(text, { split_groups = true } = {}) {
+    const illustrator = /Generator:\s*Adobe Illustrator/i.test(text);
+    const dpi = illustrator ? 72 : 96;
+    const root = parse_xml(text).children.find(e => e.name === 'svg' || e.name.endsWith(':svg'));
+    if (!root) throw new Error('not an SVG file');
+    const vb = (root.attrs.viewBox ?? '').trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    const w_mm = length_mm(root.attrs.width, dpi);
+    const h_mm = length_mm(root.attrs.height, dpi);
+    let s = 25.4 / dpi;
+    let minx = 0;
+    let miny = 0;
+    if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) {
+        [minx, miny] = vb;
+        if (w_mm && h_mm) s = Math.min(w_mm / vb[2], h_mm / vb[3]);
+        else if (w_mm) s = w_mm / vb[2];
+        else if (h_mm) s = h_mm / vb[3];
+    }
+    // User units to mm, with y flipped (SVG is y down, Lamina is y up).
+    const base = mul([s, 0, 0, -s, 0, 0], mul([1, 0, 0, 1, -minx, -miny], parse_transform(root.attrs.transform)));
+
+    const groups = root.children.filter(e => e.name === 'g' && !hidden(e) && has_geometry(e));
+    const layers = [];
+    if (split_groups && groups.length >= 2) {
+        groups.forEach((g, i) => {
+            const acc = { polys: [], open: 0, skipped: 0 };
+            walk(g, base, acc);
+            if (acc.polys.length) layers.push({ name: group_name(g, i), ...acc });
+        });
+        const loose = { polys: [], open: 0, skipped: 0 };
+        for (const e of root.children) if (!groups.includes(e)) walk(e, base, loose);
+        if (loose.polys.length) layers.push({ name: 'Ungrouped', ...loose });
+        layers.reverse(); // last drawn is the front
+    } else {
+        const acc = { polys: [], open: 0, skipped: 0 };
+        for (const e of root.children) walk(e, base, acc);
+        if (acc.polys.length) layers.push({ name: 'Layer 1', ...acc });
+    }
+    return { layers, dpi, illustrator };
+}
+
+const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+// Turns files into importable layers: one file is split by groups, several files give one layer
+// each (front first by natural file name order). Artwork is centred on the origin, converted to
+// integer micrometres, and the union silhouette becomes a custom outline.
+// files: [{ name, text }]. Returns { layers: [{ name, paths, open, skipped }], outline, size_mm,
+// dpi_note }.
+function import_svg_files(files) {
+    const sorted = [...files].sort((a, b) => natural(a.name, b.name));
+    const read = sorted.map(f => ({ file: f.name, ...read_svg(f.text, { split_groups: files.length === 1 }) }));
+    let layers;
+    if (read.length === 1) {
+        layers = read[0].layers;
+    } else {
+        layers = read
+            .map(r => ({
+                name: r.file.replace(/\.svg$/i, ''),
+                polys: r.layers.flatMap(l => l.polys),
+                open: r.layers.reduce((n, l) => n + l.open, 0),
+                skipped: r.layers.reduce((n, l) => n + l.skipped, 0),
+            }))
+            .filter(l => l.polys.length);
+    }
+    if (!layers.length) throw new Error('no closed shapes found');
+
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const l of layers) {
+        for (const p of l.polys) {
+            for (const [x, y] of p) {
+                x0 = Math.min(x0, x);
+                y0 = Math.min(y0, y);
+                x1 = Math.max(x1, x);
+                y1 = Math.max(y1, y);
+            }
+        }
+    }
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const to_um = poly => poly.map(([x, y]) => ({ x: Math.round((x - cx) * 1000), y: Math.round((y - cy) * 1000) }));
+    const out = layers.map(l => {
+        const paths = l.polys.map(to_um);
+        return { name: l.name, paths, open: l.open, skipped: l.skipped };
+    });
+
+    // Silhouette: every layer's material (even-odd), unioned, holes dropped.
+    const solids = out.map(l => union_fill(l.paths, true));
+    const outline = union_all(solids.flat()).filter(p => path_area_um2(p) > 0);
+    const notes = [...new Set(read.map(r => (r.illustrator ? 'Illustrator file: 72 px per inch' : null)).filter(Boolean))];
+    return { layers: out, outline, size_mm: { w: x1 - x0, h: y1 - y0 }, notes };
+}
+return { parse_xml, read_svg, import_svg_files };
 })();
 // src/export/drawing.js
 const __m_export_drawing_js = (function () {
@@ -3208,7 +4015,8 @@ const __m_worker_geometry_worker_js = (function () {
 const { build_design } = __m_pipeline_compose_js;
 const { slow_checks } = __m_pipeline_checks_js;
 const { dowel_length_mm } = __m_pipeline_registration_js;
-const { pack_paths } = __m_geom_pack_js;
+const { pack_paths, to_flat } = __m_geom_pack_js;
+const { import_svg_files } = __m_sources_svg_import_js;
 const { test_card_zip } = __m_export_test_card_js;
 const { export_design, export_parts, sheet_drawings } = __m_export_export_design_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
@@ -3216,6 +4024,7 @@ const { export_design, export_parts, sheet_drawings } = __m_export_export_design
 // Typed arrays anywhere in a result are transferred, not copied.
 // 'build' is fast and runs on every edit; 'check' runs the slow checks on the last build of the
 // same design (cached by its JSON), so the UI can debounce it.
+
 
 
 
@@ -3287,6 +4096,17 @@ function sheets(design) {
     };
 }
 
+// Reads SVG files into importable layers (paths and outline as flat micrometre arrays).
+function import_svg({ files }) {
+    const r = import_svg_files(files);
+    return {
+        layers: r.layers.map(l => ({ name: l.name, paths: to_flat(l.paths), open: l.open, skipped: l.skipped })),
+        outline: to_flat(r.outline),
+        size_mm: r.size_mm,
+        notes: r.notes,
+    };
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -3300,6 +4120,7 @@ const kHandlers = {
     check,
     export_zip,
     sheets,
+    import_svg,
     test_card_zip,
 };
 
@@ -85845,11 +86666,12 @@ const SCHEMA = [
         panel: 'piece',
         label: 'Outline',
         type: 'select',
-        options: [
+        options: d => [
             ['circle', 'Circle'],
             ['rect', 'Rectangle'],
             ['polygon', 'Polygon'],
             ['arch', 'Arch'],
+            ...(d.piece.outline.custom ? [['custom', 'Imported silhouette']] : []),
         ],
         tier: 'basic',
     },
@@ -85865,6 +86687,7 @@ const SCHEMA = [
         unit: 'mm',
         tier: 'basic',
         desc: 'Diameter for circles and polygons. The pattern scales with it.',
+        show_if: d => d.piece.outline.kind !== 'custom',
     },
     {
         id: 'outline.h_mm',
@@ -86361,6 +87184,46 @@ function set_layer_count(design, count) {
     apply_palette(design, design.palette);
 }
 
+const svg_source = l => ({ kind: 'svg', name: l.name, fill_rule: 'evenodd', paths: l.paths });
+
+// A new design from imported SVG layers (front first): a custom outline from the artwork's
+// silhouette, no symmetry, no frame rings (the artwork brings its own border).
+// imported: the worker's import_svg result (paths and outline as flat micrometre arrays).
+function design_from_import(imported, name) {
+    const n = imported.layers.length;
+    const design = base_design(n);
+    design.name = name;
+    design.piece.outline = {
+        kind: 'custom',
+        w_mm: Math.round(imported.size_mm.w * 10) / 10,
+        h_mm: Math.round(imported.size_mm.h * 10) / 10,
+        sides: 8,
+        corner_r_mm: 0,
+        custom: imported.outline,
+    };
+    design.piece.symmetry = { kind: 'none', n: 8, phase_deg: 0 };
+    design.layers.forEach((layer, k) => {
+        layer.frame_ring_mm = 0;
+        layer.source = svg_source(imported.layers[k]);
+    });
+    return design;
+}
+
+// Puts one imported layer's artwork on layer k of an existing design.
+function import_into_layer(design, k, imported_layer) {
+    design.layers[k].source = svg_source(imported_layer);
+    design.layers[k].frame_ring_mm = 0;
+}
+
+// Reverses the stack (front becomes back), renumbering layers and reapplying the palette.
+function reverse_layers(design) {
+    design.layers.reverse();
+    design.layers.forEach((layer, k) => {
+        layer.id = `L${k + 1}`;
+    });
+    apply_palette(design, design.palette);
+}
+
 // Scales every length a motif has (positions and sizes, not structural widths such as ties), so a
 // pattern follows the piece when the piece is resized.
 function scale_motifs(design, factor) {
@@ -86374,7 +87237,7 @@ function scale_motifs(design, factor) {
         }
     }
 }
-return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, scale_motifs };
+return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
 // src/preview/three_stack.js
 const __m_preview_three_stack_js = (function () {
@@ -86908,7 +87771,7 @@ function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
     const count = design.layers.length;
     const patterned = count > 1 ? count - 1 : 1;
     design.layers.forEach((layer, k) => {
-        if (layer.locked) return;
+        if (layer.locked || layer.source.kind !== 'primitive') return; // imported artwork is kept
         layer.frame_ring_mm = r1(ring0 + k * ring_step);
         if (k >= patterned) {
             layer.source.motifs = [];
@@ -87110,6 +87973,18 @@ function pack_paths(paths) {
     return { xy, starts };
 }
 
+// Flat integer arrays for the design JSON (imported artwork, custom outlines):
+// [[x0, y0, x1, y1, ...], ...] in micrometres.
+const to_flat = paths => paths.map(p => p.flatMap(q => [q.x, q.y]));
+
+function from_flat(flat) {
+    return flat.map(a => {
+        const p = [];
+        for (let i = 0; i + 1 < a.length; i += 2) p.push({ x: a[i], y: a[i + 1] });
+        return p;
+    });
+}
+
 function unpack_paths({ xy, starts }) {
     const paths = [];
     for (let i = 0; i + 1 < starts.length; i++) {
@@ -87119,7 +87994,7 @@ function unpack_paths({ xy, starts }) {
     }
     return paths;
 }
-return { pack_paths, unpack_paths };
+return { pack_paths, to_flat, from_flat, unpack_paths };
 })();
 // src/core/check_level.js
 const __m_core_check_level_js = (function () {
@@ -87748,8 +88623,9 @@ class Panels {
         const layer = d.layers[k];
         const shown = SCHEMA.filter(e => e.panel === step && visible(e, d, layer, tier)).map(e => e.id);
         const parts = [tier, shown.join(',')];
+        if (step === 'piece') parts.push(d.piece.outline.custom ? 'custom' : '');
         if (step === 'layers') parts.push(d.layers.length, k);
-        if (step === 'pattern') parts.push(k, layer.source.motifs.map(m => m.type).join(','));
+        if (step === 'pattern') parts.push(k, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'structure') parts.push(k);
         return parts.join('|');
     }
@@ -87821,6 +88697,28 @@ class Panels {
         const tier = app.ui.tier;
         const layer = app.design.layers[k];
         body.append(el('h3', { class: 'sub', text: `Pattern of layer ${k + 1}` }));
+
+        if (layer.source.kind === 'svg') {
+            const src = layer.source;
+            body.append(el('p', { class: 'step-note', text: `Imported artwork: ${src.name}, ${src.paths.length} contours.` }));
+            const rule = make_control(
+                {
+                    type: 'select',
+                    label: 'Holes come from',
+                    options: [
+                        ['evenodd', 'Nesting (cut-line files)'],
+                        ['nonzero', 'Direction (filled artwork)'],
+                    ],
+                },
+                value => app.set_layer_fill_rule(value),
+            );
+            rule.refresh(src.fill_rule ?? 'evenodd');
+            refreshers.push(() => rule.refresh(app.design.layers[app.ui.layer].source.fill_rule ?? 'evenodd'));
+            const remove = el('button', { type: 'button', class: 'btn ghost', text: 'Remove artwork' });
+            remove.addEventListener('click', () => app.remove_artwork());
+            body.append(rule.el, remove);
+            return;
+        }
 
         const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value =>
             app.set_layer_locked(value),
@@ -88056,7 +88954,7 @@ return { make_checks_view };
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
-const { migrate, piece_radius_mm } = __m_core_design_js;
+const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { write_param } = __m_core_actions_js;
@@ -88070,7 +88968,7 @@ const { build_header } = __m_ui_header_js;
 const { build_make_extras } = __m_ui_make_panel_js;
 const { make_checks_view } = __m_ui_checks_view_js;
 const { set_status } = __m_ui_shell_js;
-const { save_bytes } = __m_ui_dom_js;
+const { save_bytes, el } = __m_ui_dom_js;
 // App controller: the design store, UI state, header and panels, the geometry worker and the
 // views. Every edit goes through the store (one undo step per action or slider drag). Every new
 // design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
@@ -88265,6 +89163,43 @@ function start_app({ worker, preview, stage }) {
         remove_motif(i) {
             edit(d => current(d).source.motifs.splice(i, 1));
         },
+        set_layer_fill_rule(rule) {
+            edit(d => {
+                current(d).source.fill_rule = rule;
+            });
+        },
+        remove_artwork() {
+            edit(d => {
+                current(d).source = { kind: 'primitive', motifs: [] };
+                current(d).frame_ring_mm = 12;
+            });
+        },
+        reverse_layers() {
+            edit(d => reverse_layers(d));
+            set_status('busy', 'Stack reversed: the front is now the back.');
+        },
+        async import_svg(files) {
+            set_status('busy', `Reading ${files.length === 1 ? files[0].name : `${files.length} files`}`);
+            try {
+                const texts = await Promise.all([...files].map(async f => ({ name: f.name, text: await f.text() })));
+                const result = await worker.call('import_svg', { files: texts });
+                const n = result.layers.length;
+                const size = `${result.size_mm.w.toFixed(1)} x ${result.size_mm.h.toFixed(1)} mm`;
+                const ignored = result.layers.reduce((s, l) => s + l.open + l.skipped, 0);
+                const extra = [...result.notes, ignored ? `${ignored} open paths, lines, texts or images ignored` : null].filter(Boolean).join('; ');
+                if (n === 1 && files.length === 1) {
+                    edit(d => import_into_layer(d, ui.layer, result.layers[0]));
+                    set_status('ok', `Imported ${texts[0].name} onto layer ${ui.layer + 1}: ${size}.${extra ? ` ${extra}.` : ''}`);
+                } else {
+                    const stem = texts[0].name.replace(/\.svg$/i, '').replace(/[-_ ]*(layer)?[-_ ]*\d+$/i, '') || 'Imported';
+                    ui.layer = 0;
+                    store.replace(design_from_import(result, stem));
+                    set_status('ok', `Imported ${n} layers (front first): ${size}.${extra ? ` ${extra}.` : ''}`);
+                }
+            } catch (err) {
+                set_status('bad', `Import failed: ${err.message}`);
+            }
+        },
         set_layer_locked(value) {
             edit(d => {
                 current(d).locked = value;
@@ -88363,7 +89298,36 @@ function start_app({ worker, preview, stage }) {
             set_status('bad', `Export failed: ${err.message}`);
         }
     };
-    panels = new Panels(app, { make: build_make_extras(worker, checks_view, () => app.export_zip()) });
+    const import_extras = container => {
+        const input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
+        input.addEventListener('change', () => {
+            if (input.files.length) app.import_svg(input.files);
+            input.value = '';
+        });
+        const button = el('button', { type: 'button', class: 'btn ghost', text: 'Import SVG layers' });
+        button.addEventListener('click', () => input.click());
+        container.append(
+            el('h3', { class: 'sub', text: 'Import' }),
+            el('p', {
+                class: 'step-note',
+                text:
+                    'Several files become one layer each, front first by file name. One file with ' +
+                    'several groups becomes one layer per group. One plain file goes onto the selected layer.',
+            }),
+            button,
+            input,
+        );
+    };
+    const layer_extras = container => {
+        const button = el('button', { type: 'button', class: 'tool small', text: 'Reverse stack order' });
+        button.addEventListener('click', () => app.reverse_layers());
+        container.append(button);
+    };
+    panels = new Panels(app, {
+        piece: import_extras,
+        layers: layer_extras,
+        make: build_make_extras(worker, checks_view, () => app.export_zip()),
+    });
     header = build_header(app);
     for (const tab of document.querySelectorAll('#tabs .tab')) {
         tab.addEventListener('click', () => {

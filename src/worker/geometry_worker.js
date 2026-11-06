@@ -6,7 +6,8 @@
 import { build_design } from '../pipeline/compose.js';
 import { slow_checks } from '../pipeline/checks.js';
 import { dowel_length_mm } from '../pipeline/registration.js';
-import { pack_paths } from '../geom/pack.js';
+import { pack_paths, to_flat } from '../geom/pack.js';
+import { import_svg_files } from '../sources/svg_import.js';
 import { test_card_zip } from '../export/test_card.js';
 import { export_design, export_parts, sheet_drawings } from '../export/export_design.js';
 
@@ -74,6 +75,17 @@ function sheets(design) {
     };
 }
 
+// Reads SVG files into importable layers (paths and outline as flat micrometre arrays).
+function import_svg({ files }) {
+    const r = import_svg_files(files);
+    return {
+        layers: r.layers.map(l => ({ name: l.name, paths: to_flat(l.paths), open: l.open, skipped: l.skipped })),
+        outline: to_flat(r.outline),
+        size_mm: r.size_mm,
+        notes: r.notes,
+    };
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -87,6 +99,7 @@ const kHandlers = {
     check,
     export_zip,
     sheets,
+    import_svg,
     test_card_zip,
 };
 

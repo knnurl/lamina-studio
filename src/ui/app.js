@@ -2,7 +2,7 @@
 // views. Every edit goes through the store (one undo step per action or slider drag). Every new
 // design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
 import { Store } from '../core/store.js';
-import { migrate, piece_radius_mm } from '../core/design.js';
+import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { write_param } from '../core/actions.js';
@@ -16,7 +16,7 @@ import { build_header } from './header.js';
 import { build_make_extras } from './make_panel.js';
 import { make_checks_view } from './checks_view.js';
 import { set_status } from './shell.js';
-import { save_bytes } from './dom.js';
+import { save_bytes, el } from './dom.js';
 
 const kDesignKey = 'lamina-design';
 const kTierKey = 'lamina-tier';
@@ -192,6 +192,43 @@ export function start_app({ worker, preview, stage }) {
         remove_motif(i) {
             edit(d => current(d).source.motifs.splice(i, 1));
         },
+        set_layer_fill_rule(rule) {
+            edit(d => {
+                current(d).source.fill_rule = rule;
+            });
+        },
+        remove_artwork() {
+            edit(d => {
+                current(d).source = { kind: 'primitive', motifs: [] };
+                current(d).frame_ring_mm = 12;
+            });
+        },
+        reverse_layers() {
+            edit(d => reverse_layers(d));
+            set_status('busy', 'Stack reversed: the front is now the back.');
+        },
+        async import_svg(files) {
+            set_status('busy', `Reading ${files.length === 1 ? files[0].name : `${files.length} files`}`);
+            try {
+                const texts = await Promise.all([...files].map(async f => ({ name: f.name, text: await f.text() })));
+                const result = await worker.call('import_svg', { files: texts });
+                const n = result.layers.length;
+                const size = `${result.size_mm.w.toFixed(1)} x ${result.size_mm.h.toFixed(1)} mm`;
+                const ignored = result.layers.reduce((s, l) => s + l.open + l.skipped, 0);
+                const extra = [...result.notes, ignored ? `${ignored} open paths, lines, texts or images ignored` : null].filter(Boolean).join('; ');
+                if (n === 1 && files.length === 1) {
+                    edit(d => import_into_layer(d, ui.layer, result.layers[0]));
+                    set_status('ok', `Imported ${texts[0].name} onto layer ${ui.layer + 1}: ${size}.${extra ? ` ${extra}.` : ''}`);
+                } else {
+                    const stem = texts[0].name.replace(/\.svg$/i, '').replace(/[-_ ]*(layer)?[-_ ]*\d+$/i, '') || 'Imported';
+                    ui.layer = 0;
+                    store.replace(design_from_import(result, stem));
+                    set_status('ok', `Imported ${n} layers (front first): ${size}.${extra ? ` ${extra}.` : ''}`);
+                }
+            } catch (err) {
+                set_status('bad', `Import failed: ${err.message}`);
+            }
+        },
         set_layer_locked(value) {
             edit(d => {
                 current(d).locked = value;
@@ -290,7 +327,36 @@ export function start_app({ worker, preview, stage }) {
             set_status('bad', `Export failed: ${err.message}`);
         }
     };
-    panels = new Panels(app, { make: build_make_extras(worker, checks_view, () => app.export_zip()) });
+    const import_extras = container => {
+        const input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
+        input.addEventListener('change', () => {
+            if (input.files.length) app.import_svg(input.files);
+            input.value = '';
+        });
+        const button = el('button', { type: 'button', class: 'btn ghost', text: 'Import SVG layers' });
+        button.addEventListener('click', () => input.click());
+        container.append(
+            el('h3', { class: 'sub', text: 'Import' }),
+            el('p', {
+                class: 'step-note',
+                text:
+                    'Several files become one layer each, front first by file name. One file with ' +
+                    'several groups becomes one layer per group. One plain file goes onto the selected layer.',
+            }),
+            button,
+            input,
+        );
+    };
+    const layer_extras = container => {
+        const button = el('button', { type: 'button', class: 'tool small', text: 'Reverse stack order' });
+        button.addEventListener('click', () => app.reverse_layers());
+        container.append(button);
+    };
+    panels = new Panels(app, {
+        piece: import_extras,
+        layers: layer_extras,
+        make: build_make_extras(worker, checks_view, () => app.export_zip()),
+    });
     header = build_header(app);
     for (const tab of document.querySelectorAll('#tabs .tab')) {
         tab.addEventListener('click', () => {
