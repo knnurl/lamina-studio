@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: 24
       - name: Unit tests
-        run: node --test tests/
+        run: node --test "tests/*.test.js"
       - name: Built page matches src/
         run: node tools/build.js --check
 

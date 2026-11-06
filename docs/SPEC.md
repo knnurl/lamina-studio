@@ -465,7 +465,7 @@ refs/  data/           gitignored
 The geometry pipeline runs in a Web Worker created from an inlined Blob URL, which works under `file://`. The UI thread only renders and edits. Messages carry the design JSON and the dirty-stage set, and return geometry plus check results.
 
 ### 13.4 Tests and CI
-- `node --test tests/` runs unit tests on the geometry, pipeline, exports and determinism.
+- `node --test "tests/*.test.js"` runs unit tests on the geometry, pipeline, exports and determinism.
 - CI (`pages.yml`): install nothing, run the tests, run the build, fail if `index.html` differs from the committed copy, then deploy Pages.
 
 ### 13.5 Determinism
@@ -507,7 +507,7 @@ The zip writer, DXF writer, SVG writer, stroke font, packer and marching squares
 Done when:
 - [x] The repo has `src/`, `tools/build.js`, `tests/`, `pages.yml`, `LICENSE`, `CLAUDE.md`, `.gitignore`.
 - [x] `node tools/build.js` produces `index.html`, which opens from `file://` and shows the themed empty shell. Checked with `node tools/shot.js` in headless Edge, dark and light, with no console errors. The shell also renders a 6-layer boot stack, built by Clipper2 in the worker and drawn by three.js, to prove the whole chain.
-- [x] `node --test tests/` runs: 17 tests covering the bundler, the built page, the worker bundle and the geometry core. CI fails on a stale `index.html` (`node tools/build.js --check`).
+- [x] `node --test "tests/*.test.js"` runs: 17 tests covering the bundler, the built page, the worker bundle and the geometry core. CI fails on a stale `index.html` (`node tools/build.js --check`).
 - [x] clipper2-ts and three.js are vendored at pinned versions with their licence files (`src/vendor/README.md`). Tests exercise a Clipper union, the kerf offset (10 mm square to 10.2 mm, 10 mm hole to 9.8 mm) and circle flattening.
 
 ### M1: layer engine

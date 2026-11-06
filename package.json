@@ -11,6 +11,6 @@
   "scripts": {
     "build": "node tools/build.js",
     "check": "node tools/build.js --check",
-    "test": "node --test tests/"
+    "test": "node --test \"tests/*.test.js\""
   }
 }

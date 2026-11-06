@@ -27,7 +27,7 @@ M1, the layer engine (SPEC section 15). M0 is done. Don't build ahead of the cur
 ## Commands
 
 - Build: `node tools/build.js` writes `index.html` from `src/`. `--check` exits 1 if it is stale.
-- Test: `node --test tests/`
+- Test: `node --test "tests/*.test.js"`. Keep the quoted glob: Node 24 (the CI version) treats a bare `tests/` as one file and fails, while Node 26 searches it.
 - Run: open `index.html` in a browser (works from `file://`)
 - Check in a real browser: `node tools/shot.js <out.png> [--light] [--size=1400x860]`. It drives headless Edge or Chrome, waits for the status light, prints the status and any console errors, and saves a screenshot. Exit 1 on errors.
 
