@@ -31,6 +31,14 @@ export function fast_checks(design, built, registration = { warnings: [] }) {
             const boxes = b.islands.filter(i => b.unbridged.includes(i.id)).map(i => i.bbox);
             out.push(result(design, 'G-01', 'fatal', k, `Layer ${k + 1}: ${plural(b.unbridged.length, 'island', 'islands')} could not be bridged and would fall out.`, boxes));
         }
+        const box = bbox_mm(b.material);
+        const w = box.x1 - box.x0 + mat.kerf_mm;
+        const h = box.y1 - box.y0 + mat.kerf_mm;
+        const W = design.sheet.w_mm - 2 * design.sheet.margin_mm;
+        const H = design.sheet.h_mm - 2 * design.sheet.margin_mm;
+        if (!((w <= W && h <= H) || (h <= W && w <= H))) {
+            out.push(result(design, 'G-05', 'fatal', k, `Layer ${k + 1} (${w.toFixed(1)} x ${h.toFixed(1)} mm) does not fit the ${design.sheet.w_mm} x ${design.sheet.h_mm} mm sheet inside its ${design.sheet.margin_mm} mm margin.`));
+        }
         const pieces = components(b.material).length;
         if (pieces > 1) {
             out.push(result(design, 'G-04', 'fatal', k, `Layer ${k + 1} falls apart into ${pieces} pieces.`));

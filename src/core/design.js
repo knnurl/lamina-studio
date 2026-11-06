@@ -116,7 +116,7 @@ export function base_design(layer_count = 8) {
             depth_mode: 'per_layer',
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
-        sheet: { w_mm: 600, h_mm: 400, margin_mm: 5, spacing_mm: 3 },
+        sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
         registration: { dowel_d_mm: 3, count: 3, through_front: false, ids: true },
         spacers: { style: 'pucks', stock_material: 'ply3' },
         layers: Array.from({ length: layer_count }, (_, k) => default_layer(k, layer_count)),
