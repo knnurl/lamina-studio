@@ -22,7 +22,6 @@ When trade-offs conflict, follow this order and state which priority drove the d
 ## Current milestone
 
 M1, the layer engine (SPEC section 15). Every M1 item is done except the physical proof, which waits on the owner's test card cut and a 4-layer test piece. M2 (lattice) starts only when the owner says so. Don't build ahead of the current milestone.
-`src/dev/boot_demo.js` is the M0 self-test stack; delete it once the M1 pipeline drives the preview.
 
 ## Commands
 
