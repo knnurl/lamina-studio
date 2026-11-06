@@ -190,6 +190,46 @@ export function set_layer_count(design, count) {
     apply_palette(design, design.palette);
 }
 
+const svg_source = l => ({ kind: 'svg', name: l.name, fill_rule: 'evenodd', paths: l.paths });
+
+// A new design from imported SVG layers (front first): a custom outline from the artwork's
+// silhouette, no symmetry, no frame rings (the artwork brings its own border).
+// imported: the worker's import_svg result (paths and outline as flat micrometre arrays).
+export function design_from_import(imported, name) {
+    const n = imported.layers.length;
+    const design = base_design(n);
+    design.name = name;
+    design.piece.outline = {
+        kind: 'custom',
+        w_mm: Math.round(imported.size_mm.w * 10) / 10,
+        h_mm: Math.round(imported.size_mm.h * 10) / 10,
+        sides: 8,
+        corner_r_mm: 0,
+        custom: imported.outline,
+    };
+    design.piece.symmetry = { kind: 'none', n: 8, phase_deg: 0 };
+    design.layers.forEach((layer, k) => {
+        layer.frame_ring_mm = 0;
+        layer.source = svg_source(imported.layers[k]);
+    });
+    return design;
+}
+
+// Puts one imported layer's artwork on layer k of an existing design.
+export function import_into_layer(design, k, imported_layer) {
+    design.layers[k].source = svg_source(imported_layer);
+    design.layers[k].frame_ring_mm = 0;
+}
+
+// Reverses the stack (front becomes back), renumbering layers and reapplying the palette.
+export function reverse_layers(design) {
+    design.layers.reverse();
+    design.layers.forEach((layer, k) => {
+        layer.id = `L${k + 1}`;
+    });
+    apply_palette(design, design.palette);
+}
+
 // Scales every length a motif has (positions and sizes, not structural widths such as ties), so a
 // pattern follows the piece when the piece is resized.
 export function scale_motifs(design, factor) {

@@ -7,7 +7,7 @@
 // Spacers: for each gap, gap / stock-thickness sheets of pucks (washers on the dowels) or rings
 // (inside both layers' frame rings).
 // Assumptions: material in micrometres after island resolution; origin at the symmetry centre.
-import { offset, intersect_paths, subtract, circle_path, area_mm2, clip_to_rect } from '../geom/clip.js';
+import { offset, intersect_paths, subtract, circle_path, area_mm2, clip_to_rect, path_area_um2 } from '../geom/clip.js';
 import { outline_paths } from '../geom/outline.js';
 import { text_strokes, text_width_mm } from '../export/stroke_font.js';
 import { material_of } from '../core/design.js';
@@ -67,8 +67,14 @@ export function hole_d_mm(design) {
 function place_dowels(design, built) {
     const reg = design.registration;
     const r_hole = mm_to_um(hole_d_mm(design) / 2);
-    let shared = built[0].material;
-    for (const l of built.slice(1)) shared = intersect_paths(shared, l.material);
+    // Sparsest layer first keeps every intersection small. (Windowed intersections were tried and
+    // measured slower: the overlapping windows process about twice the area.)
+    const order = [...built].sort((a, b) => area_mm2(a.material) - area_mm2(b.material));
+    let shared = order[0].material;
+    for (const l of order.slice(1)) {
+        if (!shared.length) break;
+        shared = intersect_paths(shared, l.material);
+    }
     const region = shared.length ? offset(shared, -(r_hole + mm_to_um(kDowelEdgeMm)), 'round') : [];
     const dowels = [];
     for (const angle_deg of dowel_angles(reg.count)) {
@@ -84,6 +90,31 @@ function place_dowels(design, built) {
         }
     }
     return { dowels, r_hole };
+}
+
+function bounds_of(design) {
+    const outline = outline_paths(design.piece.outline)[0];
+    return {
+        x0: Math.min(...outline.map(p => p.x)),
+        y0: Math.min(...outline.map(p => p.y)),
+        x1: Math.max(...outline.map(p => p.x)),
+        y1: Math.max(...outline.map(p => p.y)),
+    };
+}
+
+// Overlapping search windows [x0, y0, x1, y1], bottom first: bands along each edge, then the
+// middle. Overlaps keep anything near a window's edge inside another window.
+function windows({ x0, y0, x1, y1 }) {
+    const w = x1 - x0;
+    const h = y1 - y0;
+    const f = 0.4;
+    return [
+        [x0, y0, x1, y0 + h * f],
+        [x0, y0, x0 + w * f, y1],
+        [x1 - w * f, y0, x1, y1],
+        [x0, y1 - h * f, x1, y1],
+        [x0 + w * 0.25, y0 + h * 0.25, x1 - w * 0.25, y1 - h * 0.25],
+    ];
 }
 
 // Searches rays from the bottom (270 degrees) outwards, up to max_steps 5-degree steps each way,
@@ -108,17 +139,20 @@ function search_id(text, room, max_steps) {
 }
 
 // Where layer k's ID can go: material of layer k that the layer in front hides, clear of dowels.
-// Tried first in a band along the bottom (cheap: both layers are rect-clipped before the boolean
-// work), then over the whole layer.
+// Searched window by window, bottom first; both layers are rect-clipped to the window before the
+// boolean work, which keeps dense artwork fast.
 function place_id(text, material, front, keep_out, bounds) {
-    const room_in = (a, b) => {
-        const hidden = offset(intersect_paths(a, b), -mm_to_um(0.5));
-        return keep_out.length && hidden.length ? subtract(hidden, keep_out) : hidden;
-    };
-    const { x0, y0, x1, y1 } = bounds;
-    const band_top = y0 + (y1 - y0) * 0.3;
-    const near = room_in(clip_to_rect(material, x0, y0, x1, band_top), clip_to_rect(front, x0, y0, x1, band_top));
-    return (near.length && search_id(text, near, 12)) || search_id(text, room_in(material, front), 36);
+    // The smallest label box: a window whose largest hidden piece is smaller cannot hold it.
+    const cap = kIdCaps[kIdCaps.length - 1];
+    const min_box_um2 = mm_to_um(text_width_mm(text, cap) + 2 * kIdMarginMm) * mm_to_um(cap + 2 * kIdMarginMm);
+    for (const w of windows(bounds)) {
+        const hidden = offset(intersect_paths(clip_to_rect(material, ...w), clip_to_rect(front, ...w)), -mm_to_um(0.5));
+        if (!hidden.some(p => path_area_um2(p) >= min_box_um2)) continue;
+        const room = keep_out.length ? subtract(hidden, keep_out) : hidden;
+        const strokes = room.length ? search_id(text, room, 36) : null;
+        if (strokes) return strokes;
+    }
+    return null;
 }
 
 function spacer_parts(design, dowels, r_hole, k) {
@@ -139,10 +173,13 @@ function spacer_parts(design, dowels, r_hole, k) {
     return { kind: 'puck', gap: k, copies: copies * dowels.length, paths: puck };
 }
 
-// Adds dowel holes and IDs to the built layers, and returns the stack-level results.
-export function register_stack(design, built) {
+// The geometric part of registration: dowels, each layer's material with its dowel holes, and
+// engraved IDs. A pure function of the layers' geometry and the registration settings, so the
+// caller can cache it. Does not modify built.
+// Returns { dowels, r_hole, hole_d_mm, materials, ids, warnings }.
+export function register_geometry(design, built) {
     const reg = design.registration;
-    const out = { dowels: [], hole_d_mm: hole_d_mm(design), spacers: [], warnings: [] };
+    const out = { dowels: [], r_hole: 0, hole_d_mm: hole_d_mm(design), materials: built.map(l => l.material), ids: built.map(() => []), warnings: [] };
     if (!built.length) return out;
     const { dowels, r_hole } = built.length > 1 || reg.through_front ? place_dowels(design, built) : { dowels: [], r_hole: 0 };
     out.dowels = dowels;
@@ -151,36 +188,49 @@ export function register_stack(design, built) {
     }
     const holes = dowels.map(p => circle_path(p.x, p.y, r_hole, { tol_um: 5, fit: 'outside' }));
     const keep_out = dowels.map(p => circle_path(p.x, p.y, r_hole + mm_to_um(kDowelEdgeMm)));
-    built.forEach((l, k) => {
-        l.ids = [];
-        if (holes.length && (k > 0 || reg.through_front)) l.material = subtract(l.material, holes);
-    });
+    out.materials = built.map((l, k) => (holes.length && (k > 0 || reg.through_front) ? subtract(l.material, holes) : l.material));
+    out.ids = built.map(() => []);
     if (reg.ids) {
-        const outline = outline_paths(design.piece.outline)[0];
-        const bounds = {
-            x0: Math.min(...outline.map(p => p.x)),
-            y0: Math.min(...outline.map(p => p.y)),
-            x1: Math.max(...outline.map(p => p.x)),
-            y1: Math.max(...outline.map(p => p.y)),
-        };
+        const bounds = bounds_of(design);
         built.forEach((l, k) => {
             if (k === 0) return;
-            const strokes = place_id(`L${k + 1} ^`, l.material, built[k - 1].material, keep_out, bounds);
-            if (strokes) l.ids = strokes;
+            const strokes = place_id(`L${k + 1} ^`, out.materials[k], out.materials[k - 1], keep_out, bounds);
+            if (strokes) out.ids[k] = strokes;
             else out.warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: no hidden spot large enough for its engraved ID.` });
         });
     }
+    out.r_hole = r_hole;
+    return out;
+}
+
+// Spacers for every gap: they depend on gaps and the dowels, not on layer geometry, so they are
+// worked out after the (cached) geometric registration.
+export function spacer_layout(design, dowels, r_hole) {
+    const spacers = [];
+    const warnings = [];
     design.layers.forEach((layer, k) => {
         if (k < design.layers.length - 1 && layer.gap_mm > 0) {
             const part = spacer_parts(design, dowels, r_hole, k);
-            if (part) out.spacers.push(part);
+            if (part) spacers.push(part);
             else {
                 const why = design.spacers.style === 'rings' ? 'frame rings too narrow for spacer rings; use pucks' : 'no dowels to put spacer pucks on';
-                out.warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: ${why}.` });
+                warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: ${why}.` });
             }
         }
     });
-    return out;
+    return { spacers, warnings };
+}
+
+// Dowels, holes, IDs and spacers in one go: sets each built layer's material (with holes) and
+// ids, and returns { dowels, hole_d_mm, spacers, warnings }.
+export function register_stack(design, built) {
+    const geo = register_geometry(design, built);
+    built.forEach((l, k) => {
+        l.material = geo.materials[k];
+        l.ids = geo.ids[k];
+    });
+    const { spacers, warnings } = spacer_layout(design, geo.dowels, geo.r_hole);
+    return { dowels: geo.dowels, hole_d_mm: geo.hole_d_mm, spacers, warnings: [...geo.warnings, ...warnings] };
 }
 
 // Total length a dowel needs: every drilled layer plus the gaps between them.

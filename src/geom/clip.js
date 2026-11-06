@@ -82,6 +82,12 @@ export function union_all(paths) {
     return union(paths, FillRule.NonZero);
 }
 
+// Union under a chosen fill rule: even-odd for cut-line artwork, where nested contours alternate
+// between material and hole whatever their direction.
+export function union_fill(paths, even_odd) {
+    return union(paths, even_odd ? FillRule.EvenOdd : FillRule.NonZero);
+}
+
 export function subtract(subject, clip) {
     return difference(subject, clip, FillRule.NonZero);
 }

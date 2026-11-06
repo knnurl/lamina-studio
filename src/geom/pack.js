@@ -19,6 +19,18 @@ export function pack_paths(paths) {
     return { xy, starts };
 }
 
+// Flat integer arrays for the design JSON (imported artwork, custom outlines):
+// [[x0, y0, x1, y1, ...], ...] in micrometres.
+export const to_flat = paths => paths.map(p => p.flatMap(q => [q.x, q.y]));
+
+export function from_flat(flat) {
+    return flat.map(a => {
+        const p = [];
+        for (let i = 0; i + 1 < a.length; i += 2) p.push({ x: a[i], y: a[i + 1] });
+        return p;
+    });
+}
+
 export function unpack_paths({ xy, starts }) {
     const paths = [];
     for (let i = 0; i + 1 < starts.length; i++) {

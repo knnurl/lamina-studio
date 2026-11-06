@@ -77,8 +77,9 @@ export function fast_checks(design, built, registration = { warnings: [] }) {
     if (design.piece.lighting.mode === 'backlit' && !material_of(design, back).look.translucent && back_built && back_built.open_fraction < 0.01) {
         out.push(result(design, 'W-06', 'warn', n - 1, 'Backlit, but the back layer is solid and opaque, so no light gets through.'));
     }
+    // Frame rings belong to generated layers; imported artwork brings its own border.
     const front_mat = material_of(design, design.layers[0]);
-    if (design.layers[0].frame_ring_mm < front_mat.min_web_mm) {
+    if (design.layers[0].source.kind === 'primitive' && design.layers[0].frame_ring_mm < front_mat.min_web_mm) {
         out.push(result(design, 'W-07', 'warn', 0, `The front frame ring is thinner than the ${front_mat.min_web_mm} mm minimum web.`));
     }
     return out;
@@ -102,33 +103,54 @@ function thin_regions(material, width_mm, min_area_mm2) {
     return denoised.filter(p => path_area_um2(p) > min_um2);
 }
 
+// The morphological findings for one layer, before overrides: [{ id, severity, message, boxes }].
+function slow_layer(b, k, mat) {
+    const out = [];
+    const min_area = Math.max(0.05, 0.1 * mat.min_web_mm * mat.min_web_mm);
+    // Bridges are meant to be thinner than webs and have their own check (W-03).
+    const bridge_zone = b.bridges.length ? offset(b.bridges.map(br => br.rect), mm_to_um(0.5), 'miter') : [];
+    const not_bridge = (paths, area_mm2) => {
+        if (!bridge_zone.length || !paths.length) return paths;
+        return subtract(paths, bridge_zone).filter(p => path_area_um2(p) > area_mm2 * kUmPerMm * kUmPerMm);
+    };
+    const thin = not_bridge(thin_regions(b.material, mat.min_web_mm, min_area), min_area);
+    if (thin.length) {
+        const severe = not_bridge(thin_regions(b.material, mat.kerf_mm, 0.01), 0.01);
+        if (severe.length) {
+            out.push({ id: 'G-02', severity: 'fatal', message: `Layer ${k + 1}: webs thinner than the ${mat.kerf_mm} mm kerf would be cut away.`, boxes: severe.map(p => bbox_mm([p])) });
+        }
+        out.push({ id: 'W-01', severity: 'warn', message: `Layer ${k + 1}: ${plural(thin.length, 'web is', 'webs are')} thinner than ${mat.min_web_mm} mm.`, boxes: thin.map(p => bbox_mm([p])) });
+    }
+    const small = b.material.filter(p => {
+        if (path_area_um2(p) >= 0) return false;
+        const box = bbox_mm([p]);
+        return Math.min(box.x1 - box.x0, box.y1 - box.y0) < mat.min_hole_mm;
+    });
+    if (small.length) {
+        out.push({ id: 'W-02', severity: 'warn', message: `Layer ${k + 1}: ${plural(small.length, 'hole is', 'holes are')} smaller than ${mat.min_hole_mm} mm.`, boxes: small.map(p => bbox_mm([p])) });
+    }
+    return out;
+}
+
+// Per-layer findings are cached by the layer's final geometry (build_design's cache_key) and its
+// material limits; overrides are applied afterwards, so allowing a finding needs no recompute.
+const slow_cache = new Map();
+const kSlowCacheSize = 64;
+
 export function slow_checks(design, built) {
     const out = [];
     built.forEach((b, k) => {
         const mat = material_of(design, design.layers[k]);
-        const min_area = Math.max(0.05, 0.1 * mat.min_web_mm * mat.min_web_mm);
-        // Bridges are meant to be thinner than webs and have their own check (W-03).
-        const bridge_zone = b.bridges.length ? offset(b.bridges.map(br => br.rect), mm_to_um(0.5), 'miter') : [];
-        const not_bridge = (paths, area_mm2) => {
-            if (!bridge_zone.length || !paths.length) return paths;
-            return subtract(paths, bridge_zone).filter(p => path_area_um2(p) > area_mm2 * kUmPerMm * kUmPerMm);
-        };
-        const thin = not_bridge(thin_regions(b.material, mat.min_web_mm, min_area), min_area);
-        if (thin.length) {
-            const severe = not_bridge(thin_regions(b.material, mat.kerf_mm, 0.01), 0.01);
-            if (severe.length) {
-                out.push(result(design, 'G-02', 'fatal', k, `Layer ${k + 1}: webs thinner than the ${mat.kerf_mm} mm kerf would be cut away.`, severe.map(p => bbox_mm([p]))));
+        const key = b.cache_key ? `${k}/${b.cache_key}/${mat.min_web_mm}/${mat.kerf_mm}/${mat.min_hole_mm}` : null;
+        let raw = key ? slow_cache.get(key) : undefined;
+        if (!raw) {
+            raw = slow_layer(b, k, mat);
+            if (key) {
+                slow_cache.set(key, raw);
+                if (slow_cache.size > kSlowCacheSize) slow_cache.delete(slow_cache.keys().next().value);
             }
-            out.push(result(design, 'W-01', 'warn', k, `Layer ${k + 1}: ${plural(thin.length, 'web is', 'webs are')} thinner than ${mat.min_web_mm} mm.`, thin.map(p => bbox_mm([p]))));
         }
-        const small = b.material.filter(p => {
-            if (path_area_um2(p) >= 0) return false;
-            const box = bbox_mm([p]);
-            return Math.min(box.x1 - box.x0, box.y1 - box.y0) < mat.min_hole_mm;
-        });
-        if (small.length) {
-            out.push(result(design, 'W-02', 'warn', k, `Layer ${k + 1}: ${plural(small.length, 'hole is', 'holes are')} smaller than ${mat.min_hole_mm} mm.`, small.map(p => bbox_mm([p]))));
-        }
+        for (const r of raw) out.push(result(design, r.id, r.severity, k, r.message, r.boxes));
     });
     return out;
 }

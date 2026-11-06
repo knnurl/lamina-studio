@@ -3,6 +3,7 @@
 // Returns paths in micrometres, counter-clockwise.
 import { circle_path, rounded_rect_path, regular_polygon_path, circle_segments } from './clip.js';
 import { mm_to_um } from '../core/units.js';
+import { from_flat } from './pack.js';
 
 function arch_path(w_um, h_um) {
     const r = w_um / 2;
@@ -35,6 +36,9 @@ export function outline_paths(outline) {
         }
         case 'arch':
             return [arch_path(w, h)];
+        case 'custom':
+            // An imported silhouette, kept in the design as flat micrometre arrays.
+            return from_flat(outline.custom ?? []);
         default:
             throw new Error(`unknown outline "${outline.kind}"`);
     }

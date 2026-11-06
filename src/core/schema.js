@@ -49,11 +49,12 @@ export const SCHEMA = [
         panel: 'piece',
         label: 'Outline',
         type: 'select',
-        options: [
+        options: d => [
             ['circle', 'Circle'],
             ['rect', 'Rectangle'],
             ['polygon', 'Polygon'],
             ['arch', 'Arch'],
+            ...(d.piece.outline.custom ? [['custom', 'Imported silhouette']] : []),
         ],
         tier: 'basic',
     },
@@ -69,6 +70,7 @@ export const SCHEMA = [
         unit: 'mm',
         tier: 'basic',
         desc: 'Diameter for circles and polygons. The pattern scales with it.',
+        show_if: d => d.piece.outline.kind !== 'custom',
     },
     {
         id: 'outline.h_mm',

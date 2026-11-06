@@ -117,7 +117,7 @@ export function generate_stack(design, seed, { lock_n = false, types = kTypes } 
     const count = design.layers.length;
     const patterned = count > 1 ? count - 1 : 1;
     design.layers.forEach((layer, k) => {
-        if (layer.locked) return;
+        if (layer.locked || layer.source.kind !== 'primitive') return; // imported artwork is kept
         layer.frame_ring_mm = r1(ring0 + k * ring_step);
         if (k >= patterned) {
             layer.source.motifs = [];
