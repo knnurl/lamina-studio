@@ -29,8 +29,9 @@ export class LayerView {
         this.legend_.hidden = true;
         this.legend_.innerHTML =
             '<span class="key bridge"></span>bridged island <span class="key glue"></span>glue-on ' +
-            '<span class="key drop"></span>dropped. Click an island to change it. Wheel zooms, drag ' +
-            'pans, double-click refits. Boxes mark check findings.';
+            '<span class="key drop"></span>dropped <span class="key dowel"></span>dowel ' +
+            '<span class="key id"></span>engraved number. Click an island to change it. Wheel zooms, ' +
+            'drag pans, double-click refits. Boxes mark check findings.';
         container.append(this.canvas_, this.legend_);
         this.ctx_ = this.canvas_.getContext('2d');
         this.view_ = null; // { scale px per mm, ox, oy }
@@ -181,6 +182,30 @@ export class LayerView {
         ctx.setLineDash([]);
 
         const v = this.view_;
+        // Engraved layer ID (open strokes) and dowels: solid on drilled layers, dashed where the
+        // dowel sits hidden behind an undrilled front layer.
+        ctx.strokeStyle = '#00c060';
+        ctx.lineWidth = 1.2;
+        const ids = new Path2D();
+        for (const stroke of built.ids) {
+            stroke.forEach((p, i) => {
+                const x = v.ox + (p.x / kUmPerMm) * v.scale;
+                const y = v.oy - (p.y / kUmPerMm) * v.scale;
+                if (i) ids.lineTo(x, y);
+                else ids.moveTo(x, y);
+            });
+        }
+        ctx.stroke(ids);
+        ctx.strokeStyle = css.getPropertyValue('--cyan').trim();
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash(this.data_.drilled ? [] : [4, 3]);
+        for (const d of this.data_.dowels ?? []) {
+            ctx.beginPath();
+            ctx.arc(v.ox + d.x * v.scale, v.oy - d.y * v.scale, (this.data_.hole_d_mm / 2 + 2) * v.scale, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+
         for (const c of checks) {
             const colour_var = c.severity === 'fatal' && !c.overridden ? '--bad' : '--warn';
             ctx.strokeStyle = css.getPropertyValue(colour_var).trim();

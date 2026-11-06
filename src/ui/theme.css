@@ -258,6 +258,8 @@ button { font: inherit; color: inherit; }
 .layer-legend .key.bridge { background: #b4f03c; }
 .layer-legend .key.glue { background: #46b4ff; }
 .layer-legend .key.drop { background: #8f849f; }
+.layer-legend .key.dowel { background: var(--cyan); }
+.layer-legend .key.id { background: #00c060; }
 
 /* Header tools */
 .tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

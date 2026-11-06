@@ -5,6 +5,7 @@
 // same design (cached by its JSON), so the UI can debounce it.
 import { build_design } from '../pipeline/compose.js';
 import { slow_checks } from '../pipeline/checks.js';
+import { dowel_length_mm } from '../pipeline/registration.js';
 import { pack_paths } from '../geom/pack.js';
 import { test_card_zip } from '../export/test_card.js';
 
@@ -18,9 +19,16 @@ function built_for(design) {
 
 function build(design) {
     const built = built_for(design);
+    const reg = built.registration;
     return {
         ms: built.ms,
         checks: built.checks,
+        registration: {
+            dowels_mm: reg.dowels.map(p => ({ x: p.x / 1000, y: p.y / 1000 })),
+            hole_d_mm: reg.hole_d_mm,
+            dowel_length_mm: dowel_length_mm(design),
+            spacers: reg.spacers.map(s => ({ kind: s.kind, gap: s.gap, copies: s.copies })),
+        },
         layers: built.layers.map(l => ({
             id: l.id,
             area_mm2: l.area_mm2,
@@ -31,6 +39,7 @@ function build(design) {
             bridges: l.bridges.map(b => ({ island: b.island, length_mm: b.length_mm, w_mm: b.w_mm, rect: pack_paths([b.rect]) })),
             parts: l.parts.map(p => pack_paths(p)),
             locators: pack_paths(l.locators),
+            ids: pack_paths(l.ids),
             unbridged: l.unbridged,
         })),
     };

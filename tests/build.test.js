@@ -52,9 +52,13 @@ test('the worker bundle answers ping and builds a preset design', () => {
     for (const layer of layers) {
         assert.ok(layer.packed.xy instanceof Int32Array && layer.packed.starts instanceof Uint32Array);
     }
-    // The back layer is solid: a whole 290 mm disc, flattened at 0.02 mm (about 1.8e-4 short).
-    const disc_mm2 = Math.PI * 145 * 145;
-    assert.ok(Math.abs(layers.at(-1).area_mm2 - disc_mm2) / disc_mm2 < 2.5e-4);
+    // The back layer is solid apart from its dowel holes: a 290 mm disc, flattened at 0.02 mm
+    // (about 1.8e-4 short), minus the holes.
+    const reg = reply.result.registration;
+    assert.equal(reg.dowels_mm.length, 3);
+    const holes_mm2 = reg.dowels_mm.length * Math.PI * (reg.hole_d_mm / 2) ** 2;
+    const expected = Math.PI * 145 * 145 - holes_mm2;
+    assert.ok(Math.abs(layers.at(-1).area_mm2 - expected) / expected < 2.5e-4);
     assert.ok(layers[0].open_fraction > 0.05, 'the front layer has openings');
 });
 

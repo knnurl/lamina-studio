@@ -77,6 +77,7 @@ function unpack_layer(l) {
         bridges: l.bridges.map(b => ({ ...b, rect: unpack_paths(b.rect)[0] })),
         parts: l.parts.map(unpack_paths),
         locators: unpack_paths(l.locators),
+        ids: unpack_paths(l.ids),
     };
 }
 
@@ -119,6 +120,9 @@ export function start_app({ worker, preview, stage }) {
             colour: d.layers[k].finish.colour,
             built: state.built.layers[k],
             checks: (state.checks_for === d ? state.checks : state.built.checks).filter(c => c.layer === k),
+            dowels: state.built.registration.dowels_mm,
+            hole_d_mm: state.built.registration.hole_d_mm,
+            drilled: k > 0 || d.registration.through_front,
         });
     }
 
