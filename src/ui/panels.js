@@ -2,6 +2,7 @@
 // structure changes (layer count, selected layer, motif list, Basic or Advanced); otherwise its
 // controls refresh in place, so a slider keeps focus while it is dragged.
 import { SCHEMA, kMotifTypes, kMotifParams } from '../core/schema.js';
+import { kCurveTypes } from '../sources/curves.js';
 import { options_for, read_param } from '../core/actions.js';
 import { make_control } from './controls.js';
 import { el } from './dom.js';
@@ -147,7 +148,14 @@ export class Panels {
             const card = el('div', { class: 'motif' });
             const remove = el('button', { type: 'button', class: 'icon-btn small', 'aria-label': 'Remove', text: '×' });
             remove.addEventListener('click', () => app.remove_motif(i));
-            card.append(el('div', { class: 'motif-head' }, [el('span', { text: kMotifTypes[motif.type].label }), remove]));
+            const head = [el('span', { text: kMotifTypes[motif.type].label })];
+            if (motif.type === 'petal' || kCurveTypes.includes(motif.type)) {
+                const convert = el('button', { type: 'button', class: 'btn ghost small', text: 'Edit nodes', title: 'Turn into a shape whose nodes you drag in the Layer view' });
+                convert.addEventListener('click', () => app.convert_motif(i));
+                head.push(convert);
+            }
+            card.append(el('div', { class: 'motif-head' }, [...head, remove]));
+            if (motif.type === 'shape') card.append(el('p', { class: 'step-note', text: 'Drag its nodes and handles in the Layer view. Double-click the outline to add a node, a node to delete it.' }));
             for (const key of kMotifTypes[motif.type].params) {
                 const p = kMotifParams[key];
                 if (p.tier === 'advanced' && tier !== 'advanced') continue;

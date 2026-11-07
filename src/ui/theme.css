@@ -214,7 +214,7 @@ button { font: inherit; color: inherit; }
 .motif-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; color: var(--ink); }
 .icon-btn.small { width: 24px; height: 24px; font-size: 16px; line-height: 1; }
 .add-row { display: flex; gap: 8px; }
-.add-row select { flex: 1; }
+.add-row select { flex: 1; min-width: 0; } /* a select sizes to its longest option */
 .btn.ghost {
     background: none;
     color: var(--acid);

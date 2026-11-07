@@ -6,6 +6,8 @@ import { rotate_path, replicate, rotation_order } from '../geom/symmetry.js';
 import { kMotifTypes } from '../core/schema.js';
 import { lattice_openings, fret_openings } from './lattice.js';
 import { circuit_openings } from './circuit.js';
+import { curve_nodes, kCurveTypes } from './curves.js';
+import { flatten_shape } from '../geom/bezier.js';
 import { mm_to_um } from '../core/units.js';
 
 const kDeg = Math.PI / 180;
@@ -76,9 +78,19 @@ function ray_path(m) {
     return w1 > 0 || w0 > 0 ? [path] : [];
 }
 
+// A Bezier outline (local mm, centred on the motif) placed at radius r_mm on the +x axis,
+// flattened to 0.02 mm.
+function shape_path(nodes, r_mm) {
+    const r = mm_to_um(r_mm);
+    return flatten_shape(nodes, 0.02).map(p => ({ x: Math.round(r + mm_to_um(p.x)), y: Math.round(mm_to_um(p.y)) }));
+}
+
 // Paths for one copy of a motif on the +x axis.
 function base_paths(m, wedge_rad) {
+    if (kCurveTypes.includes(m.type)) return [shape_path(curve_nodes(m), m.r_mm)];
     switch (m.type) {
+        case 'shape':
+            return (m.nodes?.length ?? 0) >= 3 ? [shape_path(m.nodes, m.r_mm)] : [];
         case 'window':
             return [window_path(m)];
         case 'petal':
