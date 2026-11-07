@@ -122,12 +122,16 @@ export class StackPreview {
         this.resize_();
     }
 
-    // built: [{ material: paths }] front first, as the worker returned them for design. The back
-    // layer sits at z = 0 and each layer in front sits on the one behind plus its gap. The camera
-    // is reframed only when the piece's size changes.
+    // built: [{ material: paths, material_key }] front first, as the worker returned them for
+    // design. The back layer sits at z = 0 and each layer in front sits on the one behind plus its
+    // gap. The camera is reframed only when the piece's size changes.
+    // Extruded geometry is kept by material_key and thickness: triangulating a dense lattice layer
+    // is the main cost of a redraw, and an edit usually changes one layer.
     show(design, built) {
+        const old = this.geometries_ ?? new Map();
+        const next = new Map();
         for (const mesh of this.stack_.children) {
-            mesh.geometry.dispose();
+            if (!mesh.userData.cached) mesh.geometry.dispose();
             for (const m of [mesh.material].flat()) m.dispose();
         }
         this.stack_.clear();
@@ -136,14 +140,22 @@ export class StackPreview {
         for (let k = built.length - 1; k >= 0; k--) {
             const layer = design.layers[k];
             const thickness_mm = layer_thickness_mm(design, layer);
-            const geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
-            geometry.computeBoundingSphere();
+            const key = built[k].material_key ? `${built[k].material_key}|${thickness_mm}` : null;
+            let geometry = key && (next.get(key) ?? old.get(key));
+            if (!geometry) {
+                geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
+                geometry.computeBoundingSphere();
+            }
+            if (key) next.set(key, geometry);
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
             const mesh = new Mesh(geometry, materials_for(design, layer));
-            mesh.userData = { base_z: z, from_back: built.length - 1 - k };
+            mesh.userData = { base_z: z, from_back: built.length - 1 - k, cached: !!key };
             this.stack_.add(mesh);
             z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
         }
+
+        for (const [key, g] of old) if (!next.has(key)) g.dispose();
+        this.geometries_ = next;
 
         const backlit = design.piece.lighting.mode === 'backlit';
         this.ambient_.intensity = backlit ? 0.22 : 0.55;
