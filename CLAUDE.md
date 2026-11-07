@@ -21,7 +21,7 @@ When trade-offs conflict, follow this order and state which priority drove the d
 
 ## Current milestone
 
-M1, the layer engine (SPEC section 15). Every M1 item is done except the physical proof, which waits on the owner's test card cut and a 4-layer test piece. M2 (lattice) starts only when the owner says so. Don't build ahead of the current milestone.
+M3, circuit (SPEC section 15). The owner approved M2, M3 and M4 on 2026-11-07; M2 (lattice) is done. M1's physical proof still waits on the owner's test card cut and a 4-layer test piece. M5 and later start only when the owner says so. Don't build ahead of the approved milestones.
 
 ## Commands
 
@@ -32,7 +32,7 @@ M1, the layer engine (SPEC section 15). Every M1 item is done except the physica
   - It drives headless Edge or Chrome, waits for the status light, prints the status and any console errors, and saves a screenshot. Exit 1 on errors.
   - `--click` then clicks an element and reports any download (saved in `downloads/` beside the PNG).
   - `--eval` and `--eval-file` run a script in the page (async allowed) and print its result. Use `--eval-file` for long scripts such as embedded SVG fixtures.
-- Performance: `node tools/bench.js` (exits 1 if a SPEC 13.6 target fails) and `node tools/shot.js out.png --eval-file=tools/slider_latency.page.js`. Record results in `docs/PERF.md`.
+- Performance: `node tools/bench.js` (exits 1 if a SPEC 13.6 target fails), `node tools/shot.js out.png --eval-file=tools/slider_latency.page.js` (primitives) and `node tools/shot.js out.png --timeout=120000 --eval-file=tools/lattice_latency.page.js` (the dense Lattice orb). Record results in `docs/PERF.md`.
 - Golden designs: `node tools/golden.js --update` regenerates `tests/golden/metrics.json`. Only do this for a deliberate change, and review the diff.
 - Private fixtures live in the gitignored `data/fixtures/` (for example the purchased mandala SVGs). Tests that need them skip when absent.
 - Shell gotcha: never put JS template literals (backticks) inside `node -e "..."` in Bash; Bash runs them as command substitution. Use the Edit tool, a file, or a quoted heredoc.

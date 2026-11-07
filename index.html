@@ -445,7 +445,7 @@ button { font: inherit; color: inherit; }
 <div class="app">
   <header class="top">
     <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
-    <span class="chip" title="Current milestone">M1 in progress</span>
+    <span class="chip" title="Current milestone">M2 in progress</span>
     <div class="tools" id="tools-left"></div>
     <div class="spacer"></div>
     <div class="tools" id="tools-right"></div>
@@ -463,7 +463,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 27 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 29 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -491,7 +491,7 @@ return { kUmPerMm, mm_to_um };
 })();
 // src/geom/clip.js
 const __m_geom_clip_js = (function () {
-const { union, difference, intersect, rectClip, inflatePaths, area, areaPaths, getBoundsPaths, FillRule, JoinType, EndType } = __m_vendor_clipper2_clipper2_min_mjs;
+const { union, difference, intersect, rectClip, simplifyPaths, inflatePaths, area, areaPaths, getBoundsPaths, FillRule, JoinType, EndType } = __m_vendor_clipper2_clipper2_min_mjs;
 const { kUmPerMm } = __m_core_units_js;
 // Geometry core over Clipper2 (SPEC 6.1). Paths are arrays of {x, y} in integer micrometres
 // (Clipper2 Path64), closed, outer boundaries positive (counter-clockwise, y up) and holes negative.
@@ -595,6 +595,20 @@ function offset(paths, delta_um, join = 'round', tol_um = kChordTolUm, miter_lim
     return inflatePaths(paths, delta_um, kJoin[join], EndType.Polygon, miter_limit, tol_um);
 }
 
+const kEnd = { square: EndType.Square, round: EndType.Round, butt: EndType.Butt };
+
+// Thickens open polylines into closed outlines width_um wide. Square caps and mitre joins keep
+// orthogonal lattice corners crisp; round caps suit traces.
+function stroke(polylines, width_um, cap = 'square', join = 'miter', tol_um = kChordTolUm) {
+    if (!polylines.length) return [];
+    return inflatePaths(polylines, width_um / 2, kJoin[join], kEnd[cap], 4.0, tol_um);
+}
+
+// Removes vertices that deviate less than epsilon_um from the path (closed paths).
+function simplify_paths(paths, epsilon_um) {
+    return simplifyPaths(paths, epsilon_um, true);
+}
+
 function area_mm2(paths) {
     return Math.abs(areaPaths(paths)) / (kUmPerMm * kUmPerMm);
 }
@@ -608,7 +622,7 @@ function bounds_mm(paths) {
         y1: b.bottom / kUmPerMm,
     };
 }
-return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, union_fill, subtract, intersect_paths, clip_to_rect, offset, area_mm2, bounds_mm };
+return { kChordTolUm, circle_segments, circle_path, regular_polygon_path, rect_path, rounded_rect_path, path_area_um2, union_all, union_fill, subtract, intersect_paths, clip_to_rect, offset, stroke, simplify_paths, area_mm2, bounds_mm };
 })();
 // src/geom/pack.js
 const __m_geom_pack_js = (function () {
@@ -655,58 +669,6 @@ function unpack_paths({ xy, starts }) {
     return paths;
 }
 return { pack_paths, to_flat, from_flat, unpack_paths };
-})();
-// src/geom/outline.js
-const __m_geom_outline_js = (function () {
-const { circle_path, rounded_rect_path, regular_polygon_path, circle_segments } = __m_geom_clip_js;
-const { mm_to_um } = __m_core_units_js;
-const { from_flat } = __m_geom_pack_js;
-// Piece outlines (SPEC 4.1), centred on the origin, which is also the symmetry centre. For an arch
-// the origin is the centre of its round top, so radial patterns sit in the arch like a halo.
-// Returns paths in micrometres, counter-clockwise.
-
-
-
-
-function arch_path(w_um, h_um) {
-    const r = w_um / 2;
-    const bottom = -Math.max(h_um - r, 1000);
-    const steps = Math.max(2, Math.ceil(circle_segments(r) / 2));
-    const path = [
-        { x: -r, y: bottom },
-        { x: r, y: bottom },
-    ];
-    for (let i = 0; i <= steps; i++) {
-        const a = (Math.PI * i) / steps;
-        path.push({ x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) });
-    }
-    return path;
-}
-
-function outline_paths(outline) {
-    const w = mm_to_um(outline.w_mm);
-    const h = mm_to_um(outline.h_mm);
-    switch (outline.kind) {
-        case 'circle':
-            return [circle_path(0, 0, w / 2)];
-        case 'rect': {
-            const r = Math.min(mm_to_um(outline.corner_r_mm ?? 0), w / 2, h / 2);
-            return [rounded_rect_path(-w / 2, -h / 2, w / 2, h / 2, r)];
-        }
-        case 'polygon': {
-            const n = Math.max(3, Math.round(outline.sides));
-            return [regular_polygon_path(0, 0, w / 2, n, -Math.PI / 2 + Math.PI / n)]; // flat bottom
-        }
-        case 'arch':
-            return [arch_path(w, h)];
-        case 'custom':
-            // An imported silhouette, kept in the design as flat micrometre arrays.
-            return from_flat(outline.custom ?? []);
-        default:
-            throw new Error(`unknown outline "${outline.kind}"`);
-    }
-}
-return { outline_paths };
 })();
 // src/geom/symmetry.js
 const __m_geom_symmetry_js = (function () {
@@ -773,7 +735,284 @@ function replicate(paths, sym) {
     for (const m of symmetry_matrices(sym)) for (const path of paths) out.push(transform_path(path, m));
     return out;
 }
-return { rotation_order, symmetry_matrices, transform_path, rotate_path, replicate };
+
+const TAU = 2 * Math.PI;
+
+// The fundamental domain as an angular range [a0, a1) (radians) plus a point test.
+function fundamental_domain(sym) {
+    const n = rotation_order(sym);
+    const norm = a => ((a % TAU) + TAU) % TAU;
+    switch (sym.kind) {
+        case 'rot':
+            return { a0: 0, a1: TAU / n, contains: p => norm(Math.atan2(p.y, p.x)) < TAU / n - 1e-12 };
+        case 'dihedral':
+            return { a0: 0, a1: Math.PI / n, contains: p => norm(Math.atan2(p.y, p.x)) < Math.PI / n - 1e-12 };
+        case 'mirror_x':
+            return { a0: -Math.PI / 2, a1: Math.PI / 2, contains: p => p.x >= 0 };
+        case 'mirror_xy':
+            return { a0: 0, a1: Math.PI / 2, contains: p => p.x >= 0 && p.y >= 0 };
+        default:
+            return { a0: -Math.PI, a1: Math.PI, contains: () => true };
+    }
+}
+
+// Maps a point (any unit) into the fundamental domain: the inverse of the copy that holds it, phase
+// removed first. Edits on any copy land on the domain copy, and fields fold the same way.
+function fold_point(p, sym) {
+    const ph = (-(sym.phase_deg ?? 0) * Math.PI) / 180;
+    const x = p.x * Math.cos(ph) - p.y * Math.sin(ph);
+    const y = p.x * Math.sin(ph) + p.y * Math.cos(ph);
+    switch (sym.kind) {
+        case 'mirror_x':
+            return { x: Math.abs(x), y };
+        case 'mirror_xy':
+            return { x: Math.abs(x), y: Math.abs(y) };
+        case 'rot':
+        case 'dihedral': {
+            const wedge = TAU / rotation_order(sym);
+            let a = ((Math.atan2(y, x) % wedge) + wedge) % wedge;
+            if (sym.kind === 'dihedral' && a > wedge / 2) a = wedge - a;
+            const r = Math.hypot(x, y);
+            return { x: r * Math.cos(a), y: r * Math.sin(a) };
+        }
+        default:
+            return { x, y };
+    }
+}
+
+// How many angular sectors a polar ring needs so the domain's edges fall on cell edges.
+function sector_multiple(sym) {
+    const n = rotation_order(sym);
+    if (sym.kind === 'dihedral') return 2 * n;
+    if (sym.kind === 'rot') return n;
+    if (sym.kind === 'mirror_xy') return 4;
+    if (sym.kind === 'mirror_x') return 2;
+    return 1;
+}
+return { rotation_order, symmetry_matrices, transform_path, rotate_path, replicate, fundamental_domain, fold_point, sector_multiple };
+})();
+// src/sources/field.js
+const __m_sources_field_js = (function () {
+const { union_fill, simplify_paths } = __m_geom_clip_js;
+const { fold_point } = __m_geom_symmetry_js;
+const { kUmPerMm } = __m_core_units_js;
+// Depth field mode (SPEC 6.7, M2). One scalar field f(x, y) in [0, 1], folded by the piece's
+// symmetry, drives every layer: layer k keeps material where f < level_k, with levels rising from
+// the front (field.lo) to the back (field.hi), so the stack nests by construction. The field is
+// sampled once on a 0.75 mm grid (cached) and each layer is traced with marching squares.
+// Assumptions: micrometres, origin at the symmetry centre, y up.
+
+
+
+
+const kResMm = 0.75; // 0.5 mm measured 2.25 times slower; linear interpolation keeps smooth fields accurate
+const TAU = 2 * Math.PI;
+const kKeyOffset = 2 ** 23; // um
+const kKeyScale = 2 ** 24;
+
+const kFieldKinds = ['rings', 'chladni', 'interference', 'rose'];
+
+// The raw field at (x, y) in mm, in [0, 1].
+function value(f, x, y) {
+    const lambda = Math.max(1, f.scale_mm);
+    const r = Math.hypot(x, y);
+    const th = Math.atan2(y, x);
+    switch (f.kind) {
+        case 'chladni': {
+            const L = lambda * 4;
+            const m = Math.max(1, Math.round(f.k));
+            const n = m + 2;
+            const v = Math.cos((Math.PI * m * x) / L) * Math.cos((Math.PI * n * y) / L) - Math.cos((Math.PI * n * x) / L) * Math.cos((Math.PI * m * y) / L);
+            return 0.5 + 0.25 * v;
+        }
+        case 'interference': {
+            const d = lambda * (1 + f.a);
+            const r1 = Math.hypot(x - d, y);
+            const r2 = Math.hypot(x + d, y);
+            return 0.5 + 0.25 * (Math.cos((TAU * r1) / lambda) + Math.cos((TAU * r2) / lambda));
+        }
+        case 'rose':
+            return 0.5 + 0.5 * Math.cos(Math.max(1, Math.round(f.k)) * th) * Math.cos((TAU * r) / lambda + f.a);
+        case 'rings':
+        default:
+            return 0.5 + 0.5 * Math.cos((TAU * r) / lambda + f.a * Math.sin(Math.max(1, Math.round(f.k)) * th));
+    }
+}
+
+const sample_cache = new Map();
+
+// Samples the field over the bounds (micrometres) at kResMm, cached by field, symmetry and bounds.
+function sample(f, sym, b) {
+    const key = JSON.stringify([f.kind, f.scale_mm, f.k, f.a, sym, b]);
+    if (sample_cache.has(key)) return sample_cache.get(key);
+    const step = kResMm * kUmPerMm;
+    const nx = Math.ceil((b.x1 - b.x0) / step) + 1;
+    const ny = Math.ceil((b.y1 - b.y0) / step) + 1;
+    const v = new Float32Array(nx * ny);
+    for (let j = 0; j < ny; j++) {
+        const y = (b.y0 + j * step) / kUmPerMm;
+        for (let i = 0; i < nx; i++) {
+            const x = (b.x0 + i * step) / kUmPerMm;
+            // Folded into the fundamental domain, so the field is as symmetric as the piece.
+            const q = fold_point({ x, y }, sym);
+            v[j * nx + i] = value(f, q.x, q.y);
+        }
+    }
+    const grid = { v, nx, ny, step, x0: b.x0, y0: b.y0 };
+    sample_cache.set(key, grid);
+    if (sample_cache.size > 8) sample_cache.delete(sample_cache.keys().next().value);
+    return grid;
+}
+
+// Marching squares: closed contours (micrometres) around the region where the sampled field is
+// below level. Outside the grid reads as 2 (above any level), so every contour closes. A finite
+// value keeps border edges interpolating normally: Infinity snapped points onto border samples,
+// made zero-length segments, and broke loops where they collided.
+function contours_below(grid, level) {
+    const { v, nx, ny, step, x0, y0 } = grid;
+    const at = (i, j) => (i < 0 || j < 0 || i >= nx || j >= ny ? 2 : v[j * nx + i]);
+    const inside = (i, j) => at(i, j) < level;
+    const segs = new Map(); // start key -> [end points]
+    const pt = (i0, j0, i1, j1) => {
+        const a = at(i0, j0);
+        const b = at(i1, j1);
+        const t = Math.min(1, Math.max(0, (level - a) / (b - a)));
+        return { x: Math.round(x0 + (i0 + (i1 - i0) * t) * step), y: Math.round(y0 + (j0 + (j1 - j0) * t) * step) };
+    };
+    // Numeric point keys (coordinates within 8 m of the origin): faster than strings.
+    const key = p => (p.x + kKeyOffset) * kKeyScale + (p.y + kKeyOffset);
+    const add = (p, q) => {
+        if (p.x === q.x && p.y === q.y) return;
+        const k = key(p);
+        if (segs.has(k)) segs.get(k).push(q);
+        else segs.set(k, [q]);
+    };
+    const take = k => {
+        const list = segs.get(k);
+        const q = list.pop();
+        if (!list.length) segs.delete(k);
+        return q;
+    };
+    for (let j = -1; j < ny; j++) {
+        for (let i = -1; i < nx; i++) {
+            // Corners: a (i, j), b (i+1, j), c (i+1, j+1), d (i, j+1); bit set means inside.
+            const code = (inside(i, j) ? 1 : 0) | (inside(i + 1, j) ? 2 : 0) | (inside(i + 1, j + 1) ? 4 : 0) | (inside(i, j + 1) ? 8 : 0);
+            if (code === 0 || code === 15) continue;
+            const S = () => pt(i, j, i + 1, j);
+            const E = () => pt(i + 1, j, i + 1, j + 1);
+            const N = () => pt(i, j + 1, i + 1, j + 1);
+            const W = () => pt(i, j, i, j + 1);
+            // Segments run with the inside region on their left, so outers wind counter-clockwise.
+            switch (code) {
+                case 1: add(S(), W()); break;
+                case 2: add(E(), S()); break;
+                case 3: add(E(), W()); break;
+                case 4: add(N(), E()); break;
+                case 5: {
+                    const centre = (at(i, j) + at(i + 1, j) + at(i + 1, j + 1) + at(i, j + 1)) / 4 < level;
+                    if (centre) { add(S(), E()); add(N(), W()); } else { add(S(), W()); add(N(), E()); }
+                    break;
+                }
+                case 6: add(N(), S()); break;
+                case 7: add(N(), W()); break;
+                case 8: add(W(), N()); break;
+                case 9: add(S(), N()); break;
+                case 10: {
+                    const centre = (at(i, j) + at(i + 1, j) + at(i + 1, j + 1) + at(i, j + 1)) / 4 < level;
+                    if (centre) { add(W(), S()); add(E(), N()); } else { add(E(), S()); add(W(), N()); }
+                    break;
+                }
+                case 11: add(E(), N()); break;
+                case 12: add(W(), E()); break;
+                case 13: add(S(), E()); break;
+                case 14: add(W(), S()); break;
+            }
+        }
+    }
+    // Link segments into loops.
+    const loops = [];
+    while (segs.size) {
+        const start_key = segs.keys().next().value;
+        const first = take(start_key);
+        const loop = [{ x: Math.floor(start_key / kKeyScale) - kKeyOffset, y: (start_key % kKeyScale) - kKeyOffset }, first];
+        let cur = key(first);
+        while (segs.has(cur)) {
+            const next = take(cur);
+            if (key(next) === start_key) break;
+            loop.push(next);
+            cur = key(next);
+        }
+        if (loop.length >= 3) loops.push(loop);
+    }
+    return loops;
+}
+
+// Material of one layer in field mode, before the outline clip: the region below the level.
+function field_material(piece, level, bounds_um) {
+    if (level >= 1) return null; // everything: the caller keeps the whole outline
+    const grid = sample(piece.field, piece.symmetry, bounds_um);
+    const loops = contours_below(grid, level);
+    // 30 um: within the error of tracing a 0.75 mm grid; measured 15 to 25% faster to open than 15 um.
+    return loops.length ? union_fill(simplify_paths(loops, 30), true) : [];
+}
+
+function field_level(piece, k, count) {
+    const f = piece.field;
+    return count > 1 ? f.lo + ((f.hi - f.lo) * k) / (count - 1) : f.lo;
+}
+return { kFieldKinds, contours_below, field_material, field_level };
+})();
+// src/geom/outline.js
+const __m_geom_outline_js = (function () {
+const { circle_path, rounded_rect_path, regular_polygon_path, circle_segments } = __m_geom_clip_js;
+const { mm_to_um } = __m_core_units_js;
+const { from_flat } = __m_geom_pack_js;
+// Piece outlines (SPEC 4.1), centred on the origin, which is also the symmetry centre. For an arch
+// the origin is the centre of its round top, so radial patterns sit in the arch like a halo.
+// Returns paths in micrometres, counter-clockwise.
+
+
+
+
+function arch_path(w_um, h_um) {
+    const r = w_um / 2;
+    const bottom = -Math.max(h_um - r, 1000);
+    const steps = Math.max(2, Math.ceil(circle_segments(r) / 2));
+    const path = [
+        { x: -r, y: bottom },
+        { x: r, y: bottom },
+    ];
+    for (let i = 0; i <= steps; i++) {
+        const a = (Math.PI * i) / steps;
+        path.push({ x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) });
+    }
+    return path;
+}
+
+function outline_paths(outline) {
+    const w = mm_to_um(outline.w_mm);
+    const h = mm_to_um(outline.h_mm);
+    switch (outline.kind) {
+        case 'circle':
+            return [circle_path(0, 0, w / 2)];
+        case 'rect': {
+            const r = Math.min(mm_to_um(outline.corner_r_mm ?? 0), w / 2, h / 2);
+            return [rounded_rect_path(-w / 2, -h / 2, w / 2, h / 2, r)];
+        }
+        case 'polygon': {
+            const n = Math.max(3, Math.round(outline.sides));
+            return [regular_polygon_path(0, 0, w / 2, n, -Math.PI / 2 + Math.PI / n)]; // flat bottom
+        }
+        case 'arch':
+            return [arch_path(w, h)];
+        case 'custom':
+            // An imported silhouette, kept in the design as flat micrometre arrays.
+            return from_flat(outline.custom ?? []);
+        default:
+            throw new Error(`unknown outline "${outline.kind}"`);
+    }
+}
+return { outline_paths };
 })();
 // src/core/schema.js
 const __m_core_schema_js = (function () {
@@ -796,6 +1035,8 @@ const kMotifTypes = {
     petal: { label: 'Petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     ring: { label: 'Arc slots', params: ['r_mm', 'w_mm', 'tie_mm', 'mult', 'angle_deg'], replicated: true },
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
+    lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
+    fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
 };
 
 // scales: the value is a length that follows the piece when it is resized. Structural widths
@@ -816,6 +1057,13 @@ const kMotifParams = {
     w1_mm: { label: 'Outer width', min: 0, max: 200, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
     mult: { label: 'Copies per repeat', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
     angle_deg: { label: 'Offset', min: -180, max: 180, step: 0.5, unit: 'deg', scales: false, tier: 'basic' },
+    grid: { label: 'Grid', type: 'select', options: [['polar', 'Rings'], ['square', 'Square'], ['diag', 'Square at 45 deg']], scales: false, tier: 'basic' },
+    cell_mm: { label: 'Cell size', min: 2, max: 80, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    bar_mm: { label: 'Bar width', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    openness: { label: 'Openness', min: 0, max: 1, step: 0.05, unit: '', scales: false, tier: 'basic' },
+    seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
+    pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
+    tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
 };
 
 const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
@@ -902,6 +1150,112 @@ const SCHEMA = [
         unit: '',
         tier: 'basic',
         get: d => d.layers.length,
+    },
+    {
+        id: 'generator.style',
+        scope: 'design',
+        panel: 'pattern',
+        label: 'Style for Randomise',
+        type: 'select',
+        options: [
+            ['classic', 'Openings'],
+            ['lattice', 'Lattice and key fret'],
+        ],
+        tier: 'basic',
+        desc: 'What Randomise and the seed arrows build.',
+    },
+    {
+        id: 'depth_mode',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Layers come from',
+        type: 'select',
+        options: [
+            ['per_layer', 'Each layer its own openings'],
+            ['field', 'One field, sliced into layers'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'field.kind',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Field',
+        type: 'select',
+        options: [
+            ['rings', 'Rings'],
+            ['chladni', 'Chladni plate'],
+            ['interference', 'Interference'],
+            ['rose', 'Rose'],
+        ],
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.scale_mm',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Wavelength',
+        type: 'range',
+        min: 4,
+        max: 200,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.k',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Lobes',
+        type: 'range',
+        min: 1,
+        max: 16,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.a',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Warp',
+        type: 'range',
+        min: 0,
+        max: 3,
+        step: 0.05,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.lo',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Front layer fill',
+        type: 'range',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+        desc: 'How much of the field the front layer keeps; layers behind keep more, up to the back.',
+    },
+    {
+        id: 'field.hi',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Back layer fill',
+        type: 'range',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        unit: '',
+        tier: 'advanced',
+        show_if: d => d.piece.depth_mode === 'field',
     },
     {
         id: 'symmetry.kind',
@@ -1151,15 +1505,396 @@ function set_path(obj, path, value) {
 }
 return { kMotifTypes, kMotifParams, SCHEMA, schema_entry, get_path, set_path };
 })();
+// src/core/rng.js
+const __m_core_rng_js = (function () {
+// Seeded randomness (SPEC 13.5). Every random choice in Lamina comes from here, so a design JSON
+// and its seed always reproduce the same output.
+
+// FNV-1a over a string, as an unsigned 32-bit seed.
+function hash_str(text) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+}
+
+// mulberry32: small, fast, good enough for design choices. Returns floats in [0, 1).
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// An independent stream per purpose: rng_for(seed, 'layer', 3) never shifts when another stream
+// draws more numbers.
+function rng_for(seed, ...keys) {
+    const rand = mulberry32(hash_str(`${seed >>> 0}:${keys.join(':')}`));
+    return {
+        next: rand,
+        range: (lo, hi) => lo + (hi - lo) * rand(),
+        int: (lo, hi) => lo + Math.floor((hi - lo + 1) * rand()),
+        pick: items => items[Math.floor(items.length * rand())],
+        chance: p => rand() < p,
+    };
+}
+return { hash_str, mulberry32, rng_for };
+})();
+// src/sources/lattice.js
+const __m_sources_lattice_js = (function () {
+const { stroke, union_all, subtract, intersect_paths, offset, circle_segments } = __m_geom_clip_js;
+const { fundamental_domain, sector_multiple } = __m_geom_symmetry_js;
+const { rng_for } = __m_core_rng_js;
+const { mm_to_um } = __m_core_units_js;
+// Lattice and fret motifs (SPEC 8.2, M2). Both are built inside the symmetry's fundamental domain
+// and replicated by the symmetry engine.
+// - Lattice: a maze on a square, 45-degree or polar grid. Walls are material bars, cells are
+//   openings. A perfect maze's walls all reach the boundary, so there are no islands; openness
+//   removes only dead-end walls, which cannot disconnect any other wall. Painted cells are solid.
+// - Fret: a ring band of interlocking hook tiles, every hook attached to the band's edge bars.
+// Assumptions: micrometres, origin at the symmetry centre, symmetry phase applied by replicate().
+
+
+
+
+
+const TAU = 2 * Math.PI;
+
+function arc(r, a0, a1, tol_um = 40) {
+    const n = Math.max(1, Math.ceil((Math.abs(a1 - a0) / TAU) * circle_segments(r, tol_um)));
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+        const a = a0 + ((a1 - a0) * i) / n;
+        out.push({ x: Math.round(r * Math.cos(a)), y: Math.round(r * Math.sin(a)) });
+    }
+    return out;
+}
+
+const pt = (x, y) => ({ x: Math.round(x), y: Math.round(y) });
+
+// A grid of cells and the edges between them, limited to the annulus r0..r1 and the domain.
+// cells: [{ id, poly }]; edges: [{ a, b, line }] with b = -1 on the boundary.
+function make_grid(kind, cell_um, r0_um, r1_um, sym) {
+    const dom = fundamental_domain(sym);
+    const cells = [];
+    const index = new Map();
+    const edges = [];
+    const add_cell = (id, centre, poly) => {
+        const r = Math.hypot(centre.x, centre.y);
+        if (r < r0_um || r > r1_um || !dom.contains(centre)) return;
+        index.set(id, cells.length);
+        cells.push({ id, poly });
+    };
+
+    if (kind === 'polar') {
+        // Sectors start at the domain's first edge, so both its edges fall on cell edges (a
+        // mirror's half-plane starts at -90 degrees).
+        const base = dom.a0;
+        const ang = (j, s) => base + (TAU * j) / s;
+        const rings = Math.max(1, Math.round((r1_um - r0_um) / cell_um));
+        const dr = (r1_um - r0_um) / rings;
+        const m = sector_multiple(sym);
+        const sectors = [];
+        for (let k = 0; k < rings; k++) {
+            const ra = r0_um + k * dr;
+            const rb = ra + dr;
+            const s = Math.max(m, Math.round((TAU * (ra + rb)) / 2 / cell_um / m) * m);
+            sectors.push(s);
+            for (let j = 0; j < s; j++) {
+                const a0 = ang(j, s);
+                const a1 = ang(j + 1, s);
+                const am = (a0 + a1) / 2;
+                const rm = (ra + rb) / 2;
+                const centre = { x: rm * Math.cos(am), y: rm * Math.sin(am) };
+                if (!dom.contains(centre)) continue;
+                add_cell(`p:${k}:${j}`, centre, [...arc(rb, a0, a1), ...arc(ra, a1, a0)]);
+            }
+        }
+        const has = (k, j) => index.has(`p:${k}:${j}`);
+        for (let k = 0; k < rings; k++) {
+            const ra = r0_um + k * dr;
+            const rb = ra + dr;
+            const s = sectors[k];
+            for (let j = 0; j < s; j++) {
+                if (!has(k, j)) continue;
+                const a = index.get(`p:${k}:${j}`);
+                // Radial edge at the cell's far side.
+                const a1 = ang(j + 1, s);
+                const jn = (j + 1) % s;
+                edges.push({ a, b: has(k, jn) ? index.get(`p:${k}:${jn}`) : -1, line: [pt(ra * Math.cos(a1), ra * Math.sin(a1)), pt(rb * Math.cos(a1), rb * Math.sin(a1))] });
+                // Its near side, when the neighbour there is outside the domain.
+                const jp = (j - 1 + s) % s;
+                if (!has(k, jp)) {
+                    const a0 = ang(j, s);
+                    edges.push({ a, b: -1, line: [pt(ra * Math.cos(a0), ra * Math.sin(a0)), pt(rb * Math.cos(a0), rb * Math.sin(a0))] });
+                }
+                // Arcs to the ring outside (shared stretches) or to the boundary.
+                const c0 = ang(j, s);
+                const c1 = a1;
+                if (k + 1 < rings) {
+                    const s2 = sectors[k + 1];
+                    let covered = 0;
+                    for (let i = Math.floor(((c0 - base) / TAU) * s2); i <= Math.ceil(((c1 - base) / TAU) * s2); i++) {
+                        const d0 = Math.max(c0, ang(i, s2));
+                        const d1 = Math.min(c1, ang(i + 1, s2));
+                        if (d1 - d0 < 1e-9) continue;
+                        const ii = ((i % s2) + s2) % s2;
+                        edges.push({ a, b: has(k + 1, ii) ? index.get(`p:${k + 1}:${ii}`) : -1, line: arc(rb, d0, d1) });
+                        covered += d1 - d0;
+                    }
+                    if (covered < c1 - c0 - 1e-9) edges.push({ a, b: -1, line: arc(rb, c0, c1) });
+                } else {
+                    edges.push({ a, b: -1, line: arc(rb, c0, c1) });
+                }
+                if (k === 0) edges.push({ a, b: -1, line: arc(ra, c0, c1) });
+            }
+        }
+        // Arcs facing an inner ring cell that is outside the domain.
+        for (let k = 1; k < rings; k++) {
+            const ra = r0_um + k * dr;
+            const s = sectors[k];
+            const s0 = sectors[k - 1];
+            for (let j = 0; j < s; j++) {
+                if (!has(k, j)) continue;
+                const c0 = ang(j, s);
+                const c1 = ang(j + 1, s);
+                for (let i = Math.floor(((c0 - base) / TAU) * s0); i <= Math.ceil(((c1 - base) / TAU) * s0); i++) {
+                    const d0 = Math.max(c0, ang(i, s0));
+                    const d1 = Math.min(c1, ang(i + 1, s0));
+                    const ii = ((i % s0) + s0) % s0;
+                    if (d1 - d0 > 1e-9 && !has(k - 1, ii)) edges.push({ a: index.get(`p:${k}:${j}`), b: -1, line: arc(ra, d0, d1) });
+                }
+            }
+        }
+        return { cells, edges };
+    }
+
+    // Square grid, or the same turned 45 degrees ('diag'). Grid lines pass through the origin, so
+    // mirror axes fall on cell edges.
+    const turn = kind === 'diag' ? Math.PI / 4 : 0;
+    const cos = Math.cos(turn);
+    const sin = Math.sin(turn);
+    const map = (u, v) => ({ x: u * cos - v * sin, y: u * sin + v * cos });
+    const span = Math.ceil(r1_um / cell_um) + 1;
+    for (let i = -span; i < span; i++) {
+        for (let j = -span; j < span; j++) {
+            const centre = map((i + 0.5) * cell_um, (j + 0.5) * cell_um);
+            const corner = (di, dj) => {
+                const p = map((i + di) * cell_um, (j + dj) * cell_um);
+                return pt(p.x, p.y);
+            };
+            add_cell(`${kind === 'diag' ? 'd' : 's'}:${i}:${j}`, centre, [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)]);
+        }
+    }
+    const tag = kind === 'diag' ? 'd' : 's';
+    for (const cell of cells) {
+        const [, si, sj] = cell.id.split(':');
+        const i = Number(si);
+        const j = Number(sj);
+        const a = index.get(cell.id);
+        const side = (di, dj, p, q) => {
+            const nid = `${tag}:${i + di}:${j + dj}`;
+            const b = index.has(nid) ? index.get(nid) : -1;
+            if (b !== -1 && b < a) return; // shared edges once
+            edges.push({ a, b, line: [p, q] });
+        };
+        const c = cell.poly;
+        side(0, -1, c[0], c[1]);
+        side(1, 0, c[1], c[2]);
+        side(0, 1, c[2], c[3]);
+        side(-1, 0, c[3], c[0]);
+    }
+    return { cells, edges };
+}
+
+// Randomised depth-first maze over the domain's cells, then dead-end pruning by openness.
+// Returns the edges that stay as walls.
+function maze_walls(grid, seed, openness) {
+    const rng = rng_for(seed, 'maze');
+    const n = grid.cells.length;
+    const adj = Array.from({ length: n }, () => []);
+    grid.edges.forEach((e, i) => {
+        if (e.b >= 0) {
+            adj[e.a].push([e.b, i]);
+            adj[e.b].push([e.a, i]);
+        }
+    });
+    const open = new Set();
+    const seen = new Uint8Array(n);
+    for (let start = 0; start < n; start++) {
+        if (seen[start]) continue;
+        const stack = [start];
+        seen[start] = 1;
+        while (stack.length) {
+            const c = stack[stack.length - 1];
+            const choices = adj[c].filter(([d]) => !seen[d]);
+            if (!choices.length) {
+                stack.pop();
+                continue;
+            }
+            const [d, edge] = choices[Math.floor(rng.next() * choices.length)];
+            open.add(edge);
+            seen[d] = 1;
+            stack.push(d);
+        }
+    }
+    let walls = grid.edges.map((e, i) => i).filter(i => !open.has(i));
+
+    // Dead-end pruning: a wall with an endpoint that no other wall touches can go without
+    // disconnecting anything. Boundary walls always stay.
+    const interior = walls.filter(i => grid.edges[i].b >= 0).length;
+    let to_remove = Math.round(Math.max(0, Math.min(1, openness)) * interior);
+    const key = p => `${Math.round(p.x / 5)},${Math.round(p.y / 5)}`;
+    while (to_remove > 0) {
+        const degree = new Map();
+        for (const i of walls) {
+            const line = grid.edges[i].line;
+            for (const p of [line[0], line[line.length - 1]]) degree.set(key(p), (degree.get(key(p)) ?? 0) + 1);
+        }
+        const leaves = walls.filter(i => {
+            const e = grid.edges[i];
+            return e.b >= 0 && (degree.get(key(e.line[0])) === 1 || degree.get(key(e.line[e.line.length - 1])) === 1);
+        });
+        if (!leaves.length) break;
+        const pick = leaves[Math.floor(rng.next() * leaves.length)];
+        walls = walls.filter(i => i !== pick);
+        to_remove--;
+    }
+    return walls.map(i => grid.edges[i]);
+}
+
+// Openings of a lattice motif in the fundamental domain.
+function lattice_openings(m, sym) {
+    const cell = mm_to_um(Math.max(1, m.cell_mm));
+    const bar = mm_to_um(Math.max(0.3, m.bar_mm));
+    const grid = make_grid(m.grid ?? 'polar', cell, mm_to_um(m.r0_mm ?? 0), mm_to_um(m.r1_mm), sym);
+    if (!grid.cells.length) return [];
+    const walls = maze_walls(grid, m.seed ?? 1, m.openness ?? 0);
+    // The region is the union of the cells, except on polar grids: there neighbouring rings
+    // sample their shared arcs at different points, and the union would keep cracks up to the
+    // chord tolerance wide as slivers. The polar region is the exact band sector instead.
+    let region;
+    let edge_bars = [];
+    if ((m.grid ?? 'polar') === 'polar') {
+        const dom = fundamental_domain(sym);
+        const r0 = mm_to_um(m.r0_mm ?? 0);
+        const r1 = mm_to_um(m.r1_mm);
+        region = dom.a1 - dom.a0 >= TAU - 1e-9 ? [arc(r1, 0, TAU), arc(r0, TAU, 0)] : [[...arc(r1, dom.a0, dom.a1), ...arc(r0, dom.a1, dom.a0)]];
+        if (r0 <= 0) region = [arc(r1, dom.a0, dom.a1).concat(dom.a1 - dom.a0 >= TAU - 1e-9 ? [] : [{ x: 0, y: 0 }])];
+    } else {
+        // Square cells straddle a wedge's edges; replicated, their openings would overlap the
+        // next wedge's and cut through its bars. So the region is clipped to the exact domain, and
+        // the domain's edges become bars, which the next wedge's copy meets edge to edge.
+        region = union_all(grid.cells.map(c => c.poly));
+        const dom = fundamental_domain(sym);
+        if (dom.a1 - dom.a0 < TAU - 1e-9) {
+            const R = mm_to_um(m.r1_mm) + 2 * cell;
+            const ray = a => [pt(0, 0), pt(R * Math.cos(a), R * Math.sin(a))];
+            region = intersect_paths(region, [[pt(0, 0), ...arc(R, dom.a0, dom.a1)]]);
+            edge_bars = [ray(dom.a0), ray(dom.a1)];
+        }
+    }
+    let openings = subtract(region, stroke([...walls.map(w => w.line), ...edge_bars], bar, 'square'));
+    // Painted cells are solid; grown a little so no crack is left along their edges.
+    const solid = new Set(Object.entries(m.cells ?? {}).filter(([, v]) => v === 'solid').map(([id]) => id));
+    if (solid.size) openings = subtract(openings, offset(grid.cells.filter(c => solid.has(c.id)).map(c => c.poly), 20, 'miter'));
+    return openings;
+}
+
+// The grid cell (in the fundamental domain) under a point already mapped into that domain.
+function lattice_cell_at(m, sym, p) {
+    const grid = make_grid(m.grid ?? 'polar', mm_to_um(Math.max(1, m.cell_mm)), mm_to_um(m.r0_mm ?? 0), mm_to_um(m.r1_mm), sym);
+    const inside = (q, poly) => {
+        let hit = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const a = poly[i];
+            const b = poly[j];
+            if (a.y > q.y !== b.y > q.y && q.x < ((b.x - a.x) * (q.y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+        }
+        return hit;
+    };
+    return grid.cells.find(c => inside(p, c.poly))?.id ?? null;
+}
+
+// Fret tiles on a grid of W x H units: polylines of bars. Every hook starts on a band edge.
+const kFrets = {
+    greek: { w: 5, h: 5, lines: [[[0, 0], [0, 4], [4, 4], [4, 2], [2, 2]]] },
+    double: {
+        w: 6,
+        h: 5,
+        lines: [
+            [[0, 0], [0, 4], [4, 4], [4, 2], [2, 2]],
+            [[5, 5], [5, 1], [1, 1], [1, 3], [3, 3]],
+        ],
+    },
+    tfret: {
+        w: 6,
+        h: 6,
+        lines: [
+            [[1.5, 0], [1.5, 2]],
+            [[0.5, 2], [2.5, 2]],
+            [[4.5, 6], [4.5, 4]],
+            [[3.5, 4], [5.5, 4]],
+        ],
+    },
+};
+const kFretPatterns = Object.keys(kFrets);
+
+// Openings of a fret band in the fundamental domain: band sector minus edge bars and hook bars.
+function fret_openings(m, sym) {
+    const tile = kFrets[m.pattern] ?? kFrets.greek;
+    const dom = fundamental_domain(sym);
+    const r_in = mm_to_um(m.r_mm - m.w_mm / 2);
+    const r_out = mm_to_um(m.r_mm + m.w_mm / 2);
+    if (r_in <= 0 || r_out <= r_in) return [];
+    const tiles = Math.max(1, Math.round(m.tiles ?? 1));
+    const total_u = tile.w * tiles;
+    const map = (u, v) => {
+        const a = dom.a0 + (u / total_u) * (dom.a1 - dom.a0);
+        const r = r_in + (v / tile.h) * (r_out - r_in);
+        return pt(r * Math.cos(a), r * Math.sin(a));
+    };
+    const lines = [];
+    for (let t = 0; t < tiles; t++) {
+        // A tie across the band at each tile's start. A meander's corridor would otherwise run
+        // unbroken round the ring and cut the inner edge off from the outer one.
+        lines.push([map(t * tile.w, 0), map(t * tile.w, tile.h)]);
+        for (const line of tile.lines) {
+            const out = [];
+            for (let i = 0; i + 1 < line.length; i++) {
+                const [u0, v0] = line[i];
+                const [u1, v1] = line[i + 1];
+                const steps = Math.max(1, Math.ceil(Math.abs(u1 - u0) * 4));
+                for (let s = i === 0 ? 0 : 1; s <= steps; s++) {
+                    out.push(map(t * tile.w + u0 + ((u1 - u0) * s) / steps, v0 + ((v1 - v0) * s) / steps));
+                }
+            }
+            lines.push(out);
+        }
+    }
+    lines.push(arc(r_in, dom.a0, dom.a1), arc(r_out, dom.a0, dom.a1));
+    const sector = [...arc(r_out, dom.a0, dom.a1), ...arc(r_in, dom.a1, dom.a0)];
+    return subtract([sector], stroke(lines, mm_to_um(Math.max(0.3, m.bar_mm)), 'square'));
+}
+return { make_grid, maze_walls, lattice_openings, lattice_cell_at, kFretPatterns, fret_openings };
+})();
 // src/sources/motifs.js
 const __m_sources_motifs_js = (function () {
 const { circle_path, regular_polygon_path, circle_segments, union_all } = __m_geom_clip_js;
 const { rotate_path, replicate, rotation_order } = __m_geom_symmetry_js;
 const { kMotifTypes } = __m_core_schema_js;
+const { lattice_openings, fret_openings } = __m_sources_lattice_js;
 const { mm_to_um } = __m_core_units_js;
 // Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
 // on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
 // engine fills the circle. Returns paths in micrometres, counter-clockwise.
+
 
 
 
@@ -1253,6 +1988,9 @@ function base_paths(m, wedge_rad) {
 function motif_openings(m, sym) {
     if (!(m.type in kMotifTypes)) throw new Error(`unknown motif "${m.type}"`);
     if (m.type === 'disc') return m.d_mm > 0 ? [circle_path(0, 0, mm_to_um(m.d_mm) / 2)] : [];
+    // Lattices and frets are built in the fundamental domain, then replicated.
+    if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
+    if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);
     const mult = Math.max(1, Math.round(m.mult ?? 1));
     const wedge = (2 * Math.PI) / rotation_order(sym);
     const base = base_paths(m, wedge / mult);
@@ -1376,7 +2114,7 @@ function default_layer(k, n, palette_id = 'orb') {
         source: { kind: 'primitive', motifs: [] },
         island_policy: 'bridge',
         bridge: { w_mm: null, max: 4 },
-        overrides: { islands: {}, bridges: [], locks: [], edits: [] },
+        overrides: { islands: {}, bridge_angles: {}, locks: [], edits: [] },
     };
 }
 
@@ -1388,11 +2126,13 @@ function base_design(layer_count = 8) {
         seed: 1,
         palette: 'orb',
         materials: {},
+        generator: { style: 'classic' },
         piece: {
             outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
             lighting: { mode: 'unlit', colour: '#ff5b2e' },
             depth_mode: 'per_layer',
+            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1 },
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
         sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
@@ -1525,47 +2265,6 @@ function scale_motifs(design, factor) {
 }
 return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
-// src/core/rng.js
-const __m_core_rng_js = (function () {
-// Seeded randomness (SPEC 13.5). Every random choice in Lamina comes from here, so a design JSON
-// and its seed always reproduce the same output.
-
-// FNV-1a over a string, as an unsigned 32-bit seed.
-function hash_str(text) {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < text.length; i++) {
-        h ^= text.charCodeAt(i);
-        h = Math.imul(h, 0x01000193);
-    }
-    return h >>> 0;
-}
-
-// mulberry32: small, fast, good enough for design choices. Returns floats in [0, 1).
-function mulberry32(seed) {
-    let a = seed >>> 0;
-    return () => {
-        a = (a + 0x6d2b79f5) >>> 0;
-        let t = a;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-}
-
-// An independent stream per purpose: rng_for(seed, 'layer', 3) never shifts when another stream
-// draws more numbers.
-function rng_for(seed, ...keys) {
-    const rand = mulberry32(hash_str(`${seed >>> 0}:${keys.join(':')}`));
-    return {
-        next: rand,
-        range: (lo, hi) => lo + (hi - lo) * rand(),
-        int: (lo, hi) => lo + Math.floor((hi - lo + 1) * rand()),
-        pick: items => items[Math.floor(items.length * rand())],
-        chance: p => rand() < p,
-    };
-}
-return { hash_str, mulberry32, rng_for };
-})();
 // src/pipeline/islands.js
 const __m_pipeline_islands_js = (function () {
 const { path_area_um2, union_all, subtract } = __m_geom_clip_js;
@@ -1587,6 +2286,7 @@ const kTwoBridgeAreaMm2 = 25;
 const kThreeBridgeAreaMm2 = 2500;
 const kSampleUm = 1000;
 const kMinSpreadRad = Math.PI / 3;
+const kSpreadTieRad = Math.PI / 180; // spreads within 1 degree count as equal; the shorter tie wins
 
 function point_in_path(p, path) {
     let inside = false;
@@ -1644,9 +2344,12 @@ function components(material) {
     return comps;
 }
 
+// Stable ID (SPEC 6.6): layer, centroid to 0.5 mm, box size to 1 mm and area bucket. The box size
+// tells concentric rings apart: they share a centroid, and their areas can share a bucket.
 function island_id(layer_id, c) {
     const m = centroid(c.outer);
-    const key = `${layer_id}:${Math.round(m.x / 500)}:${Math.round(m.y / 500)}:${Math.round(Math.log2(c.area_um2))}`;
+    const b = box_of(c.outer);
+    const key = `${layer_id}:${Math.round(m.x / 500)}:${Math.round(m.y / 500)}:${Math.round((b.x1 - b.x0) / 1000)}:${Math.round((b.y1 - b.y0) / 1000)}:${Math.round(Math.log2(c.area_um2))}`;
     return 'i' + hash_str(key).toString(16).padStart(8, '0');
 }
 
@@ -1690,11 +2393,6 @@ function segments_cross(p1, p2, p3, p4) {
     return d1 * d2 < 0 && d3 * d4 < 0;
 }
 
-function crosses_path(a, b, path) {
-    for (let i = 0; i < path.length; i++) if (segments_cross(a, b, path[i], path[(i + 1) % path.length])) return true;
-    return false;
-}
-
 function bridge_rect(p, q, w_um) {
     const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
     const ux = (q.x - p.x) / len;
@@ -1717,40 +2415,219 @@ function bridge_count(area_mm2, max) {
     return Math.max(1, Math.min(n, max));
 }
 
-// Chooses tie lines from an island to the boundary of the hole that encloses it.
-function plan_bridges(island, hole, others, w_um, count) {
+// A closed path's segments bucketed by kGridUm cells, so nearest-point queries only look nearby.
+// Long outlines (rings, large openings) have thousands of segments; one query needs a few.
+const kGridUm = 4000;
+const kSearchMaxUm = 80000;
+const grid_cache = new WeakMap();
+const cell_key = (gx, gy) => (gx + 32768) * 65536 + (gy + 32768);
+
+function seg_grid(path) {
+    if (grid_cache.has(path)) return grid_cache.get(path);
+    const cells = new Map();
+    for (let i = 0; i < path.length; i++) {
+        const a = path[i];
+        const b = path[(i + 1) % path.length];
+        for (let gx = Math.floor(Math.min(a.x, b.x) / kGridUm); gx <= Math.floor(Math.max(a.x, b.x) / kGridUm); gx++) {
+            for (let gy = Math.floor(Math.min(a.y, b.y) / kGridUm); gy <= Math.floor(Math.max(a.y, b.y) / kGridUm); gy++) {
+                const k = cell_key(gx, gy);
+                if (cells.has(k)) cells.get(k).push(i);
+                else cells.set(k, [i]);
+            }
+        }
+    }
+    const g = { path, cells };
+    grid_cache.set(path, g);
+    return g;
+}
+
+// The nearest point of the gridded path within reach_um of p, or null. Exact: a segment within
+// reach has a point inside the searched window, and it is listed in that point's cell.
+function nearest_within(p, g, reach_um) {
+    const gx0 = Math.floor((p.x - reach_um) / kGridUm);
+    const gx1 = Math.floor((p.x + reach_um) / kGridUm);
+    const gy0 = Math.floor((p.y - reach_um) / kGridUm);
+    const gy1 = Math.floor((p.y + reach_um) / kGridUm);
+    if ((gx1 - gx0 + 1) * (gy1 - gy0 + 1) > g.path.length) {
+        const r = nearest_on_path(p, g.path);
+        return r.d <= reach_um ? r : null;
+    }
+    const path = g.path;
+    let best = null;
+    let best_d2 = reach_um * reach_um;
+    for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gy = gy0; gy <= gy1; gy++) {
+            for (const i of g.cells.get(cell_key(gx, gy)) ?? []) {
+                const a = path[i];
+                const b = path[(i + 1) % path.length];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const len2 = dx * dx + dy * dy;
+                const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+                const qx = a.x + t * dx;
+                const qy = a.y + t * dy;
+                const d2 = (qx - p.x) ** 2 + (qy - p.y) ** 2;
+                if (d2 <= best_d2) {
+                    best_d2 = d2;
+                    best = { x: qx, y: qy };
+                }
+            }
+        }
+    }
+    return best ? { q: best, d: Math.sqrt(best_d2) } : null;
+}
+
+// The nearest point anywhere on the path, searching outwards from p.
+function nearest_grid(p, g) {
+    for (let reach = kGridUm; reach <= kSearchMaxUm; reach *= 2) {
+        const r = nearest_within(p, g, reach);
+        if (r) return r;
+    }
+    return nearest_on_path(p, g.path);
+}
+
+function box_of(path) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of path) {
+        x0 = Math.min(x0, p.x);
+        y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x);
+        y1 = Math.max(y1, p.y);
+    }
+    return { x0, y0, x1, y1 };
+}
+
+// Whether segment a-b crosses the gridded path: a box test, then only the segments listed in the
+// cells a-b's box covers.
+function crosses_grid(a, b, g, box) {
+    if (Math.max(a.x, b.x) < box.x0 || Math.min(a.x, b.x) > box.x1 || Math.max(a.y, b.y) < box.y0 || Math.min(a.y, b.y) > box.y1) return false;
+    const path = g.path;
+    for (let gx = Math.floor(Math.min(a.x, b.x) / kGridUm); gx <= Math.floor(Math.max(a.x, b.x) / kGridUm); gx++) {
+        for (let gy = Math.floor(Math.min(a.y, b.y) / kGridUm); gy <= Math.floor(Math.max(a.y, b.y) / kGridUm); gy++) {
+            for (const i of g.cells.get(cell_key(gx, gy)) ?? []) {
+                if (segments_cross(a, b, path[i], path[(i + 1) % path.length])) return true;
+            }
+        }
+    }
+    return false;
+}
+
+const angle_gap = (a, b) => {
+    const t = Math.abs(a - b) % (2 * Math.PI);
+    return Math.min(t, 2 * Math.PI - t);
+};
+
+// Extra (or preferred-angle) tie lines from an island to the boundary of the hole around it.
+// existing: angles (from the island's centre) of bridges it already has, kept clear by the 60
+// degree spread. prefs: preferred angles in degrees (bridges dragged in the Layer view); each
+// takes the candidate nearest that angle.
+function plan_bridges(island, hole, others, w_um, count, existing = [], prefs = []) {
     const m = centroid(island.outer);
     const candidates = [];
+    const g = seg_grid(hole);
+    const boxes = others.map(o => box_of(o.outer));
+    const grids = others.map(o => seg_grid(o.outer));
     for (const s of resample(island.outer)) {
-        const { q, d } = nearest_on_path(s, hole);
-        if (others.some(o => crosses_path(s, q, o.outer))) continue;
+        const { q, d } = nearest_grid(s, g);
+        if (others.some((o, n) => crosses_grid(s, q, grids[n], boxes[n]))) continue;
         candidates.push({ s, q, d, angle: Math.atan2(s.y - m.y, s.x - m.x) });
     }
     if (!candidates.length) return [];
+    const make = c => ({ a: c.s, b: c.q, length_um: c.d, rect: bridge_rect(c.s, c.q, w_um), angle: c.angle });
+    if (prefs.length) {
+        const nearest = deg => candidates.reduce((a, b) => (angle_gap(b.angle, (deg * Math.PI) / 180) < angle_gap(a.angle, (deg * Math.PI) / 180) ? b : a));
+        return prefs.map(deg => make(nearest(deg)));
+    }
     const shortest = Math.min(...candidates.map(c => c.d));
     const pool = candidates.filter(c => c.d <= shortest * 1.25 + w_um);
-    const picked = [pool.reduce((a, b) => (b.d < a.d ? b : a))];
-    const gap = (a, b) => {
-        const t = Math.abs(a - b) % (2 * Math.PI);
-        return Math.min(t, 2 * Math.PI - t);
-    };
-    while (picked.length < count) {
+    const angles = [...existing];
+    const picked = [];
+    if (!angles.length) {
+        const first = pool.reduce((a, b) => (b.d < a.d ? b : a));
+        picked.push(first);
+        angles.push(first.angle);
+    }
+    while (angles.length < count) {
         let best = null;
         let best_spread = -1;
         for (const c of pool) {
-            const spread = Math.min(...picked.map(p => gap(p.angle, c.angle)));
-            if (spread > best_spread + 1 || (Math.abs(spread - best_spread) <= 1 && best && c.d < best.d)) {
+            const spread = Math.min(...angles.map(a => angle_gap(a, c.angle)));
+            if (spread > best_spread + kSpreadTieRad || (Math.abs(spread - best_spread) <= kSpreadTieRad && best && c.d < best.d)) {
                 best_spread = spread;
                 best = c;
             }
         }
         if (!best || best_spread < kMinSpreadRad) break;
         picked.push(best);
+        angles.push(best.angle);
     }
-    return picked.map(c => ({ a: c.s, b: c.q, length_um: c.d, rect: bridge_rect(c.s, c.q, w_um) }));
+    return picked.map(make);
+}
+
+// Boundary samples of every component in a spatial hash, for the nearest-neighbour tie search.
+const kHashUm = kGridUm;
+
+function sample_hash(comps) {
+    const hash = new Map();
+    comps.forEach((c, ci) => {
+        for (const path of [c.outer, ...c.holes]) {
+            for (const p of resample(path)) {
+                const k = cell_key(Math.floor(p.x / kHashUm), Math.floor(p.y / kHashUm));
+                if (hash.has(k)) hash.get(k).push({ x: p.x, y: p.y, c: ci });
+                else hash.set(k, [{ x: p.x, y: p.y, c: ci }]);
+            }
+        }
+    });
+    return hash;
+}
+
+// The cells within reach_um of any cell the gridded path passes through: a point within reach of
+// the path lies in one of them. For a ring-shaped island this is a band, where its bounding box
+// would be most of the piece.
+function cells_near(g, reach_um) {
+    const rc = Math.ceil(reach_um / kGridUm);
+    const out = new Set();
+    for (const k of g.cells.keys()) {
+        const gx = Math.floor(k / 65536) - 32768;
+        const gy = (k % 65536) - 32768;
+        for (let dx = -rc; dx <= rc; dx++) for (let dy = -rc; dy <= rc; dy++) out.add(cell_key(gx + dx, gy + dy));
+    }
+    return out;
+}
+
+// The shortest tie from comps[i]'s outline to each nearby other component, by an expanding
+// search around its outline: [{ i, j, s, q, d }], at most kNearest, nearest first.
+const kNearest = 3;
+
+function nearest_ties(comps, i, hash, wanted = () => true) {
+    const g = seg_grid(comps[i].outer);
+    for (let reach = 2000; reach <= kSearchMaxUm; reach *= 2) {
+        const best = new Map(); // component -> tie
+        for (const cell of cells_near(g, reach)) {
+            for (const q of hash.get(cell) ?? []) {
+                if (q.c === i || !wanted(q.c)) continue;
+                const near = nearest_within(q, g, reach);
+                if (!near) continue;
+                const { q: s, d } = near;
+                const prev = best.get(q.c);
+                if (!prev || d < prev.d) best.set(q.c, { i, j: q.c, s, q: { x: q.x, y: q.y }, d });
+            }
+        }
+        if (best.size) return [...best.values()].sort((a, b) => a.d - b.d).slice(0, kNearest);
+    }
+    return [];
 }
 
 // Applies island policies to a layer's material.
+// - Bridged islands are joined by a minimum spanning tree: the shortest ties first (Kruskal),
+//   each from an island to its nearest other material (the body or another island), until every
+//   piece reaches the body. Islands packed among other islands (thresholded fields, imported art)
+//   are always reachable this way, where a tie to the enclosing hole's edge may be blocked.
+// - Larger islands then get extra ties to the edge of the hole around them, spread 60 degrees.
+// - A dragged bridge (a preferred angle) replaces the island's own ties.
 // Returns { material, islands, bridges, parts, unbridged }:
 //   islands  [{ id, policy, area_mm2, bbox, outer }]
 //   bridges  [{ island, a, b, length_mm, w_mm, rect }]
@@ -1759,59 +2636,126 @@ function resolve_islands(material, layer, bridge_w_mm) {
     const comps = components(material);
     if (comps.length <= 1) return { material, islands: [], bridges: [], parts: [], unbridged: [] };
     const body = comps.reduce((a, b) => (b.area_um2 > a.area_um2 ? b : a));
+    const seen = new Map(); // any ID still shared gets a suffix, in component order
     const islands = comps
         .filter(c => c !== body)
         .map(c => {
-            const id = island_id(layer.id, c);
+            const base = island_id(layer.id, c);
+            const n = seen.get(base) ?? 0;
+            seen.set(base, n + 1);
+            const id = n ? `${base}.${n + 1}` : base;
             return {
                 ...c,
                 id,
+                centre: centroid(c.outer),
                 policy: layer.overrides?.islands?.[id] ?? layer.island_policy ?? 'bridge',
                 area_mm2: c.area_um2 / (kUmPerMm * kUmPerMm),
             };
         });
 
-    const all_holes = comps.flatMap(c => c.holes.map(h => ({ hole: h, owner: c })));
     const w_um = mm_to_um(bridge_w_mm);
     const bridges = [];
-    const unbridged = [];
     const removed = [];
     const parts = [];
     for (const island of islands) {
         if (island.policy === 'drop' || island.policy === 'glue') {
             removed.push(island.outer);
             if (island.policy === 'glue') parts.push([island.outer, ...island.holes]);
-            continue;
         }
-        // The smallest hole around the island (hole areas are negative, so the largest value).
-        const enclosing = all_holes
-            .filter(h => h.owner.outer !== island.outer && point_in_path(island.outer[0], h.hole))
+    }
+    // The pieces that take part: the body first, then the bridged islands.
+    const active = [body, ...islands.filter(i => i.policy === 'bridge')];
+    const parent = active.map((_, k) => k);
+    const find = k => (parent[k] === k ? k : (parent[k] = find(parent[k])));
+    const join = (a, b) => {
+        parent[find(a)] = find(b);
+    };
+    const add_bridge = (island, tie) => {
+        // angle_deg: from the island's centre to the bridge's island end, the angle a dragged bridge stores.
+        const angle_deg = (Math.atan2(tie.a.y - island.centre.y, tie.a.x - island.centre.x) * 180) / Math.PI;
+        bridges.push({ island: island.id, a: tie.a, b: tie.b, angle_deg, length_mm: tie.length_um / kUmPerMm, w_mm: bridge_w_mm, rect: tie.rect });
+    };
+    const all_holes = active.flatMap((c, k) => c.holes.map(h => ({ hole: h, k, box: box_of(h) })));
+    const in_box = (p, b) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
+    const enclosing_of = k =>
+        all_holes
+            .filter(h => h.k !== k && in_box(active[k].outer[0], h.box) && point_in_path(active[k].outer[0], h.hole))
             .sort((a, b) => path_area_um2(b.hole) - path_area_um2(a.hole))[0];
-        if (!enclosing) {
-            unbridged.push(island.id);
-            continue;
-        }
-        const neighbours = islands.filter(o => o !== island && point_in_path(o.outer[0], enclosing.hole));
-        const planned = plan_bridges(island, enclosing.hole, neighbours, w_um, bridge_count(island.area_mm2, layer.bridge?.max ?? 4));
-        if (!planned.length) unbridged.push(island.id);
-        for (const b of planned) {
-            bridges.push({
-                island: island.id,
-                a: b.a,
-                b: b.b,
-                length_mm: b.length_um / kUmPerMm,
-                w_mm: bridge_w_mm,
-                rect: b.rect,
-            });
+    const count_of = new Map();
+
+    // Islands with dragged bridges keep their preferred angles.
+    for (let k = 1; k < active.length; k++) {
+        const prefs = layer.overrides?.bridge_angles?.[active[k].id];
+        if (!prefs?.length) continue;
+        const enc = enclosing_of(k);
+        if (!enc) continue;
+        const ties = plan_bridges(active[k], enc.hole, [], w_um, prefs.length, [], prefs);
+        for (const t of ties) add_bridge(active[k], t);
+        if (ties.length) {
+            join(k, enc.k);
+            count_of.set(k, ties.length);
         }
     }
 
+    // Minimum spanning tree over the rest, shortest ties first.
+    const hash = sample_hash(active);
+    const edges = [];
+    for (let k = 1; k < active.length; k++) if (!count_of.has(k)) edges.push(...nearest_ties(active, k, hash));
+    edges.sort((a, b) => a.d - b.d);
+    for (const e of edges) {
+        if (find(e.i) === find(e.j)) continue;
+        join(e.i, e.j);
+        // The tie belongs to the smaller of the two pieces (never the body).
+        const k = e.j !== 0 && active[e.j].area_um2 < active[e.i].area_um2 ? e.j : e.i;
+        const from = k === e.i ? e.s : e.q;
+        const to = k === e.i ? e.q : e.s;
+        add_bridge(active[k], { a: from, b: to, length_um: e.d, rect: bridge_rect(from, to, w_um) });
+        count_of.set(k, (count_of.get(k) ?? 0) + 1);
+    }
+
+    // Groups still cut off from the body (their nearest neighbours were all inside the group): join
+    // each by its shortest tie to anything outside it, until none is left or no tie exists.
+    for (let pass = 0; pass < active.length; pass++) {
+        const cut_off = [];
+        for (let j = 1; j < active.length; j++) if (find(j) !== find(0)) cut_off.push(j);
+        if (!cut_off.length) break;
+        let best = null;
+        for (const j of cut_off) {
+            for (const e of nearest_ties(active, j, hash, c => find(c) !== find(j))) {
+                if (!best || e.d < best.d) best = e;
+            }
+        }
+        if (!best) break;
+        join(best.i, best.j);
+        const from_small = best.j !== 0 && active[best.j].area_um2 < active[best.i].area_um2;
+        const kk = from_small ? best.j : best.i;
+        const from = kk === best.i ? best.s : best.q;
+        const to = kk === best.i ? best.q : best.s;
+        add_bridge(active[kk], { a: from, b: to, length_um: best.d, rect: bridge_rect(from, to, w_um) });
+        count_of.set(kk, (count_of.get(kk) ?? 0) + 1);
+    }
+
+    // Extra ties for stability, to the edge of the hole around each island.
+    for (let k = 1; k < active.length; k++) {
+        const island = active[k];
+        const want = bridge_count(island.area_mm2, layer.bridge?.max ?? 4);
+        const have = count_of.get(k) ?? 0;
+        if (have >= want || layer.overrides?.bridge_angles?.[island.id]?.length) continue;
+        const enc = enclosing_of(k);
+        if (!enc) continue;
+        const m = centroid(island.outer);
+        const existing = bridges.filter(b => b.island === island.id).map(b => Math.atan2(b.a.y - m.y, b.a.x - m.x));
+        const neighbours = active.filter((o, j) => j !== k && j !== 0 && point_in_path(o.outer[0], enc.hole));
+        for (const t of plan_bridges(island, enc.hole, neighbours, w_um, want, existing)) add_bridge(island, t);
+    }
+
+    const unbridged = active.filter((c, k) => k > 0 && find(k) !== find(0)).map(c => c.id);
     let out = material;
     if (removed.length) out = subtract(out, removed);
     if (bridges.length) out = union_all([...out, ...bridges.map(b => b.rect)]);
     return {
         material: out,
-        islands: islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: bbox_mm([i.outer]), outer: i.outer })),
+        islands: islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: bbox_mm([i.outer]), centre: i.centre, outer: i.outer })),
         bridges,
         parts,
         unbridged,
@@ -2000,27 +2944,55 @@ function hole_d_mm(design) {
 function place_dowels(design, built) {
     const reg = design.registration;
     const r_hole = mm_to_um(hole_d_mm(design) / 2);
-    // Sparsest layer first keeps every intersection small. (Windowed intersections were tried and
-    // measured slower: the overlapping windows process about twice the area.)
+    const inset = r_hole + mm_to_um(kDowelEdgeMm);
+    // Sparsest layer first keeps every intersection small.
     const order = [...built].sort((a, b) => area_mm2(a.material) - area_mm2(b.material));
-    let shared = order[0].material;
-    for (const l of order.slice(1)) {
-        if (!shared.length) break;
-        shared = intersect_paths(shared, l.material);
-    }
-    const region = shared.length ? offset(shared, -(r_hole + mm_to_um(kDowelEdgeMm)), 'round') : [];
-    const dowels = [];
-    for (const angle_deg of dowel_angles(reg.count)) {
-        // Search outwards from the target angle until the ray meets usable material.
+    const shared_in = rect => {
+        let shared = rect ? clip_to_rect(order[0].material, ...rect) : order[0].material;
+        for (const l of order.slice(1)) {
+            if (!shared.length) break;
+            shared = intersect_paths(shared, rect ? clip_to_rect(l.material, ...rect) : l.material);
+        }
+        return shared.length ? offset(shared, -inset, 'round') : [];
+    };
+    // Search outwards from the target angle (up to 15 degrees each way) until a ray meets usable
+    // material, taking its outermost run.
+    const search = (region, angle_deg) => {
         for (let step = 0; step <= 30; step++) {
             const a = (angle_deg + (step % 2 ? 1 : -1) * Math.ceil(step / 2)) * kDeg;
             const runs = ray_intervals(region, a);
             if (runs.length) {
                 const [t0, t1] = runs[runs.length - 1];
-                dowels.push(at(a, (t0 + t1) / 2));
-                break;
+                return at(a, (t0 + t1) / 2);
             }
         }
+        return null;
+    };
+    // First in a small window around each target's sector over the outer part of the piece: dense
+    // layers (lattices) make whole-layer intersections slow. Then over whole layers if that fails,
+    // and after one miss the windows are skipped: ornate art with no shared outer band (the
+    // mandala) would otherwise pay for every window and then the whole layers anyway.
+    const { x0, y0, x1, y1 } = bounds_of(design);
+    const R = Math.max(x1 - x0, y1 - y0) / 2;
+    const window_for = angle_deg => {
+        const pts = [];
+        for (const da of [-17, 0, 17]) {
+            for (const f of [0.5, 1.05]) {
+                const a = (angle_deg + da) * kDeg;
+                pts.push({ x: f * R * Math.cos(a), y: f * R * Math.sin(a) });
+            }
+        }
+        return [Math.min(...pts.map(p => p.x)), Math.min(...pts.map(p => p.y)), Math.max(...pts.map(p => p.x)), Math.max(...pts.map(p => p.y))];
+    };
+    let whole = null;
+    const dowels = [];
+    for (const angle_deg of dowel_angles(reg.count)) {
+        let p = whole ? null : search(shared_in(window_for(angle_deg)), angle_deg);
+        if (!p) {
+            whole = whole ?? shared_in(null);
+            p = search(whole, angle_deg);
+        }
+        if (p) dowels.push(p);
     }
     return { dowels, r_hole };
 }
@@ -2106,6 +3078,18 @@ function spacer_parts(design, dowels, r_hole, k) {
     return { kind: 'puck', gap: k, copies: copies * dowels.length, paths: puck };
 }
 
+const kLayerCacheSize = 128;
+const hole_cache = new Map();
+const id_cache = new Map();
+
+function cache_get(map, key, make) {
+    if (map.has(key)) return map.get(key);
+    const value = make();
+    map.set(key, value);
+    if (map.size > kLayerCacheSize) map.delete(map.keys().next().value);
+    return value;
+}
+
 // The geometric part of registration: dowels, each layer's material with its dowel holes, and
 // engraved IDs. A pure function of the layers' geometry and the registration settings, so the
 // caller can cache it. Does not modify built.
@@ -2121,13 +3105,23 @@ function register_geometry(design, built) {
     }
     const holes = dowels.map(p => circle_path(p.x, p.y, r_hole, { tol_um: 5, fit: 'outside' }));
     const keep_out = dowels.map(p => circle_path(p.x, p.y, r_hole + mm_to_um(kDowelEdgeMm)));
-    out.materials = built.map((l, k) => (holes.length && (k > 0 || reg.through_front) ? subtract(l.material, holes) : l.material));
+    // Per layer, holes depend on that layer and the dowels, and an ID on that layer, the one in
+    // front and the dowels: cached by those keys (when the layers carry build_design keys), so
+    // editing one layer redoes only it and the layer behind.
+    const dkey = `${JSON.stringify(dowels)}|${r_hole}|${reg.through_front}`;
+    const per_layer = (cache, key, make) => (key ? cache_get(cache, key, make) : make());
+    out.materials = built.map((l, k) =>
+        per_layer(hole_cache, l.key && `${l.key}|${dkey}|${k > 0}`, () =>
+            holes.length && (k > 0 || reg.through_front) ? subtract(l.material, holes) : l.material,
+        ),
+    );
     out.ids = built.map(() => []);
     if (reg.ids) {
         const bounds = bounds_of(design);
         built.forEach((l, k) => {
             if (k === 0) return;
-            const strokes = place_id(`L${k + 1} ^`, out.materials[k], out.materials[k - 1], keep_out, bounds);
+            const key = l.key && built[k - 1].key && `${k}|${l.key}|${built[k - 1].key}|${dkey}|${JSON.stringify(design.piece.outline)}`;
+            const strokes = per_layer(id_cache, key, () => place_id(`L${k + 1} ^`, out.materials[k], out.materials[k - 1], keep_out, bounds));
             if (strokes) out.ids[k] = strokes;
             else out.warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: no hidden spot large enough for its engraved ID.` });
         });
@@ -2348,6 +3342,7 @@ return { fast_checks, slow_checks };
 const __m_pipeline_compose_js = (function () {
 const { offset, subtract, intersect_paths, area_mm2, path_area_um2, union_fill } = __m_geom_clip_js;
 const { from_flat } = __m_geom_pack_js;
+const { field_material, field_level } = __m_sources_field_js;
 const { outline_paths } = __m_geom_outline_js;
 const { layer_openings } = __m_sources_motifs_js;
 const { mm_to_um } = __m_core_units_js;
@@ -2362,6 +3357,7 @@ const { fast_checks } = __m_pipeline_checks_js;
 // of a 300 ms build and changed the area by 2 mm2 in 464,000. Thin webs are found by the checks,
 // which compute that morphology once anyway.
 // Assumptions: geometry in micrometres, origin at the symmetry centre.
+
 
 
 
@@ -2389,6 +3385,25 @@ function compose_layer(design, k) {
     }
     const ring_um = mm_to_um(layer.frame_ring_mm ?? 0);
     const inner = ring_um > 0 ? offset(outline, -ring_um) : outline;
+    if (design.piece.depth_mode === 'field') {
+        // Field mode (SPEC 6.7): the layer is the field below its level, plus its frame ring.
+        const level = field_level(design.piece, k, design.layers.length);
+        const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+        for (const p of outline.flat()) {
+            b.x0 = Math.min(b.x0, p.x);
+            b.y0 = Math.min(b.y0, p.y);
+            b.x1 = Math.max(b.x1, p.x);
+            b.y1 = Math.max(b.y1, p.y);
+        }
+        const fm = field_material(design.piece, level, b);
+        if (fm === null) return { outline, inner, material: outline };
+        // A morphological opening at half the minimum web removes the necks a field makes at
+        // its saddle points: the laser would cut them away anyway (they would fail G-02).
+        const half = mm_to_um(material_of(design, layer).min_web_mm / 2);
+        const opened = offset(offset(fm, -half, 'miter'), half, 'miter');
+        const ring = ring_um > 0 ? subtract(outline, inner) : [];
+        return { outline, inner, material: drop_crumbs(union_fill([...intersect_paths(opened, outline), ...ring], false)) };
+    }
     const openings = layer_openings(layer, design.piece.symmetry);
     const cut = openings.length && inner.length ? intersect_paths(openings, inner) : [];
     const material = cut.length ? drop_crumbs(subtract(outline, cut)) : outline;
@@ -2431,13 +3446,15 @@ const short_key = text => `${hash_str(text).toString(36)}.${text.length}`;
 // Every layer, front first, with islands resolved, then the stack-level stages: locators for
 // glue-on islands are scored on the layer behind, and registration adds dowel holes, engraved IDs
 // and spacers. Returns layers, registration, the fast checks and the time taken.
-// Each layer carries cache_key, which changes whenever its final geometry can change.
+// Each layer carries cache_key, which changes whenever its final geometry can change, and
+// material_key, which changes only when its cut material can (its geometry, the dowel holes).
 function build_design(design) {
     const t0 = performance.now();
     const shape_key = JSON.stringify([design.piece.outline, design.piece.symmetry]);
     const layers = design.layers.map((layer, k) => {
         const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
-        const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm]));
+        const field = design.piece.depth_mode === 'field' ? [design.piece.field, k, design.layers.length] : null;
+        const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm, field]));
         const geo = cached(layer_cache, key, () => {
             const { outline, material: raw } = compose_layer(design, k);
             return { ...resolve_islands(raw, layer, bridge_w_mm), solid_mm2: area_mm2(outline) };
@@ -2450,10 +3467,12 @@ function build_design(design) {
     // hole_d_mm follows the measured dowel clearance of the material, so it is part of the key.
     const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration) + hole_d_mm(design));
     const geo = cached(reg_cache, reg_key, () => register_geometry(design, layers));
+    const holes_key = JSON.stringify([geo.dowels, geo.r_hole, design.registration.through_front]);
     layers.forEach((l, k) => {
         l.material = geo.materials[k];
         l.ids = geo.ids[k];
         l.cache_key = `${l.key}/${reg_key}`;
+        l.material_key = short_key(`${l.key}|${holes_key}|${k > 0}`);
     });
     const spacing = spacer_layout(design, geo.dowels, geo.r_hole);
     const registration = { dowels: geo.dowels, hole_d_mm: geo.hole_d_mm, spacers: spacing.spacers, warnings: [...geo.warnings, ...spacing.warnings] };
@@ -3096,7 +4115,7 @@ return { parse_xml, read_svg, import_svg_files };
 // src/core/generate.js
 const __m_core_generate_js = (function () {
 const { rng_for } = __m_core_rng_js;
-const { rotation_order } = __m_geom_symmetry_js;
+const { rotation_order, fundamental_domain } = __m_geom_symmetry_js;
 // Seeded pattern generator for primitive pieces (M1). It picks a centre opening and a few concentric
 // bands, each with one motif type, and repeats them through the stack. Openings shrink from front
 // to back and alternate layers turn half a step, so looking into the piece reads as depth: the
@@ -3121,15 +4140,28 @@ function pattern_radius_mm(outline) {
 }
 
 const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
+
+// Motif types per generator style (SPEC M2 to M4). Classic is the M1 mix, kept unchanged so
+// existing designs regenerate identically.
+const kStyles = {
+    classic: kTypes,
+    lattice: ['lattice', 'fret', 'lattice', 'window'],
+};
+
+// Fret tile sizes in grid units (width, height), as in sources/lattice.js.
+const kFretTiles = { greek: [5, 5], double: [6, 5], tfret: [6, 6] };
+const r2 = v => Math.round(v * 20) / 20;
 const r1 = v => Math.round(v * 10) / 10;
 
-function make_bands(rng, inner_mm, from_mm, count, types) {
+function make_bands(rng, inner_mm, from_mm, count, types, seed) {
     const weights = Array.from({ length: count }, () => rng.range(0.7, 1.3));
     const total = weights.reduce((a, b) => a + b, 0);
     const span_all = inner_mm * 0.97 - from_mm;
     let r = from_mm;
-    return weights.map(w => {
+    return weights.map((w, i) => {
         const span = (span_all * w) / total;
+        // Style extras come from their own stream, so classic bands draw exactly as before.
+        const extra = rng_for(seed, 'band', i);
         const band = {
             r0: r,
             r1: r + span,
@@ -3141,13 +4173,17 @@ function make_bands(rng, inner_mm, from_mm, count, types) {
             reach: rng.range(0.45, 1.0), // deepest layer (0 front .. 1 back) the band reaches
             tie_mm: rng.range(2.5, 6),
             taper: rng.range(0, 0.6),
+            pattern: extra.pick(Object.keys(kFretTiles)),
+            lattice_seed: extra.int(0, 9999),
+            open: extra.range(0.5, 1),
+            cell_div: extra.int(2, 4),
         };
         r += span;
         return band;
     });
 }
 
-function band_motif(band, n, depth, k) {
+function band_motif(band, n, depth, k, sym) {
     const span = band.r1 - band.r0;
     const rc = (band.r0 + band.r1) / 2;
     const copies = n * band.mult;
@@ -3194,14 +4230,44 @@ function band_motif(band, n, depth, k) {
                 ...common,
             };
         }
+        case 'lattice': {
+            // One maze per band, the same through the stack: deeper layers keep more walls and
+            // thicker bars, so the lattice closes up towards the back.
+            const cell = Math.max(4, span / band.cell_div);
+            return {
+                type: 'lattice',
+                grid: 'polar',
+                r0_mm: r1(band.r0),
+                r1_mm: r1(band.r1),
+                cell_mm: r1(cell),
+                bar_mm: r1(Math.max(2, cell * 0.2) * (1 + 0.35 * depth)),
+                openness: r2(band.open * (0.7 - 0.5 * depth)),
+                seed: band.lattice_seed,
+            };
+        }
+        case 'fret': {
+            const [tile_w, tile_h] = kFretTiles[band.pattern];
+            const dom = fundamental_domain(sym);
+            const w_band = span * 0.92;
+            const unit = w_band / tile_h;
+            return {
+                type: 'fret',
+                pattern: band.pattern,
+                r_mm: r1(rc),
+                w_mm: r1(w_band),
+                bar_mm: r1(Math.min(unit * 0.62, Math.max(1.8, unit * 0.42) * (1 + 0.3 * depth))),
+                tiles: Math.max(1, Math.round((rc * (dom.a1 - dom.a0)) / (unit * tile_w))),
+            };
+        }
         default:
             throw new Error(`unknown band type "${band.type}"`);
     }
 }
 
 // Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
-// symmetry repeat count; options.types limits the motif types used.
-function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
+// symmetry repeat count; options.types overrides the motif types of the design's style.
+function generate_stack(design, seed, { lock_n = false, types = null } = {}) {
+    types = types ?? kStyles[design.generator?.style] ?? kTypes;
     const rng = rng_for(seed, 'stack');
     const sym = design.piece.symmetry;
     if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([6, 8, 8, 10, 12, 12, 16]);
@@ -3209,7 +4275,7 @@ function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
     const ring0 = design.layers[0].frame_ring_mm;
     const inner = pattern_radius_mm(design.piece.outline) - ring0;
     const disc_frac = rng.range(0.16, 0.36);
-    const bands = make_bands(rng, inner, inner * (disc_frac + 0.08), rng.int(2, 4), types);
+    const bands = make_bands(rng, inner, inner * (disc_frac + 0.08), rng.int(2, 4), types, seed);
     // Frame rings widen towards the back, so the border steps inwards like a stacked mandala.
     const ring_step = rng.range(0, 0.035) * inner;
 
@@ -3224,12 +4290,12 @@ function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
         }
         const depth = patterned > 1 ? k / (patterned - 1) : 0;
         const motifs = [{ type: 'disc', d_mm: r1(2 * inner * disc_frac * (1 - 0.55 * depth)) }];
-        for (const band of bands) if (depth <= band.reach) motifs.push(band_motif(band, n, depth, k));
+        for (const band of bands) if (depth <= band.reach) motifs.push(band_motif(band, n, depth, k, sym));
         layer.source.motifs = motifs;
     });
     design.seed = seed >>> 0;
 }
-return { generate_stack };
+return { kStyles, generate_stack };
 })();
 // src/export/drawing.js
 const __m_export_drawing_js = (function () {
@@ -4262,6 +5328,8 @@ const { dowel_length_mm } = __m_pipeline_registration_js;
 const { pack_paths, to_flat } = __m_geom_pack_js;
 const { import_svg_files } = __m_sources_svg_import_js;
 const { generate_stack } = __m_core_generate_js;
+const { fold_point } = __m_geom_symmetry_js;
+const { lattice_cell_at } = __m_sources_lattice_js;
 const { test_card_zip } = __m_export_test_card_js;
 const { export_design, export_parts, sheet_drawings } = __m_export_export_design_js;
 // Geometry worker entry (SPEC 13.3). All geometry runs here; the UI thread renders and edits only.
@@ -4269,6 +5337,8 @@ const { export_design, export_parts, sheet_drawings } = __m_export_export_design
 // Typed arrays anywhere in a result are transferred, not copied.
 // 'build' is fast and runs on every edit; 'check' runs the slow checks on the last build of the
 // same design (cached by its JSON), so the UI can debounce it.
+
+
 
 
 
@@ -4300,12 +5370,13 @@ function build(design) {
         },
         layers: built.layers.map(l => ({
             id: l.id,
+            material_key: l.material_key,
             area_mm2: l.area_mm2,
             open_fraction: l.open_fraction,
             cut_length_mm: l.cut_length_mm,
             packed: pack_paths(l.material),
-            islands: l.islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: i.bbox, outer: pack_paths([i.outer]) })),
-            bridges: l.bridges.map(b => ({ island: b.island, length_mm: b.length_mm, w_mm: b.w_mm, rect: pack_paths([b.rect]) })),
+            islands: l.islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: i.bbox, centre: i.centre, outer: pack_paths([i.outer]) })),
+            bridges: l.bridges.map(b => ({ island: b.island, a: b.a, b: b.b, angle_deg: b.angle_deg, length_mm: b.length_mm, w_mm: b.w_mm, rect: pack_paths([b.rect]) })),
             parts: l.parts.map(p => pack_paths(p)),
             locators: pack_paths(l.locators),
             ids: pack_paths(l.ids),
@@ -4370,6 +5441,21 @@ function randomise({ design, seed, lock_n }) {
     return { design: candidate, tries: kRandomiseTries, clean: false };
 }
 
+// The lattice cell under a point of layer k (micrometres, on any symmetric copy), for cell paint:
+// { motif, cell } with the motif's index and the cell's grid ID, or null. The point is folded into
+// the fundamental domain, where the lattice is built, so painting any copy paints them all.
+function cell_at({ design, layer, x_um, y_um }) {
+    const sym = design.piece.symmetry;
+    const p = fold_point({ x: x_um, y: y_um }, sym);
+    const motifs = design.layers[layer]?.source.motifs ?? [];
+    for (let i = motifs.length - 1; i >= 0; i--) {
+        if (motifs[i].type !== 'lattice') continue;
+        const cell = lattice_cell_at(motifs[i], sym, p);
+        if (cell) return { motif: i, cell };
+    }
+    return null;
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -4386,6 +5472,7 @@ const kHandlers = {
     import_svg,
     randomise,
     test_card_zip,
+    cell_at,
 };
 
 function transferables(value, out = []) {
@@ -86898,6 +87985,8 @@ const kMotifTypes = {
     petal: { label: 'Petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     ring: { label: 'Arc slots', params: ['r_mm', 'w_mm', 'tie_mm', 'mult', 'angle_deg'], replicated: true },
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
+    lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
+    fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
 };
 
 // scales: the value is a length that follows the piece when it is resized. Structural widths
@@ -86918,6 +88007,13 @@ const kMotifParams = {
     w1_mm: { label: 'Outer width', min: 0, max: 200, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
     mult: { label: 'Copies per repeat', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
     angle_deg: { label: 'Offset', min: -180, max: 180, step: 0.5, unit: 'deg', scales: false, tier: 'basic' },
+    grid: { label: 'Grid', type: 'select', options: [['polar', 'Rings'], ['square', 'Square'], ['diag', 'Square at 45 deg']], scales: false, tier: 'basic' },
+    cell_mm: { label: 'Cell size', min: 2, max: 80, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    bar_mm: { label: 'Bar width', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    openness: { label: 'Openness', min: 0, max: 1, step: 0.05, unit: '', scales: false, tier: 'basic' },
+    seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
+    pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
+    tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
 };
 
 const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
@@ -87004,6 +88100,112 @@ const SCHEMA = [
         unit: '',
         tier: 'basic',
         get: d => d.layers.length,
+    },
+    {
+        id: 'generator.style',
+        scope: 'design',
+        panel: 'pattern',
+        label: 'Style for Randomise',
+        type: 'select',
+        options: [
+            ['classic', 'Openings'],
+            ['lattice', 'Lattice and key fret'],
+        ],
+        tier: 'basic',
+        desc: 'What Randomise and the seed arrows build.',
+    },
+    {
+        id: 'depth_mode',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Layers come from',
+        type: 'select',
+        options: [
+            ['per_layer', 'Each layer its own openings'],
+            ['field', 'One field, sliced into layers'],
+        ],
+        tier: 'basic',
+    },
+    {
+        id: 'field.kind',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Field',
+        type: 'select',
+        options: [
+            ['rings', 'Rings'],
+            ['chladni', 'Chladni plate'],
+            ['interference', 'Interference'],
+            ['rose', 'Rose'],
+        ],
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.scale_mm',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Wavelength',
+        type: 'range',
+        min: 4,
+        max: 200,
+        step: 0.5,
+        unit: 'mm',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.k',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Lobes',
+        type: 'range',
+        min: 1,
+        max: 16,
+        step: 1,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.a',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Warp',
+        type: 'range',
+        min: 0,
+        max: 3,
+        step: 0.05,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+    },
+    {
+        id: 'field.lo',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Front layer fill',
+        type: 'range',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field',
+        desc: 'How much of the field the front layer keeps; layers behind keep more, up to the back.',
+    },
+    {
+        id: 'field.hi',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Back layer fill',
+        type: 'range',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        unit: '',
+        tier: 'advanced',
+        show_if: d => d.piece.depth_mode === 'field',
     },
     {
         id: 'symmetry.kind',
@@ -87356,7 +88558,7 @@ function default_layer(k, n, palette_id = 'orb') {
         source: { kind: 'primitive', motifs: [] },
         island_policy: 'bridge',
         bridge: { w_mm: null, max: 4 },
-        overrides: { islands: {}, bridges: [], locks: [], edits: [] },
+        overrides: { islands: {}, bridge_angles: {}, locks: [], edits: [] },
     };
 }
 
@@ -87368,11 +88570,13 @@ function base_design(layer_count = 8) {
         seed: 1,
         palette: 'orb',
         materials: {},
+        generator: { style: 'classic' },
         piece: {
             outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
             lighting: { mode: 'unlit', colour: '#ff5b2e' },
             depth_mode: 'per_layer',
+            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1 },
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
         sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
@@ -87618,12 +88822,16 @@ class StackPreview {
         this.resize_();
     }
 
-    // built: [{ material: paths }] front first, as the worker returned them for design. The back
-    // layer sits at z = 0 and each layer in front sits on the one behind plus its gap. The camera
-    // is reframed only when the piece's size changes.
+    // built: [{ material: paths, material_key }] front first, as the worker returned them for
+    // design. The back layer sits at z = 0 and each layer in front sits on the one behind plus its
+    // gap. The camera is reframed only when the piece's size changes.
+    // Extruded geometry is kept by material_key and thickness: triangulating a dense lattice layer
+    // is the main cost of a redraw, and an edit usually changes one layer.
     show(design, built) {
+        const old = this.geometries_ ?? new Map();
+        const next = new Map();
         for (const mesh of this.stack_.children) {
-            mesh.geometry.dispose();
+            if (!mesh.userData.cached) mesh.geometry.dispose();
             for (const m of [mesh.material].flat()) m.dispose();
         }
         this.stack_.clear();
@@ -87632,14 +88840,22 @@ class StackPreview {
         for (let k = built.length - 1; k >= 0; k--) {
             const layer = design.layers[k];
             const thickness_mm = layer_thickness_mm(design, layer);
-            const geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
-            geometry.computeBoundingSphere();
+            const key = built[k].material_key ? `${built[k].material_key}|${thickness_mm}` : null;
+            let geometry = key && (next.get(key) ?? old.get(key));
+            if (!geometry) {
+                geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
+                geometry.computeBoundingSphere();
+            }
+            if (key) next.set(key, geometry);
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
             const mesh = new Mesh(geometry, materials_for(design, layer));
-            mesh.userData = { base_z: z, from_back: built.length - 1 - k };
+            mesh.userData = { base_z: z, from_back: built.length - 1 - k, cached: !!key };
             this.stack_.add(mesh);
             z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
         }
+
+        for (const [key, g] of old) if (!next.has(key)) g.dispose();
+        this.geometries_ = next;
 
         const backlit = design.piece.lighting.mode === 'backlit';
         this.ambient_.intensity = backlit ? 0.22 : 0.55;
@@ -87912,12 +89128,66 @@ function replicate(paths, sym) {
     for (const m of symmetry_matrices(sym)) for (const path of paths) out.push(transform_path(path, m));
     return out;
 }
-return { rotation_order, symmetry_matrices, transform_path, rotate_path, replicate };
+
+const TAU = 2 * Math.PI;
+
+// The fundamental domain as an angular range [a0, a1) (radians) plus a point test.
+function fundamental_domain(sym) {
+    const n = rotation_order(sym);
+    const norm = a => ((a % TAU) + TAU) % TAU;
+    switch (sym.kind) {
+        case 'rot':
+            return { a0: 0, a1: TAU / n, contains: p => norm(Math.atan2(p.y, p.x)) < TAU / n - 1e-12 };
+        case 'dihedral':
+            return { a0: 0, a1: Math.PI / n, contains: p => norm(Math.atan2(p.y, p.x)) < Math.PI / n - 1e-12 };
+        case 'mirror_x':
+            return { a0: -Math.PI / 2, a1: Math.PI / 2, contains: p => p.x >= 0 };
+        case 'mirror_xy':
+            return { a0: 0, a1: Math.PI / 2, contains: p => p.x >= 0 && p.y >= 0 };
+        default:
+            return { a0: -Math.PI, a1: Math.PI, contains: () => true };
+    }
+}
+
+// Maps a point (any unit) into the fundamental domain: the inverse of the copy that holds it, phase
+// removed first. Edits on any copy land on the domain copy, and fields fold the same way.
+function fold_point(p, sym) {
+    const ph = (-(sym.phase_deg ?? 0) * Math.PI) / 180;
+    const x = p.x * Math.cos(ph) - p.y * Math.sin(ph);
+    const y = p.x * Math.sin(ph) + p.y * Math.cos(ph);
+    switch (sym.kind) {
+        case 'mirror_x':
+            return { x: Math.abs(x), y };
+        case 'mirror_xy':
+            return { x: Math.abs(x), y: Math.abs(y) };
+        case 'rot':
+        case 'dihedral': {
+            const wedge = TAU / rotation_order(sym);
+            let a = ((Math.atan2(y, x) % wedge) + wedge) % wedge;
+            if (sym.kind === 'dihedral' && a > wedge / 2) a = wedge - a;
+            const r = Math.hypot(x, y);
+            return { x: r * Math.cos(a), y: r * Math.sin(a) };
+        }
+        default:
+            return { x, y };
+    }
+}
+
+// How many angular sectors a polar ring needs so the domain's edges fall on cell edges.
+function sector_multiple(sym) {
+    const n = rotation_order(sym);
+    if (sym.kind === 'dihedral') return 2 * n;
+    if (sym.kind === 'rot') return n;
+    if (sym.kind === 'mirror_xy') return 4;
+    if (sym.kind === 'mirror_x') return 2;
+    return 1;
+}
+return { rotation_order, symmetry_matrices, transform_path, rotate_path, replicate, fundamental_domain, fold_point, sector_multiple };
 })();
 // src/core/generate.js
 const __m_core_generate_js = (function () {
 const { rng_for } = __m_core_rng_js;
-const { rotation_order } = __m_geom_symmetry_js;
+const { rotation_order, fundamental_domain } = __m_geom_symmetry_js;
 // Seeded pattern generator for primitive pieces (M1). It picks a centre opening and a few concentric
 // bands, each with one motif type, and repeats them through the stack. Openings shrink from front
 // to back and alternate layers turn half a step, so looking into the piece reads as depth: the
@@ -87942,15 +89212,28 @@ function pattern_radius_mm(outline) {
 }
 
 const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
+
+// Motif types per generator style (SPEC M2 to M4). Classic is the M1 mix, kept unchanged so
+// existing designs regenerate identically.
+const kStyles = {
+    classic: kTypes,
+    lattice: ['lattice', 'fret', 'lattice', 'window'],
+};
+
+// Fret tile sizes in grid units (width, height), as in sources/lattice.js.
+const kFretTiles = { greek: [5, 5], double: [6, 5], tfret: [6, 6] };
+const r2 = v => Math.round(v * 20) / 20;
 const r1 = v => Math.round(v * 10) / 10;
 
-function make_bands(rng, inner_mm, from_mm, count, types) {
+function make_bands(rng, inner_mm, from_mm, count, types, seed) {
     const weights = Array.from({ length: count }, () => rng.range(0.7, 1.3));
     const total = weights.reduce((a, b) => a + b, 0);
     const span_all = inner_mm * 0.97 - from_mm;
     let r = from_mm;
-    return weights.map(w => {
+    return weights.map((w, i) => {
         const span = (span_all * w) / total;
+        // Style extras come from their own stream, so classic bands draw exactly as before.
+        const extra = rng_for(seed, 'band', i);
         const band = {
             r0: r,
             r1: r + span,
@@ -87962,13 +89245,17 @@ function make_bands(rng, inner_mm, from_mm, count, types) {
             reach: rng.range(0.45, 1.0), // deepest layer (0 front .. 1 back) the band reaches
             tie_mm: rng.range(2.5, 6),
             taper: rng.range(0, 0.6),
+            pattern: extra.pick(Object.keys(kFretTiles)),
+            lattice_seed: extra.int(0, 9999),
+            open: extra.range(0.5, 1),
+            cell_div: extra.int(2, 4),
         };
         r += span;
         return band;
     });
 }
 
-function band_motif(band, n, depth, k) {
+function band_motif(band, n, depth, k, sym) {
     const span = band.r1 - band.r0;
     const rc = (band.r0 + band.r1) / 2;
     const copies = n * band.mult;
@@ -88015,14 +89302,44 @@ function band_motif(band, n, depth, k) {
                 ...common,
             };
         }
+        case 'lattice': {
+            // One maze per band, the same through the stack: deeper layers keep more walls and
+            // thicker bars, so the lattice closes up towards the back.
+            const cell = Math.max(4, span / band.cell_div);
+            return {
+                type: 'lattice',
+                grid: 'polar',
+                r0_mm: r1(band.r0),
+                r1_mm: r1(band.r1),
+                cell_mm: r1(cell),
+                bar_mm: r1(Math.max(2, cell * 0.2) * (1 + 0.35 * depth)),
+                openness: r2(band.open * (0.7 - 0.5 * depth)),
+                seed: band.lattice_seed,
+            };
+        }
+        case 'fret': {
+            const [tile_w, tile_h] = kFretTiles[band.pattern];
+            const dom = fundamental_domain(sym);
+            const w_band = span * 0.92;
+            const unit = w_band / tile_h;
+            return {
+                type: 'fret',
+                pattern: band.pattern,
+                r_mm: r1(rc),
+                w_mm: r1(w_band),
+                bar_mm: r1(Math.min(unit * 0.62, Math.max(1.8, unit * 0.42) * (1 + 0.3 * depth))),
+                tiles: Math.max(1, Math.round((rc * (dom.a1 - dom.a0)) / (unit * tile_w))),
+            };
+        }
         default:
             throw new Error(`unknown band type "${band.type}"`);
     }
 }
 
 // Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
-// symmetry repeat count; options.types limits the motif types used.
-function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
+// symmetry repeat count; options.types overrides the motif types of the design's style.
+function generate_stack(design, seed, { lock_n = false, types = null } = {}) {
+    types = types ?? kStyles[design.generator?.style] ?? kTypes;
     const rng = rng_for(seed, 'stack');
     const sym = design.piece.symmetry;
     if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([6, 8, 8, 10, 12, 12, 16]);
@@ -88030,7 +89347,7 @@ function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
     const ring0 = design.layers[0].frame_ring_mm;
     const inner = pattern_radius_mm(design.piece.outline) - ring0;
     const disc_frac = rng.range(0.16, 0.36);
-    const bands = make_bands(rng, inner, inner * (disc_frac + 0.08), rng.int(2, 4), types);
+    const bands = make_bands(rng, inner, inner * (disc_frac + 0.08), rng.int(2, 4), types, seed);
     // Frame rings widen towards the back, so the border steps inwards like a stacked mandala.
     const ring_step = rng.range(0, 0.035) * inner;
 
@@ -88045,12 +89362,12 @@ function generate_stack(design, seed, { lock_n = false, types = kTypes } = {}) {
         }
         const depth = patterned > 1 ? k / (patterned - 1) : 0;
         const motifs = [{ type: 'disc', d_mm: r1(2 * inner * disc_frac * (1 - 0.55 * depth)) }];
-        for (const band of bands) if (depth <= band.reach) motifs.push(band_motif(band, n, depth, k));
+        for (const band of bands) if (depth <= band.reach) motifs.push(band_motif(band, n, depth, k, sym));
         layer.source.motifs = motifs;
     });
     design.seed = seed >>> 0;
 }
-return { generate_stack };
+return { kStyles, generate_stack };
 })();
 // src/core/presets.js
 const __m_core_presets_js = (function () {
@@ -88061,9 +89378,10 @@ const { generate_stack } = __m_core_generate_js;
 
 
 
-function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, frame_ring_mm }) {
+function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, frame_ring_mm, style = 'classic' }) {
     const design = base_design(layers);
     design.name = name;
+    design.generator.style = style;
     Object.assign(design.piece.outline, outline);
     Object.assign(design.piece.symmetry, symmetry);
     if (lighting) Object.assign(design.piece.lighting, lighting);
@@ -88076,6 +89394,19 @@ function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, 
 }
 
 const kPresets = [
+    {
+        id: 'lattice',
+        name: 'Lattice orb',
+        make: () =>
+            preset('Lattice orb', {
+                layers: 12,
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 8 },
+                palette: 'orb',
+                seed: 6, // from a rendered sweep of seeds 1 to 8: the densest, closest to the orb
+                style: 'lattice',
+            }),
+    },
     {
         id: 'orb',
         name: 'Orb',
@@ -88281,7 +89612,8 @@ const { kUmPerMm } = __m_core_units_js;
 // Layer view (SPEC 10): one layer, flat, for inspecting and editing. Material is drawn in the
 // layer's colour; bridges, islands (by policy), locators for glue-on islands from the layer in
 // front, and check boxes (red fatal, amber warning) are drawn over it. Click an island to cycle
-// its policy; the wheel zooms at the cursor; drag pans; double-click refits.
+// its policy, or a lattice cell to paint it; drag a bridge to move it (Alt-click resets it); the
+// wheel zooms at the cursor; drag pans; double-click refits.
 // Assumptions: paths in micrometres, y up; the canvas works in mm.
 
 
@@ -88297,9 +89629,22 @@ function point_in_path(p, path) {
     return inside;
 }
 
+// Distance from p to segment a-b.
+function seg_dist(p, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+    return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+}
+
 class LayerView {
-    // on_island_click(island) is called with the island under the cursor.
-    constructor(container, { on_island_click }) {
+    // Callbacks, with points in micrometres:
+    //   on_island_click(island)          a click on an island
+    //   on_cell_click(point)             a click anywhere else (cell paint)
+    //   on_bridge_drag(bridge, angle_deg) a bridge dropped at a new angle around its island
+    //   on_bridge_reset(bridge)          an Alt-click on a bridge
+    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset }) {
         this.container_ = container;
         this.canvas_ = document.createElement('canvas');
         this.canvas_.className = 'layer-canvas';
@@ -88310,25 +89655,36 @@ class LayerView {
         this.legend_.innerHTML =
             '<span class="key bridge"></span>bridged island <span class="key glue"></span>glue-on ' +
             '<span class="key drop"></span>dropped <span class="key dowel"></span>dowel ' +
-            '<span class="key id"></span>engraved number. Click an island to change it. Wheel zooms, ' +
-            'drag pans, double-click refits. Boxes mark check findings.';
+            '<span class="key id"></span>engraved number. Click an island to change it, or a lattice ' +
+            'cell to make it solid (again to clear). Drag a bridge to move it, Alt-click to reset it. ' +
+            'Wheel zooms, drag pans, double-click refits. Boxes mark check findings.';
         container.append(this.canvas_, this.legend_);
         this.ctx_ = this.canvas_.getContext('2d');
         this.view_ = null; // { scale px per mm, ox, oy }
         this.data_ = null;
         this.on_island_click_ = on_island_click;
+        this.on_cell_click_ = on_cell_click;
+        this.on_bridge_drag_ = on_bridge_drag;
+        this.on_bridge_reset_ = on_bridge_reset;
+        this.guide_ = null; // { from, to } in micrometres while a bridge is dragged
 
         let drag = null;
         this.canvas_.addEventListener('pointerdown', e => {
-            drag = { x: e.offsetX, y: e.offsetY, moved: false };
+            const bridge = this.bridge_at_(e.offsetX, e.offsetY);
+            drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, bridge, alt: e.altKey };
             this.canvas_.setPointerCapture(e.pointerId);
         });
         this.canvas_.addEventListener('pointermove', e => {
             if (!drag || !this.view_) return;
             const dx = e.offsetX - drag.x;
             const dy = e.offsetY - drag.y;
-            if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-            if (drag.moved) {
+            if (Math.abs(e.offsetX - drag.x0) + Math.abs(e.offsetY - drag.y0) > 3) drag.moved = true;
+            if (drag.moved && drag.bridge) {
+                // A guide from the island's centre to the pointer: the new bridge angle.
+                const island = this.data_.built.islands.find(i => i.id === drag.bridge.island);
+                if (island) this.guide_ = { from: island.centre, to: this.to_world_(e.offsetX, e.offsetY) };
+                this.draw_();
+            } else if (drag.moved) {
                 this.view_.ox += dx;
                 this.view_.oy += dy;
                 drag.x = e.offsetX;
@@ -88337,7 +89693,15 @@ class LayerView {
             }
         });
         this.canvas_.addEventListener('pointerup', e => {
-            if (drag && !drag.moved) this.click_(e.offsetX, e.offsetY);
+            if (drag?.bridge && drag.moved && this.guide_) {
+                const { from, to } = this.guide_;
+                this.on_bridge_drag_?.(drag.bridge, (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
+            } else if (drag?.bridge && drag.alt && !drag.moved) {
+                this.on_bridge_reset_?.(drag.bridge);
+            } else if (drag && !drag.moved) {
+                this.click_(e.offsetX, e.offsetY);
+            }
+            this.guide_ = null;
             drag = null;
         });
         this.canvas_.addEventListener(
@@ -88422,6 +89786,15 @@ class LayerView {
         const p = this.to_world_(sx, sy);
         const hit = this.data_.built.islands.find(i => point_in_path(p, i.outer));
         if (hit) this.on_island_click_(hit);
+        else this.on_cell_click_?.(p);
+    }
+
+    // The bridge under a screen point, within half its width or 5 px, whichever is more.
+    bridge_at_(sx, sy) {
+        if (!this.data_ || !this.view_) return null;
+        const p = this.to_world_(sx, sy);
+        const px_um = (5 / this.view_.scale) * kUmPerMm;
+        return this.data_.built.bridges.find(b => seg_dist(p, b.a, b.b) <= Math.max((b.w_mm * kUmPerMm) / 2, px_um)) ?? null;
     }
 
     draw_() {
@@ -88447,7 +89820,7 @@ class LayerView {
         ctx.stroke(this.trace_(built.material));
 
         ctx.fillStyle = 'rgba(180, 240, 60, 0.85)';
-        for (const b of built.bridges) ctx.fill(this.trace_(b.rect));
+        for (const b of built.bridges) ctx.fill(this.trace_([b.rect]));
 
         for (const island of built.islands) {
             ctx.setLineDash(island.policy === 'bridge' ? [] : [5, 4]);
@@ -88485,6 +89858,18 @@ class LayerView {
             ctx.stroke();
         }
         ctx.setLineDash([]);
+
+        if (this.guide_) {
+            const { from, to } = this.guide_;
+            ctx.strokeStyle = kPolicyColour.bridge;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.moveTo(v.ox + (from.x / kUmPerMm) * v.scale, v.oy - (from.y / kUmPerMm) * v.scale);
+            ctx.lineTo(v.ox + (to.x / kUmPerMm) * v.scale, v.oy - (to.y / kUmPerMm) * v.scale);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
 
         for (const c of checks) {
             const colour_var = c.severity === 'fatal' && !c.overridden ? '--bad' : '--warn';
@@ -89005,7 +90390,7 @@ class Panels {
             for (const key of kMotifTypes[motif.type].params) {
                 const p = kMotifParams[key];
                 if (p.tier === 'advanced' && tier !== 'advanced') continue;
-                const control = make_control({ ...p, type: 'range' }, (value, { coalesce }) =>
+                const control = make_control({ ...p, type: p.type ?? 'range' }, (value, { coalesce }) =>
                     app.set_motif_param(i, key, value, coalesce),
                 );
                 card.append(control.el);
@@ -89489,6 +90874,10 @@ function new_motif(type, design, layer) {
             return { type, r_mm: v(0.78), w_mm: v(0.06), tie_mm: 3, mult: 1, angle_deg: 0 };
         case 'ray':
             return { type, r0_mm: v(0.3), r1_mm: v(0.9), w0_mm: 0, w1_mm: v(0.08), mult: 1, angle_deg: 0 };
+        case 'lattice':
+            return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
+        case 'fret':
+            return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
         default:
             throw new Error(`unknown opening type "${type}"`);
     }
@@ -89694,6 +91083,42 @@ function start_app({ worker, preview, stage }) {
             });
             set_status('busy', `Island set to ${next}.`);
         },
+        // Cell paint (SPEC 8.2): the worker finds the lattice cell under the click (folded into the
+        // fundamental domain), and the click toggles it solid. Clicks off any lattice do nothing.
+        async paint_cell(p) {
+            const k = ui.layer;
+            const design = store.design;
+            if (!(design.layers[k]?.source.motifs ?? []).some(m => m.type === 'lattice')) return;
+            const hit = await worker.call('cell_at', { design, layer: k, x_um: p.x, y_um: p.y });
+            if (!hit || store.design !== design) return;
+            edit(d => {
+                const motif = d.layers[k].source.motifs[hit.motif];
+                motif.cells ??= {};
+                if (motif.cells[hit.cell]) delete motif.cells[hit.cell];
+                else motif.cells[hit.cell] = 'solid';
+            });
+        },
+        // Bridge drag: the island's bridges become preferred angles, the dragged one at its new
+        // angle; each ties to the edge of the opening around the island.
+        drag_bridge(bridge, angle_deg) {
+            const k = ui.layer;
+            const own = state.built.layers[k].bridges.filter(b => b.island === bridge.island);
+            const angles = own.map(b => Math.round((b === bridge ? angle_deg : b.angle_deg) * 10) / 10);
+            edit(d => {
+                const o = d.layers[k].overrides;
+                o.bridge_angles ??= {};
+                o.bridge_angles[bridge.island] = angles;
+            });
+            set_status('busy', 'Bridge moved.');
+        },
+        reset_bridges(bridge) {
+            const k = ui.layer;
+            if (!store.design.layers[k].overrides.bridge_angles?.[bridge.island]) return;
+            edit(d => {
+                delete d.layers[k].overrides.bridge_angles[bridge.island];
+            });
+            set_status('busy', 'Bridges reset to automatic.');
+        },
         async randomise() {
             set_status('busy', 'Randomising');
             try {
@@ -89756,7 +91181,12 @@ function start_app({ worker, preview, stage }) {
     checks_view = make_checks_view(app);
     unmeasured = el('span', { class: 'chip status-chip', text: 'Material not measured yet: cut the test card (Make step)', hidden: '' });
     document.querySelector('.status').append(unmeasured);
-    layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
+    layer_view = new LayerView(stage, {
+        on_island_click: island => app.cycle_island(island),
+        on_cell_click: p => app.paint_cell(p),
+        on_bridge_drag: (bridge, angle_deg) => app.drag_bridge(bridge, angle_deg),
+        on_bridge_reset: bridge => app.reset_bridges(bridge),
+    });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);
     app.export_zip = async () => {

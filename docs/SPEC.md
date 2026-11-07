@@ -137,8 +137,10 @@ The design is one JSON document, the single source of truth. Every output is a p
     "lighting": { "mode": "unlit|backlit|addressable", "colour": "#ff3b1f",
                   "led": null },
     "depth_mode": "per_layer|field",
-    "field": null
+    "field": { "kind": "rings|chladni|interference|rose", "scale_mm": 24, "k": 8,
+               "a": 0.6, "lo": 0.3, "hi": 1 }
   },
+  "generator": { "style": "classic|lattice|circuit|mandala" },
   "materials": { "ply3": { "...": "see 5.1" } },
   "machine": { "id": "epilog_fusion_pro_48", "bed_w_mm": 1219, "bed_h_mm": 914 },
   "sheet": { "w_mm": 600, "h_mm": 400, "margin_mm": 5, "spacing_mm": 3 },
@@ -154,7 +156,7 @@ The design is one JSON document, the single source of truth. Every output is a p
                   "motifs": [ { "type": "window", "r_mm": 80, "size_mm": 20, "sides": 4,
                                 "rot_deg": 0, "mult": 1, "angle_deg": 0 } ] },
       "island_policy": "bridge", "bridge": { "w_mm": null, "max": 4 },
-      "overrides": { "islands": {}, "bridges": [], "locks": [], "edits": [] } }
+      "overrides": { "islands": {}, "bridge_angles": {}, "locks": [], "edits": [] } }
   ],
   "frame": null,
   "tiling": null,
@@ -164,7 +166,8 @@ The design is one JSON document, the single source of truth. Every output is a p
 
 - Units are mm in JSON, and integer micrometres inside the geometry core.
 - `null` on a material-dependent value means "use the material preset".
-- `overrides` hold the hand edits (cell paint, bridge moves, island policies). They are keyed by stable IDs (section 6.6), so a re-run of a generator keeps them where it can.
+- `overrides` hold the hand edits, keyed by stable island IDs (section 6.6) so a re-run of a generator keeps them where it can: island policies, and dragged bridges as preferred angles in degrees from the island's centre (`bridge_angles`).
+- Cell paint lives on the lattice motif itself (`cells`, keyed by grid cell ID), so it survives re-rolling the lattice's seed.
 - The `schema` version is bumped with a migration function. Old files always open.
 
 ### 5.1 Material presets
@@ -218,20 +221,25 @@ Each stage is a pure function, so stages cache by input hash and only dirty stag
 
 ### 6.5 Bridge synthesis
 For each island to be bridged:
-- Candidate bridges are short straight ties along the shortest gaps between the island and the body: closest-point pairs along both boundaries, sampled.
-- Score each tie for shortness, for straightness against the local motif direction, and for distance from other ties.
-- Pick at least 1 tie. Pick 2 if the island's area is above `bridge_two_area_mm2`, and up to `bridge.max`. Spread them by at least 60 degrees around the island's centroid.
+- **Connection (M2):** a minimum spanning tree over the body and the bridged islands. Each island offers its shortest ties to its three nearest neighbours (closest points on sampled boundaries, found through a spatial grid), and the shortest ties join pieces first (Kruskal).
+  - A group still cut off from the body then takes its shortest tie to anything outside the group, until every piece reaches the body.
+  - This replaces M1's tie to the enclosing opening's edge, which failed for islands packed among islands (thresholded fields: 96 unbridged on a Chladni layer).
+- **Extra ties:** larger islands then get more ties to the edge of the opening around them. Pick 2 in total if the island's area is above `bridge_two_area_mm2`, 3 above 2500 mm², and up to `bridge.max`. Spread them by at least 60 degrees around the island's centroid; among near-equal spreads (within 1 degree) the shorter tie wins.
+- **Dragged bridges:** an island with preferred angles ties to the edge of its opening at the candidate nearest each angle, instead of the above.
 - Bridge width defaults to the material's min bridge.
 - A bridge longer than `bridge_len_warn_mm` (default 15 mm) is a warning, because long, thin ties are fragile.
 - Bridges are part of the design. They render in the preview and can be moved, deleted or added per island (M1 click-to-toggle; M2 drag).
 
 ### 6.6 Stable IDs for edits
-An island or cell is identified by a hash of its centroid rounded to 0.5 mm, its area bucket and its layer. Edits refer to these IDs. If a generator change makes an edit's ID disappear, the edit is kept but shown as "orphaned" in the layer panel instead of being silently lost.
+An island or cell is identified by a hash of its centroid rounded to 0.5 mm, its box size rounded to 1 mm, its area bucket and its layer. The box size tells concentric rings apart, which share a centroid and can share an area bucket. An ID still shared gets a numbered suffix. Edits refer to these IDs. If a generator change makes an edit's ID disappear, the edit is kept but shown as "orphaned" in the layer panel instead of being silently lost.
 
 ### 6.7 Depth field mode (M2)
 One scalar field `f(x, y)` in [0, 1] drives every layer. The field can come from fieldform-style modes, a lattice distance field, an image or depth map, or a blend.
 
-Layer k (1 = front) keeps material where `f < level_k`. The levels rise from front to back, so the front is most open and the back most solid, and the stack nests by construction. The fields are rasterised at `field_res_mm` (default 0.25 mm) and traced.
+Layer k (1 = front) keeps material where `f < level_k`. The levels rise from front to back, so the front is most open and the back most solid, and the stack nests by construction.
+- The field is sampled once on a 0.75 mm grid, folded into the symmetry's fundamental domain, and cached. 0.5 mm measured 2.25 times slower, and linear interpolation keeps smooth fields accurate.
+- Each layer is traced with marching squares and simplified at 0.03 mm. Outside the grid reads as above any level, so every contour closes.
+- A morphological opening at half the minimum web removes the necks a field makes at its saddle points; the laser would sever them anyway (G-02).
 
 ---
 
@@ -632,13 +640,83 @@ Done when:
 - **M1 status:** every item except the physical proof is done. That proof waits on the owner's test card cut and a 4-layer test piece.
 
 ### M2: lattice
-Square, 45-degree and polar grids. Meander, key-fret, window lattice and band generators. Field-sliced depth mode. Cell paint and erase with live symmetry, region lock and mask, and bridge drag. Done when an orb-style piece of about 12 layers can be made in Basic mode from a preset and passes the checks. A physical cut is recommended.
+Square, 45-degree and polar grids. Meander, key-fret, window lattice and band generators. Field-sliced depth mode. Cell paint and erase with live symmetry, region lock and mask, and bridge drag.
+
+Design decisions (2026-11-07):
+- **Lattice motif:** a maze built in the symmetry's fundamental domain (the wedge for rotate and kaleidoscope, a half or quadrant for mirrors), on a square, 45-degree or polar grid, then replicated.
+  - The maze's walls are the material bars, and openings are the cells.
+  - A perfect maze's walls all reach the boundary, so a lattice has no islands by construction.
+  - "Openness" removes only dead-end walls, which cannot disconnect any other wall.
+  - Polar sector counts are multiples of the symmetry order, so the wedge edges fall on cell edges.
+- **Fret motif:** a ring band of interlocking hook tiles (Greek key, double key, T-fret), with every hook attached to the band's edge bars.
+- **Cell paint:** clicking a lattice cell in the Layer view toggles it solid.
+  - Clicks are mapped back into the fundamental domain, so painting is mirrored live.
+  - Paint is keyed by grid cell, so it survives re-rolling the lattice's seed. This is the region lock.
+  - The band limits (inner and outer radius) are the mask.
+- **Generator styles:** `design.generator.style` is classic (the M1 behaviour, unchanged, so existing presets keep their output), lattice, circuit (M3) or mandala (M4). Randomise follows the design's style.
+- **Field mode:** a layer source `field` takes the material where a shared scalar field is below the layer's level. Levels rise towards the back, and the frame ring is kept.
+  - Fields: rings, Chladni, two-centre interference and a polar rose, folded by the piece's symmetry.
+  - The field is sampled at 0.75 mm and traced with marching squares (6.7). Islands go through the usual bridges, joined by the spanning tree (6.5).
+- **Domain edges:** polar sectors start at the domain's first edge, so a mirror's half-plane (from -90 degrees) falls on cell edges. Square and 45-degree cells straddle a wedge's edges, so their region is clipped to the exact wedge and each wedge edge becomes a bar, which the next wedge's copy meets edge to edge.
+- **Bridge drag:** dragging a bridge in the Layer view sets a preferred angle for that island's bridge, stored with the layer's overrides.
+
+Done when:
+- [x] The lattice and fret motifs work on all three grids under every symmetry, with no islands, and are editable in the Pattern step.
+- [x] Cell paint works in the Layer view with live symmetry, and paint survives a re-roll.
+- [x] Bridges can be dragged.
+- [x] Field mode builds a stack from at least four field kinds.
+- [x] A "Lattice orb" preset (12 layers) builds in Basic mode with no fatal finding. Randomise in the lattice style keeps that true.
+- [x] Tests cover the grids, maze connectivity, openness pruning, paint, fret tiles and field slicing. Goldens include a lattice design.
+
+**Progress:**
+- 2026-11-07, M2 done.
+  - **Lattice:** a sweep of 231 configurations (3 grids, 7 symmetries, 3 seeds, 3 opennesses, plus 3 fret patterns) found islands in 99 before the domain-edge fixes and in none after.
+  - **Lattice orb:** the seed is 6, chosen from a rendered sweep of seeds 1 to 8. All 8 seeds build with no islands and no fatal finding. A slider change on one layer takes 186 ms in Node and 223 ms median in headless Edge (`tools/lattice_latency.page.js`), against the 400 ms target. Before the 3D preview kept extruded layers, the browser median was 460 ms.
+  - **Field mode:** four kinds (rings, Chladni, two-centre interference, polar rose), each with no fatal finding on the 290 mm, 8-layer Orb outline.
+    - A field slider rebuilds every layer: 0.4 to 0.7 s in Node for 8 layers, 0.72 s for 12, and about 1.1 s in the browser for 12.
+    - Profiled and cut down from 1.2 to 1.6 s. Nearest-point searches over a segment grid, a tie search limited to cells near each island's outline, mitre joins for the opening, 0.03 mm simplification, and numeric keys in contour linking.
+  - **Layer view:** a click that misses every island paints the lattice cell under it. The worker folds the point into the fundamental domain, so any copy works. Dragging a bridge stores the island's preferred angles, and Alt-click resets them. Both were driven in headless Edge with synthetic pointer events; the painted cell `p:1:4` came from a click on a copy at 200 degrees.
+  - **Found and fixed along the way:**
+    - The Layer view never drew bridges: a path was passed where a list of paths was expected.
+    - Concentric rings shared island IDs, which mixed their bridges and their policies.
+    - The bridge spread tolerance was 1 radian, not 1 degree.
+  - **Tests:** 117 pass. New suites: `lattice.test.js` (grids, connectivity under every symmetry, maze and openness, paint with folding and re-roll, frets, the preset) and `field.test.js` (marching squares area, saddles and borders, folding, nesting, four field stacks). Island tests cover distinct IDs, dragged bridges and packed islands.
+  - **Goldens:** the Lattice orb and a 6-layer Chladni field design were added. Every existing golden is unchanged, so M1 output is preserved.
+  - **Known limit:** slow checks run in the same worker as builds. On the Lattice orb they take about 0.8 s in Node, and an edit made while they run waits for them. A second worker for checks is the fix, if this proves annoying in use.
 
 ### M3: circuit
-The grid router, parallel strands, terminals and rect-panel presets. Done when a MO:DEM-style panel can be made and passes the checks.
+The grid router, parallel strands, terminals and rect-panel presets.
+
+Design decisions (2026-11-07):
+- **Circuit motif:** traces routed on a square grid with 45-degree moves, inside the fundamental domain and then replicated (mirror both ways is the default).
+  - Each trace starts on the domain's boundary or the frame and runs as a seeded walk. It prefers straight runs, turns by 45 degrees, avoids occupied cells with a clearance, and ends in a terminal.
+  - Each trace is a bundle of parallel strands. Terminals are a drop, a bulb, a ring pad or a via.
+- **Polarity:** "bars" makes traces material over an opening, and each trace starts at material, so there are no islands. "Slots" cuts traces as openings in solid material, which looks strong when backlit.
+
+Done when:
+- [ ] A MO:DEM-style rectangular panel preset builds with no fatal finding in both polarities.
+- [ ] Randomise in the circuit style keeps that true.
+- [ ] Tests cover routing determinism, clearance and connectivity.
 
 ### M4: radial mandala
 Curve motifs in rings, and vector node editing.
+
+Design decisions (2026-11-07):
+- **New curve motifs:**
+  - **Scroll:** a spiral curl.
+  - **Ruyi:** a cloud-head lobe.
+  - **Ogee:** a pointed arch.
+  - **Lotus:** a compound petal.
+- **Editable shape:** a `shape` motif holds cubic Bezier nodes (anchor plus handles) in local mm, placed at a radius and replicated like any motif. Any curve motif can be converted into one.
+- **Node editing:** happens in the Layer view on the domain copy, with every copy following live.
+  - Drag anchors and handles.
+  - Double-click a segment to add a node; double-click a node to delete it.
+  - Each drag is one undo step.
+
+Done when:
+- [ ] A "Mandala" preset in the mandala style builds with no fatal finding.
+- [ ] Converting a petal to a shape and editing its nodes changes every symmetric copy.
+- [ ] Tests cover the Bezier flattening, the node edits and the conversion.
 
 ### M5: image and text
 Tone bands, depth map import, depth AI, the dithered engrave back plate with its ramp strip, stencil text, and logo import. Done when an Angel-style shadow box can be rebuilt from a photo, end to end.
@@ -716,3 +794,10 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-06 | Registry entries use `panel` for the sidebar step | `step` is a slider's increment; the duplicate key silently hid every slider (caught in the browser, now tested) |
 | 2026-11-06 | Own scope-hoisting ES-module bundler, not tenebrae's concatenation | Real module scope for a large codebase, the same files in Node tests, and a Blob worker under `file://` |
 | 2026-11-06 | three.js 0.186.1, not the newest 0.187.0 | 0.187.0 was a week old; pin a release that has had time to settle |
+| 2026-11-07 | Islands joined by a minimum spanning tree, then group-to-group ties | Ties to the enclosing opening failed for islands packed among islands; three nearest neighbours alone left whole clusters cut off |
+| 2026-11-07 | Field sampled at 0.75 mm, simplified at 0.03 mm | 0.5 mm measured 2.25 times slower; the simplification cut opening time 15 to 25% for an area change of 0.003% |
+| 2026-11-07 | Square and 45-degree lattices clipped to the wedge, with a bar on each wedge edge | Without it, 99 of 231 swept lattice configurations had islands |
+| 2026-11-07 | Island IDs include the box size | Concentric rings shared IDs, so their bridges and policies mixed |
+| 2026-11-07 | Lattice orb seed 6 | The densest of a rendered sweep and the closest to the orb reference, still inside the 400 ms slider target |
+| 2026-11-07 | The 3D preview keeps extruded geometry per layer, keyed by its material | Browser slider latency on the Lattice orb: 460 ms median down to 223 ms |
+| 2026-11-07 | Dowel search skips the windows after one miss | Saves windows that cannot succeed on art with no shared outer band; the mandala's build time measured the same before and after |
