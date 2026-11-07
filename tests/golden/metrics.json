@@ -71,6 +71,54 @@
     "parts": 12,
     "files": 39
   },
+  "circuit": {
+    "layers": 6,
+    "area_mm2": [
+      30305,
+      91409,
+      89057,
+      94239,
+      93158,
+      106377
+    ],
+    "islands": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "bridges": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "glue_parts": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dowels": 3,
+    "ids": 5,
+    "spacers": [],
+    "cut_length_mm": 70943,
+    "checks": [],
+    "sheets": [
+      {
+        "material": "ply3",
+        "count": 6
+      }
+    ],
+    "parts": 6,
+    "files": 27
+  },
   "orb": {
     "layers": 8,
     "area_mm2": [
