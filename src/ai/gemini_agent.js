@@ -5,10 +5,36 @@
 // history exactly as they came, so their thought signatures stay valid.
 import { invalid_input } from './prompt.js';
 
+// Free keys get no Pro quota (a limit of 0), so Pro needs billing on the key's project.
 export const kGeminiModels = {
-    'gemini-pro-latest': 'Gemini Pro (best designs)',
-    'gemini-flash-latest': 'Gemini Flash (faster, cheaper)',
+    'gemini-pro-latest': 'Gemini Pro (best designs, needs billing)',
+    'gemini-flash-latest': 'Gemini Flash (works with a free key)',
 };
+export const kFreeGeminiModel = 'gemini-flash-latest';
+
+// The SDK's ApiError message is Google's JSON error body. True when the key's tier has no quota
+// at all for the model, which waiting does not fix.
+export const no_free_quota = (status, raw) => status === 429 && /limit: 0\b|"quotaValue":"0"/.test(String(raw));
+
+// Plain words for a Gemini API error a user can act on.
+export function gemini_error_words(status, raw) {
+    let message = String(raw);
+    try {
+        message = JSON.parse(raw).error?.message ?? message;
+    } catch {
+        // Not JSON: use it as it is.
+    }
+    if (status === 401 || status === 403 || (status === 400 && /api key/i.test(message))) return 'The Gemini key was not accepted. Check it in the assistant settings.';
+    if (status === 404) return 'Your Gemini key cannot use this model. Pick another in the assistant settings.';
+    if (no_free_quota(status, raw)) return 'Your key’s free tier does not include this model: Google gives it a limit of 0, so waiting will not help. Use Gemini Flash, which works with a free key, or turn on billing for the key’s project in AI Studio.';
+    if (status === 429 && /PerDay/.test(raw)) return 'The Gemini key has used today’s free requests for this model. Try again tomorrow, pick another model, or turn on billing in AI Studio.';
+    if (status === 429) {
+        const wait_s = /"retryDelay":"(\d+)/.exec(raw)?.[1];
+        return `The Gemini key has hit its per-minute limit. Wait ${wait_s ? `${wait_s} s` : 'a minute'} and send again.`;
+    }
+    if (status >= 500) return 'Gemini is busy. Wait a minute and try again.';
+    return `Gemini returned an error (${status}): ${message}`;
+}
 // Effort maps onto the thinking levels every Gemini 3 model accepts (the SDK's ThinkingLevel values).
 const kThinking = { medium: 'LOW', high: 'HIGH', xhigh: 'HIGH' };
 const kBlocked = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY'];
@@ -68,15 +94,28 @@ export class GeminiAssistant {
     }
 
     async send(content, { signal } = {}) {
-        this.contents.push({ role: 'user', parts: to_parts(content) });
+        // A turn that fails, is blocked or is stopped leaves the history as it was, so the user can
+        // send again (the design keeps any changes, and travels with the next message).
+        const start = this.contents.length;
+        // After the round cap the history ends with function responses: the new words join them.
+        const last = this.contents.at(-1);
+        const merged_from = last?.role === 'user' ? last.parts.length : null;
+        if (merged_from !== null) last.parts.push(...to_parts(content));
+        else this.contents.push({ role: 'user', parts: to_parts(content) });
+        const rollback = result => {
+            this.contents.length = start;
+            if (merged_from !== null) last.parts.length = merged_from;
+            return result;
+        };
         let retries = 0;
         for (let round = 0; round < kMaxRounds; round++) {
-            if (signal?.aborted) return { reason: 'stopped' };
+            if (signal?.aborted) return rollback({ reason: 'stopped' });
             let response;
             try {
                 response = await this.client_.models.generateContent(this.params_(signal));
             } catch (err) {
-                if (signal?.aborted) return { reason: 'stopped' };
+                if (signal?.aborted) return rollback({ reason: 'stopped' });
+                rollback();
                 throw err;
             }
             const u = response.usageMetadata;
@@ -88,12 +127,11 @@ export class GeminiAssistant {
             const reason = candidate?.finishReason ?? '';
             const blocked = response.promptFeedback?.blockReason;
             if (blocked || kBlocked.includes(reason)) {
-                // Nothing of a blocked reply joins the conversation.
-                return { reason: 'refused', detail: response.promptFeedback?.blockReasonMessage ?? null };
+                return rollback({ reason: 'refused', detail: response.promptFeedback?.blockReasonMessage ?? null });
             }
             // A function call the model could not form: ask again, a few times.
             if (reason === 'MALFORMED_FUNCTION_CALL' || reason === 'UNEXPECTED_TOOL_CALL' || !candidate?.content?.parts) {
-                if (retries++ >= 2) return { reason: reason || 'empty' };
+                if (retries++ >= 2) return rollback({ reason: reason || 'empty' });
                 continue;
             }
             retries = 0;
@@ -127,7 +165,7 @@ export class GeminiAssistant {
             }
             // Every result of the round in one turn, in the order of the calls.
             this.contents.push({ role: 'user', parts: results });
-            if (signal?.aborted) return { reason: 'stopped' };
+            if (signal?.aborted) return rollback({ reason: 'stopped' });
         }
         return { reason: 'round_cap' };
     }

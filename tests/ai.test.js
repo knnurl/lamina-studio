@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { apply_ops, clean_motif, design_summary } from '../src/ai/ops.js';
 import { system_prompt, tools, invalid_input } from '../src/ai/prompt.js';
 import { Assistant, kMaxRounds } from '../src/ai/agent.js';
-import { GeminiAssistant, to_parts, is_gemini_model } from '../src/ai/gemini_agent.js';
+import { GeminiAssistant, to_parts, is_gemini_model, gemini_error_words, no_free_quota } from '../src/ai/gemini_agent.js';
 import { preset_by_id } from '../src/core/presets.js';
 import { build_design } from '../src/pipeline/compose.js';
 import { SCHEMA, kMotifTypes } from '../src/core/schema.js';
@@ -286,10 +286,10 @@ test('Gemini: bad inputs are not run, blocks end the turn, malformed calls are a
     assert.equal(ran, 0);
     assert.match(a1.contents[2].parts[0].functionResponse.response.error, /Not run: view must be one of/);
 
-    // A safety block keeps nothing of the reply.
+    // A safety block keeps nothing of the turn.
     const a2 = mk([{ candidates: [{ finishReason: 'SAFETY' }] }]);
     assert.equal((await a2.send('go')).reason, 'refused');
-    assert.equal(a2.contents.length, 1, 'only the user turn stays');
+    assert.equal(a2.contents.length, 0, 'the history is as it was');
     const a2b = mk([{ promptFeedback: { blockReason: 'OTHER', blockReasonMessage: 'blocked' } }]);
     assert.deepEqual(await a2b.send('go'), { reason: 'refused', detail: 'blocked' });
 
@@ -315,4 +315,38 @@ test('Gemini: bad inputs are not run, blocks end the turn, malformed calls are a
 
     // The panel's message content (text and pictures) as Gemini parts.
     assert.deepEqual(to_parts([{ type: 'text', text: 'hi' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QQ' } }]), [{ text: 'hi' }, { inlineData: { mimeType: 'image/jpeg', data: 'QQ' } }]);
+});
+
+// Google's error bodies, as the SDK puts them in ApiError.message.
+const quota_body = (limit, quota_id, delay) => JSON.stringify({ error: { code: 429, message: `You exceeded your current quota, please check your plan and billing details.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: ${limit}, model: gemini-3.1-pro`, status: 'RESOURCE_EXHAUSTED', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests', quotaId: quota_id }] }, { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: delay }] } });
+
+test('Gemini: a failed turn leaves the history as it was, and errors read as what to do', async () => {
+    // A quota error on the first message: nothing stays, so sending again starts clean.
+    const zero = Object.assign(new Error(quota_body(0, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', '37s')), { status: 429 });
+    const client = gemini_stand_in([zero, reply([{ text: 'ok' }])]);
+    const a = new GeminiAssistant({ client, model: 'gemini-pro-latest', effort: 'high', system: 's', tools: tools(), run_tool: async () => ({ content: 'ok' }) });
+    await assert.rejects(a.send('first'));
+    assert.equal(a.contents.length, 0);
+    assert.equal((await a.send('again')).reason, 'done');
+    assert.deepEqual(client.calls[1].contents.map(c => c.role), ['user'], 'one user turn, not two');
+
+    // After the round cap, "carry on" joins the function responses instead of starting a second user turn.
+    const capped = Array.from({ length: kMaxRounds }, (_, i) => reply([call(`r${i}`, 'check_design', {})]));
+    const c2 = gemini_stand_in([...capped, reply([{ text: 'finished' }])]);
+    const b = new GeminiAssistant({ client: c2, model: 'gemini-flash-latest', effort: 'high', system: 's', tools: tools(), run_tool: async () => ({ content: 'ok' }) });
+    assert.equal((await b.send('go')).reason, 'round_cap');
+    assert.equal((await b.send('carry on')).reason, 'done');
+    const sent = c2.calls.at(-1).contents;
+    assert.ok(sent.every((c, i) => i === 0 || c.role !== sent[i - 1].role), 'turns alternate');
+    assert.deepEqual(sent.at(-1).parts.map(p => Object.keys(p)[0]), ['functionResponse', 'text']);
+
+    // A limit of 0 is not a wait: the model is not in the key's free tier.
+    assert.ok(no_free_quota(429, zero.message));
+    assert.match(gemini_error_words(429, zero.message), /free tier does not include this model.*Gemini Flash/);
+    const minute = quota_body(5, 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', '21s');
+    assert.ok(!no_free_quota(429, minute));
+    assert.match(gemini_error_words(429, minute), /per-minute limit\. Wait 21 s/);
+    assert.match(gemini_error_words(429, quota_body(100, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', '0s')), /today/);
+    assert.match(gemini_error_words(400, JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.' } })), /key was not accepted/);
+    assert.match(gemini_error_words(400, JSON.stringify({ error: { code: 400, message: 'Invalid JSON payload' } })), /\(400\): Invalid JSON payload$/);
 });

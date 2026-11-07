@@ -6,7 +6,7 @@
 // place of the SDK client: { client, is_api_error, explain }.
 import { el } from './dom.js';
 import { Assistant, kModels as kClaudeModels, kEfforts } from '../ai/agent.js';
-import { GeminiAssistant, kGeminiModels, is_gemini_model } from '../ai/gemini_agent.js';
+import { GeminiAssistant, kGeminiModels, kFreeGeminiModel, is_gemini_model } from '../ai/gemini_agent.js';
 import { claude_client, gemini_client } from '../ai/sdk.js';
 import { system_prompt, tools } from '../ai/prompt.js';
 import { design_summary } from '../ai/ops.js';
@@ -108,6 +108,7 @@ export class AssistantPanel {
         go.addEventListener('click', () => this.show_settings_(true));
         card.append(go);
         this.log_.append(card);
+        this.setup_card_ = card;
     }
 
     show_settings_(open) {
@@ -136,7 +137,8 @@ export class AssistantPanel {
             this.refresh_chip_();
             this.show_settings_(false);
             const s2 = this.settings_;
-            this.add_('note', `Saved. ${key_for(s2) ? 'Ready.' : `Add a ${engine(s2)} key to start, or pick a model for the key you have.`}${s2.gemini_key ? ' Pictures from a description are on.' : ''}`);
+            if (key_for(s2)) this.setup_card_?.remove();
+            this.add_('note',`Saved. ${key_for(s2) ? 'Ready.' : `Add a ${engine(s2)} key to start, or pick a model for the key you have.`}${s2.gemini_key ? ' Pictures from a description are on.' : ''}`);
         });
         const forget = el('button', { type: 'button', class: 'btn ghost', text: 'Forget keys' });
         forget.addEventListener('click', () => {
@@ -171,6 +173,7 @@ export class AssistantPanel {
         const gemini = is_gemini_model(this.settings_.model);
         const sdk = globalThis.__lamina_ai_stand_in ?? (gemini ? await gemini_client(this.settings_.gemini_key) : await claude_client(this.settings_.claude_key));
         this.explain_ = sdk.explain ?? (err => err?.message ?? String(err));
+        this.no_free_quota_ = sdk.no_free_quota ?? (() => false);
         const ctx = {
             ...this.ctx_,
             pictures: this.pictures_,
@@ -238,6 +241,22 @@ export class AssistantPanel {
         }
     }
 
+    // A free key has no quota for this model: one click moves to the free model and sends again.
+    offer_free_model_() {
+        const go = el('button', { type: 'button', class: 'btn', text: `Use ${kModels[kFreeGeminiModel].replace(/ \(.*\)$/, '')} and send again` });
+        const card = el('div', { class: 'msg setup' }, [go]);
+        go.addEventListener('click', () => {
+            card.remove();
+            this.settings_ = { ...this.settings_, model: kFreeGeminiModel };
+            save_settings(this.settings_);
+            this.assistant_ = null;
+            this.refresh_chip_();
+            this.send(this.input_.value);
+        });
+        this.log_.append(card);
+        this.log_.scrollTop = this.log_.scrollHeight;
+    }
+
     // Sends a message with the current design attached. Resolves when the turn ends.
     async send(text) {
         text = String(text ?? '').trim();
@@ -254,11 +273,12 @@ export class AssistantPanel {
         this.running_ = new AbortController();
         this.send_btn_.hidden = true;
         this.stop_btn_.hidden = false;
+        const sent_ids = this.pending_.splice(0);
         try {
             const assistant = await this.assistant_for_();
             const content = [{ type: 'text', text }];
             // Pictures the user added since the last message, with their ids for trace_picture.
-            for (const id of this.pending_.splice(0)) {
+            for (const id of sent_ids) {
                 const p = this.pictures_.get(id);
                 content.push({ type: 'image', source: { type: 'base64', media_type: p.mime_type, data: p.data } }, { type: 'text', text: `That is picture ${id}, added by the user (${p.source}).` });
             }
@@ -269,6 +289,11 @@ export class AssistantPanel {
             else if (r.reason === 'round_cap') this.add_('note', 'That took many steps, so the assistant paused. Say "carry on" to continue.');
         } catch (err) {
             this.add_('note bad', this.explain_ ? this.explain_(err) : err.message);
+            // The message was not taken: it goes back in the box, its pictures with it (a Gemini
+            // turn that fails leaves no trace in the conversation).
+            if (!this.input_.value) this.input_.value = text;
+            if (this.assistant_ instanceof GeminiAssistant) this.pending_.unshift(...sent_ids);
+            if (this.no_free_quota_?.(err) && this.settings_.model !== kFreeGeminiModel) this.offer_free_model_();
         } finally {
             this.running_ = null;
             this.send_btn_.hidden = false;

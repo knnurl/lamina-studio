@@ -1,7 +1,9 @@
 // The AI SDKs (SPEC 14), loaded on first use from jsDelivr at pinned versions, so the page works
 // without them and without keys. Each user brings their own keys, so the clients run in the
 // browser (the Anthropic one with dangerouslyAllowBrowser).
-const kAnthropicUrl = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
+import { gemini_error_words, no_free_quota } from './gemini_agent.js';
+
+const kAnthropicUrl ='https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
 const kGenAiUrl = 'https://cdn.jsdelivr.net/npm/@google/genai@2.31.0/+esm';
 export const kPictureModel = 'gemini-nano-banana-2.1';
 
@@ -36,13 +38,10 @@ export async function gemini_client(api_key) {
         is_api_error: err => err instanceof ApiError,
         explain(err) {
             if (!(err instanceof ApiError)) return err instanceof TypeError ? 'Could not reach Gemini. Check the internet connection.' : (err?.message ?? String(err));
-            const s = err.status;
-            if (s === 401 || s === 403 || (s === 400 && /api key/i.test(err.message))) return 'The Gemini key was not accepted. Check it in the assistant settings.';
-            if (s === 404) return 'Your Gemini key cannot use this model. Pick another in the assistant settings.';
-            if (s === 429) return 'The Gemini key has hit its limit: free keys allow a few requests a minute and a daily total. Wait a minute, pick Gemini Flash, or turn on billing in AI Studio.';
-            if (s >= 500) return 'Gemini is busy. Wait a minute and try again.';
-            return `Gemini returned an error (${s}): ${err.message}`;
+            return gemini_error_words(err.status, err.message);
         },
+        // The key's tier has no quota for the model at all: the panel offers the free model.
+        no_free_quota: err => err instanceof ApiError && no_free_quota(err.status, err.message),
     };
 }
 
