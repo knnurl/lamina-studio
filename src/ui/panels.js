@@ -151,7 +151,7 @@ export class Panels {
             for (const key of kMotifTypes[motif.type].params) {
                 const p = kMotifParams[key];
                 if (p.tier === 'advanced' && tier !== 'advanced') continue;
-                const control = make_control({ ...p, type: 'range' }, (value, { coalesce }) =>
+                const control = make_control({ ...p, type: p.type ?? 'range' }, (value, { coalesce }) =>
                     app.set_motif_param(i, key, value, coalesce),
                 );
                 card.append(control.el);

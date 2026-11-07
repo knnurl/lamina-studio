@@ -3,9 +3,10 @@
 import { base_design, apply_palette } from './design.js';
 import { generate_stack } from './generate.js';
 
-function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, frame_ring_mm }) {
+function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, frame_ring_mm, style = 'classic' }) {
     const design = base_design(layers);
     design.name = name;
+    design.generator.style = style;
     Object.assign(design.piece.outline, outline);
     Object.assign(design.piece.symmetry, symmetry);
     if (lighting) Object.assign(design.piece.lighting, lighting);
@@ -18,6 +19,19 @@ function preset(name, { layers = 8, outline, symmetry, palette, seed, lighting, 
 }
 
 export const kPresets = [
+    {
+        id: 'lattice',
+        name: 'Lattice orb',
+        make: () =>
+            preset('Lattice orb', {
+                layers: 12,
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 8 },
+                palette: 'orb',
+                seed: 6, // from a rendered sweep of seeds 1 to 8: the densest, closest to the orb
+                style: 'lattice',
+            }),
+    },
     {
         id: 'orb',
         name: 'Orb',

@@ -98,7 +98,7 @@ export function default_layer(k, n, palette_id = 'orb') {
         source: { kind: 'primitive', motifs: [] },
         island_policy: 'bridge',
         bridge: { w_mm: null, max: 4 },
-        overrides: { islands: {}, bridges: [], locks: [], edits: [] },
+        overrides: { islands: {}, bridge_angles: {}, locks: [], edits: [] },
     };
 }
 
@@ -110,11 +110,13 @@ export function base_design(layer_count = 8) {
         seed: 1,
         palette: 'orb',
         materials: {},
+        generator: { style: 'classic' },
         piece: {
             outline: { kind: 'circle', w_mm: 290, h_mm: 290, sides: 8, corner_r_mm: 0 },
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
             lighting: { mode: 'unlit', colour: '#ff5b2e' },
             depth_mode: 'per_layer',
+            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1 },
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
         sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
