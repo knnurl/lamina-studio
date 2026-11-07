@@ -1,7 +1,8 @@
 // Layer view (SPEC 10): one layer, flat, for inspecting and editing. Material is drawn in the
 // layer's colour; bridges, islands (by policy), locators for glue-on islands from the layer in
 // front, and check boxes (red fatal, amber warning) are drawn over it. Click an island to cycle
-// its policy; the wheel zooms at the cursor; drag pans; double-click refits.
+// its policy, or a lattice cell to paint it; drag a bridge to move it (Alt-click resets it); the
+// wheel zooms at the cursor; drag pans; double-click refits.
 // Assumptions: paths in micrometres, y up; the canvas works in mm.
 import { kUmPerMm } from '../core/units.js';
 
@@ -17,9 +18,22 @@ function point_in_path(p, path) {
     return inside;
 }
 
+// Distance from p to segment a-b.
+function seg_dist(p, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+    return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+}
+
 export class LayerView {
-    // on_island_click(island) is called with the island under the cursor.
-    constructor(container, { on_island_click }) {
+    // Callbacks, with points in micrometres:
+    //   on_island_click(island)          a click on an island
+    //   on_cell_click(point)             a click anywhere else (cell paint)
+    //   on_bridge_drag(bridge, angle_deg) a bridge dropped at a new angle around its island
+    //   on_bridge_reset(bridge)          an Alt-click on a bridge
+    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset }) {
         this.container_ = container;
         this.canvas_ = document.createElement('canvas');
         this.canvas_.className = 'layer-canvas';
@@ -30,25 +44,36 @@ export class LayerView {
         this.legend_.innerHTML =
             '<span class="key bridge"></span>bridged island <span class="key glue"></span>glue-on ' +
             '<span class="key drop"></span>dropped <span class="key dowel"></span>dowel ' +
-            '<span class="key id"></span>engraved number. Click an island to change it. Wheel zooms, ' +
-            'drag pans, double-click refits. Boxes mark check findings.';
+            '<span class="key id"></span>engraved number. Click an island to change it, or a lattice ' +
+            'cell to make it solid (again to clear). Drag a bridge to move it, Alt-click to reset it. ' +
+            'Wheel zooms, drag pans, double-click refits. Boxes mark check findings.';
         container.append(this.canvas_, this.legend_);
         this.ctx_ = this.canvas_.getContext('2d');
         this.view_ = null; // { scale px per mm, ox, oy }
         this.data_ = null;
         this.on_island_click_ = on_island_click;
+        this.on_cell_click_ = on_cell_click;
+        this.on_bridge_drag_ = on_bridge_drag;
+        this.on_bridge_reset_ = on_bridge_reset;
+        this.guide_ = null; // { from, to } in micrometres while a bridge is dragged
 
         let drag = null;
         this.canvas_.addEventListener('pointerdown', e => {
-            drag = { x: e.offsetX, y: e.offsetY, moved: false };
+            const bridge = this.bridge_at_(e.offsetX, e.offsetY);
+            drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, bridge, alt: e.altKey };
             this.canvas_.setPointerCapture(e.pointerId);
         });
         this.canvas_.addEventListener('pointermove', e => {
             if (!drag || !this.view_) return;
             const dx = e.offsetX - drag.x;
             const dy = e.offsetY - drag.y;
-            if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-            if (drag.moved) {
+            if (Math.abs(e.offsetX - drag.x0) + Math.abs(e.offsetY - drag.y0) > 3) drag.moved = true;
+            if (drag.moved && drag.bridge) {
+                // A guide from the island's centre to the pointer: the new bridge angle.
+                const island = this.data_.built.islands.find(i => i.id === drag.bridge.island);
+                if (island) this.guide_ = { from: island.centre, to: this.to_world_(e.offsetX, e.offsetY) };
+                this.draw_();
+            } else if (drag.moved) {
                 this.view_.ox += dx;
                 this.view_.oy += dy;
                 drag.x = e.offsetX;
@@ -57,7 +82,15 @@ export class LayerView {
             }
         });
         this.canvas_.addEventListener('pointerup', e => {
-            if (drag && !drag.moved) this.click_(e.offsetX, e.offsetY);
+            if (drag?.bridge && drag.moved && this.guide_) {
+                const { from, to } = this.guide_;
+                this.on_bridge_drag_?.(drag.bridge, (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
+            } else if (drag?.bridge && drag.alt && !drag.moved) {
+                this.on_bridge_reset_?.(drag.bridge);
+            } else if (drag && !drag.moved) {
+                this.click_(e.offsetX, e.offsetY);
+            }
+            this.guide_ = null;
             drag = null;
         });
         this.canvas_.addEventListener(
@@ -142,6 +175,15 @@ export class LayerView {
         const p = this.to_world_(sx, sy);
         const hit = this.data_.built.islands.find(i => point_in_path(p, i.outer));
         if (hit) this.on_island_click_(hit);
+        else this.on_cell_click_?.(p);
+    }
+
+    // The bridge under a screen point, within half its width or 5 px, whichever is more.
+    bridge_at_(sx, sy) {
+        if (!this.data_ || !this.view_) return null;
+        const p = this.to_world_(sx, sy);
+        const px_um = (5 / this.view_.scale) * kUmPerMm;
+        return this.data_.built.bridges.find(b => seg_dist(p, b.a, b.b) <= Math.max((b.w_mm * kUmPerMm) / 2, px_um)) ?? null;
     }
 
     draw_() {
@@ -167,7 +209,7 @@ export class LayerView {
         ctx.stroke(this.trace_(built.material));
 
         ctx.fillStyle = 'rgba(180, 240, 60, 0.85)';
-        for (const b of built.bridges) ctx.fill(this.trace_(b.rect));
+        for (const b of built.bridges) ctx.fill(this.trace_([b.rect]));
 
         for (const island of built.islands) {
             ctx.setLineDash(island.policy === 'bridge' ? [] : [5, 4]);
@@ -205,6 +247,18 @@ export class LayerView {
             ctx.stroke();
         }
         ctx.setLineDash([]);
+
+        if (this.guide_) {
+            const { from, to } = this.guide_;
+            ctx.strokeStyle = kPolicyColour.bridge;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.moveTo(v.ox + (from.x / kUmPerMm) * v.scale, v.oy - (from.y / kUmPerMm) * v.scale);
+            ctx.lineTo(v.ox + (to.x / kUmPerMm) * v.scale, v.oy - (to.y / kUmPerMm) * v.scale);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
 
         for (const c of checks) {
             const colour_var = c.severity === 'fatal' && !c.overridden ? '--bad' : '--warn';

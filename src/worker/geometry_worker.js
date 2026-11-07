@@ -9,6 +9,8 @@ import { dowel_length_mm } from '../pipeline/registration.js';
 import { pack_paths, to_flat } from '../geom/pack.js';
 import { import_svg_files } from '../sources/svg_import.js';
 import { generate_stack } from '../core/generate.js';
+import { fold_point } from '../geom/symmetry.js';
+import { lattice_cell_at } from '../sources/lattice.js';
 import { test_card_zip } from '../export/test_card.js';
 import { export_design, export_parts, sheet_drawings } from '../export/export_design.js';
 
@@ -34,12 +36,13 @@ function build(design) {
         },
         layers: built.layers.map(l => ({
             id: l.id,
+            material_key: l.material_key,
             area_mm2: l.area_mm2,
             open_fraction: l.open_fraction,
             cut_length_mm: l.cut_length_mm,
             packed: pack_paths(l.material),
-            islands: l.islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: i.bbox, outer: pack_paths([i.outer]) })),
-            bridges: l.bridges.map(b => ({ island: b.island, length_mm: b.length_mm, w_mm: b.w_mm, rect: pack_paths([b.rect]) })),
+            islands: l.islands.map(i => ({ id: i.id, policy: i.policy, area_mm2: i.area_mm2, bbox: i.bbox, centre: i.centre, outer: pack_paths([i.outer]) })),
+            bridges: l.bridges.map(b => ({ island: b.island, a: b.a, b: b.b, angle_deg: b.angle_deg, length_mm: b.length_mm, w_mm: b.w_mm, rect: pack_paths([b.rect]) })),
             parts: l.parts.map(p => pack_paths(p)),
             locators: pack_paths(l.locators),
             ids: pack_paths(l.ids),
@@ -104,6 +107,21 @@ function randomise({ design, seed, lock_n }) {
     return { design: candidate, tries: kRandomiseTries, clean: false };
 }
 
+// The lattice cell under a point of layer k (micrometres, on any symmetric copy), for cell paint:
+// { motif, cell } with the motif's index and the cell's grid ID, or null. The point is folded into
+// the fundamental domain, where the lattice is built, so painting any copy paints them all.
+function cell_at({ design, layer, x_um, y_um }) {
+    const sym = design.piece.symmetry;
+    const p = fold_point({ x: x_um, y: y_um }, sym);
+    const motifs = design.layers[layer]?.source.motifs ?? [];
+    for (let i = motifs.length - 1; i >= 0; i--) {
+        if (motifs[i].type !== 'lattice') continue;
+        const cell = lattice_cell_at(motifs[i], sym, p);
+        if (cell) return { motif: i, cell };
+    }
+    return null;
+}
+
 function check(design) {
     const t0 = performance.now();
     const built = built_for(design);
@@ -120,6 +138,7 @@ const kHandlers = {
     import_svg,
     randomise,
     test_card_zip,
+    cell_at,
 };
 
 function transferables(value, out = []) {

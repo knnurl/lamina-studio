@@ -76,6 +76,10 @@ function new_motif(type, design, layer) {
             return { type, r_mm: v(0.78), w_mm: v(0.06), tie_mm: 3, mult: 1, angle_deg: 0 };
         case 'ray':
             return { type, r0_mm: v(0.3), r1_mm: v(0.9), w0_mm: 0, w1_mm: v(0.08), mult: 1, angle_deg: 0 };
+        case 'lattice':
+            return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
+        case 'fret':
+            return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
         default:
             throw new Error(`unknown opening type "${type}"`);
     }
@@ -281,6 +285,42 @@ export function start_app({ worker, preview, stage }) {
             });
             set_status('busy', `Island set to ${next}.`);
         },
+        // Cell paint (SPEC 8.2): the worker finds the lattice cell under the click (folded into the
+        // fundamental domain), and the click toggles it solid. Clicks off any lattice do nothing.
+        async paint_cell(p) {
+            const k = ui.layer;
+            const design = store.design;
+            if (!(design.layers[k]?.source.motifs ?? []).some(m => m.type === 'lattice')) return;
+            const hit = await worker.call('cell_at', { design, layer: k, x_um: p.x, y_um: p.y });
+            if (!hit || store.design !== design) return;
+            edit(d => {
+                const motif = d.layers[k].source.motifs[hit.motif];
+                motif.cells ??= {};
+                if (motif.cells[hit.cell]) delete motif.cells[hit.cell];
+                else motif.cells[hit.cell] = 'solid';
+            });
+        },
+        // Bridge drag: the island's bridges become preferred angles, the dragged one at its new
+        // angle; each ties to the edge of the opening around the island.
+        drag_bridge(bridge, angle_deg) {
+            const k = ui.layer;
+            const own = state.built.layers[k].bridges.filter(b => b.island === bridge.island);
+            const angles = own.map(b => Math.round((b === bridge ? angle_deg : b.angle_deg) * 10) / 10);
+            edit(d => {
+                const o = d.layers[k].overrides;
+                o.bridge_angles ??= {};
+                o.bridge_angles[bridge.island] = angles;
+            });
+            set_status('busy', 'Bridge moved.');
+        },
+        reset_bridges(bridge) {
+            const k = ui.layer;
+            if (!store.design.layers[k].overrides.bridge_angles?.[bridge.island]) return;
+            edit(d => {
+                delete d.layers[k].overrides.bridge_angles[bridge.island];
+            });
+            set_status('busy', 'Bridges reset to automatic.');
+        },
         async randomise() {
             set_status('busy', 'Randomising');
             try {
@@ -343,7 +383,12 @@ export function start_app({ worker, preview, stage }) {
     checks_view = make_checks_view(app);
     unmeasured = el('span', { class: 'chip status-chip', text: 'Material not measured yet: cut the test card (Make step)', hidden: '' });
     document.querySelector('.status').append(unmeasured);
-    layer_view = new LayerView(stage, { on_island_click: island => app.cycle_island(island) });
+    layer_view = new LayerView(stage, {
+        on_island_click: island => app.cycle_island(island),
+        on_cell_click: p => app.paint_cell(p),
+        on_bridge_drag: (bridge, angle_deg) => app.drag_bridge(bridge, angle_deg),
+        on_bridge_reset: bridge => app.reset_bridges(bridge),
+    });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);
     app.export_zip = async () => {
