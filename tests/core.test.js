@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rng_for, hash_str } from '../src/core/rng.js';
-import { base_design, migrate, palette_colour, set_layer_count, kSchemaVersion } from '../src/core/design.js';
+import { base_design, migrate, palette_colour, set_layer_count, set_custom_palette, kPalettes, kMinStops, kMaxStops, kSchemaVersion } from '../src/core/design.js';
 import { SCHEMA, schema_entry } from '../src/core/schema.js';
 import { write_param, read_param, options_for } from '../src/core/actions.js';
 import { Store, kUndoDepth } from '../src/core/store.js';
@@ -27,6 +27,52 @@ test('palettes interpolate from the first stop to the last', () => {
     assert.equal(palette_colour('mono', 0, 5), '#f2f2f2');
     assert.equal(palette_colour('mono', 4, 5), '#161616');
     assert.equal(palette_colour('mono', 0, 1), '#f2f2f2');
+});
+
+test('every palette has valid colours and its own name', () => {
+    const labels = new Set();
+    for (const [id, p] of Object.entries(kPalettes)) {
+        assert.ok(p.stops.length >= kMinStops && p.stops.length <= kMaxStops, id);
+        for (const c of p.stops) assert.match(c, /^#[0-9a-f]{6}$/, id);
+        assert.ok(!labels.has(p.label), p.label);
+        labels.add(p.label);
+    }
+    assert.ok(Object.keys(kPalettes).length >= 18);
+});
+
+test('spread "repeat" gives each layer the next colour in turn, "blend" runs front to back', () => {
+    const d = base_design(9);
+    const stops = kPalettes.orb.stops;
+    write_param(schema_entry('palette_spread'), d, 0, 'repeat');
+    assert.deepEqual(d.layers.map(l => l.finish.colour), d.layers.map((_, k) => stops[k % stops.length]));
+    write_param(schema_entry('palette_spread'), d, 0, 'blend');
+    assert.deepEqual(d.layers.map(l => l.finish.colour), d.layers.map((_, k) => palette_colour('orb', k, 9)));
+});
+
+test('a custom palette is kept with the design, offered as Custom, and survives a reopen', () => {
+    const d = base_design(4);
+    const palette = schema_entry('palette');
+    assert.ok(!options_for(palette, d).some(([id]) => id === 'custom'));
+    set_custom_palette(d, ['#FF0000', 'not a colour', '#0000ff']);
+    assert.equal(d.palette, 'custom');
+    assert.deepEqual(d.palette_custom, ['#ff0000', '#0000ff']);
+    assert.equal(d.layers[0].finish.colour, '#ff0000');
+    assert.equal(d.layers[3].finish.colour, '#0000ff');
+    assert.ok(options_for(palette, d).some(([id]) => id === 'custom'));
+    assert.throws(() => set_custom_palette(d, ['#ff0000']), /2 to 8 colours/);
+    set_custom_palette(d, Array(12).fill('#123456'));
+    assert.equal(d.palette_custom.length, kMaxStops);
+    set_custom_palette(d, ['#ff0000', '#00ff00', '#0000ff']);
+    write_param(palette, d, 0, 'ice');
+    assert.deepEqual(d.palette_custom, ['#ff0000', '#00ff00', '#0000ff']);
+    write_param(palette, d, 0, 'custom');
+    assert.equal(d.layers[0].finish.colour, '#ff0000');
+    const reopened = migrate(JSON.parse(JSON.stringify(d)));
+    assert.equal(reopened.palette, 'custom');
+    assert.deepEqual(reopened.layers.map(l => l.finish.colour), d.layers.map(l => l.finish.colour));
+    const old = migrate({ app: 'lamina', schema: 1, layers: [{}, {}] });
+    assert.equal(old.palette_spread, 'blend');
+    assert.equal(old.palette_custom, null);
 });
 
 test('migrate fills missing fields, keeps values and rejects foreign files', () => {

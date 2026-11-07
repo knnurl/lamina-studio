@@ -1,5 +1,5 @@
 // Applies a schema control's value to a design, including the controls that are not a plain path
-// (layer count, palette, material for all layers, sheet size) and resizing, which also scales
+// (layer count, palette and its spread, material for all layers, sheet size) and resizing, which also scales
 // the pattern. Also supplies the option lists that come from the design tables.
 import { get_path, set_path } from './schema.js';
 import {
@@ -16,8 +16,10 @@ import {
 export function options_for(entry, design) {
     if (entry.options) return typeof entry.options === 'function' ? entry.options(design) : entry.options;
     switch (entry.id) {
-        case 'palette':
-            return Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
+        case 'palette': {
+            const named = Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
+            return design.palette_custom ? [...named, ['custom', 'Custom']] : named;
+        }
         case 'all_material':
         case 'material':
             return Object.keys({ ...kMaterials, ...design.materials }).map(id => [id, material_of(design, { material: id }).label]);
@@ -51,6 +53,10 @@ export function write_param(entry, design, layer_index, value) {
             return;
         case 'palette':
             apply_palette(design, value);
+            return;
+        case 'palette_spread':
+            design.palette_spread = value;
+            apply_palette(design);
             return;
         case 'all_material':
             for (const layer of design.layers) layer.material = value;

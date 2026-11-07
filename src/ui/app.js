@@ -3,7 +3,7 @@
 // rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
 // screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
 import { Store } from '../core/store.js';
-import { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design, apply_palette, apply_photo } from '../core/design.js';
+import { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design, apply_palette, apply_photo, set_custom_palette } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { to_shape } from '../sources/curves.js';
@@ -338,6 +338,10 @@ export function start_app({ worker, preview, stage }) {
             } catch (err) {
                 set_status('bad', `Import failed: ${err.message}`);
             }
+        },
+        // The design's own palette colours, front to back; a colour drag coalesces by its key.
+        set_palette_stops(colours, coalesce_key = null) {
+            edit(d => set_custom_palette(d, colours), coalesce_key);
         },
         set_layer_locked(value) {
             edit(d => {

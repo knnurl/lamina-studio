@@ -362,7 +362,21 @@ export const SCHEMA = [
         label: 'Palette',
         type: 'select',
         tier: 'basic',
+        ui: 'palette', // drawn as swatches with the colours to edit (palette_control.js)
         options: null, // filled from kPalettes by the UI, which imports design.js
+    },
+    {
+        id: 'palette_spread',
+        scope: 'design',
+        panel: 'material',
+        label: 'Spread',
+        type: 'select',
+        tier: 'basic',
+        options: [
+            ['blend', 'Blend front to back'],
+            ['repeat', 'Repeat in turn'],
+        ],
+        desc: 'Blend runs the colours from the front layer to the back; repeat gives each layer the next colour, then starts again.',
     },
     {
         id: 'all_material',

@@ -7,6 +7,7 @@ import { SCHEMA, kMotifTypes, kMotifParams } from '../core/schema.js';
 import { kCurveTypes } from '../sources/curves.js';
 import { options_for, read_param } from '../core/actions.js';
 import { make_control } from './controls.js';
+import { make_palette_control } from './palette_control.js';
 import { el } from './dom.js';
 import { panel_parts } from './shell.js';
 
@@ -30,7 +31,8 @@ const shown_if = (entry, design, layer) => !entry.show_if || entry.show_if(desig
 
 export class Panels {
     // app: { design, ui: { step, layer, locks, more }, set_param, set_motif_param, add_motif,
-    //        remove_motif, convert_motif, set_layer_locked, set_seed, randomise, toggle_more }
+    //        remove_motif, convert_motif, set_layer_locked, set_seed, randomise, toggle_more,
+    //        set_palette_stops }
     // extras: { [step]: (container) => void } fills fixed content after a step's controls.
     constructor(app, extras = {}) {
         this.app_ = app;
@@ -87,6 +89,12 @@ export class Panels {
 
     control_(entry) {
         const app = this.app_;
+        if (entry.ui === 'palette') {
+            const control = make_palette_control(app, id => app.set_param(entry, id, false));
+            control.refresh();
+            this.refreshers_.push(control.refresh);
+            return control.el;
+        }
         const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, app.design) } : entry;
         const state = entry.lockable ? { locked: () => app.ui.locks.has(entry.id), toggle_lock: () => app.toggle_lock(entry.id) } : {};
         const control = make_control(spec, (value, { coalesce }) => app.set_param(entry, value, coalesce), state);

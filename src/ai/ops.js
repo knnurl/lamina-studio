@@ -225,6 +225,7 @@ export function design_summary(design) {
         seed: design.seed,
         style: design.generator?.style,
         palette: design.palette,
+        palette_spread: design.palette_spread,
         piece: { outline: p.outline, symmetry: p.symmetry, depth_mode: p.depth_mode, field, lighting: p.lighting },
         layers: design.layers.map((l, k) => ({
             layer: k + 1,

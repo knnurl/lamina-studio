@@ -49,7 +49,9 @@ export const kMaterials = {
     },
 };
 
-// Finish palettes, front to back. Colours are interpolated across however many layers there are.
+// Finish palettes, front to back. Colours are blended across however many layers there are, or
+// repeated in turn (the design's palette_spread). A design can also carry its own palette
+// (palette "custom", colours in palette_custom).
 export const kPalettes = {
     orb: { label: 'Orb', stops: ['#a7a9b0', '#ff4a2a', '#3a7bd5', '#e9e4da', '#c8321e', '#243a8f', '#14101c'] },
     acid: { label: 'Acid', stops: ['#c4f24a', '#8cc152', '#5e8f3a', '#5b2f80', '#331a4d', '#120a1c'] },
@@ -57,7 +59,23 @@ export const kPalettes = {
     ice: { label: 'Ice', stops: ['#eef7ff', '#a9d4ff', '#5aa8f0', '#2f6fd0', '#243b8a', '#0d1230'] },
     walnut: { label: 'Walnut to birch', stops: ['#2a1d14', '#4a3424', '#78553a', '#a8814f', '#d9bf8f', '#efe3c6'] },
     mono: { label: 'Mono', stops: ['#f2f2f2', '#c8c8c8', '#9a9a9a', '#6c6c6c', '#404040', '#161616'] },
+    uv: { label: 'UV neon', stops: ['#f4ff3a', '#3dff8b', '#00e1ff', '#ff2bd6', '#8f2bff', '#170630'] },
+    sunset: { label: 'Psy sunset', stops: ['#ffe36e', '#ffa53d', '#ff5e5b', '#d6336c', '#7b2cbf', '#22053f'] },
+    aurora: { label: 'Aurora', stops: ['#c2fff1', '#45f0b3', '#22b8b0', '#3a7bff', '#7d3cf0', '#160a38'] },
+    vapor: { label: 'Vaporwave', stops: ['#ffd6f6', '#ff71ce', '#b967ff', '#01cdfe', '#05ffa1', '#1b1035'] },
+    toxic: { label: 'Toxic', stops: ['#eaff3b', '#a3ff12', '#2ee36f', '#0f9a77', '#124a5c', '#06141f'] },
+    spectrum: { label: 'Spectrum', stops: ['#ff3b3b', '#ff9f1c', '#ffe74c', '#3ddc84', '#2ec4ff', '#5b5bff', '#b04bff'] },
+    fire_ice: { label: 'Fire and ice', stops: ['#ffd166', '#ff6b35', '#d62828', '#3a0ca3', '#4cc9f0', '#e6fbff'] },
+    candy: { label: 'Candy', stops: ['#fff4fb', '#ffc2e2', '#ff8fc7', '#c77dff', '#7f5af0', '#2c1a5c'] },
+    deep_sea: { label: 'Deep sea', stops: ['#c9fff4', '#5ee6d0', '#1fb3c7', '#167a9e', '#103f6e', '#071633'] },
+    forest: { label: 'Forest', stops: ['#dff5a6', '#9ccc5a', '#5a9440', '#2f6230', '#1b3d27', '#0b1a12'] },
+    gold: { label: 'Gold and black', stops: ['#fff1b8', '#f2c94c', '#c9972b', '#8a6418', '#3d2c0c', '#0d0a05'] },
+    copper: { label: 'Copper and teal', stops: ['#f6c28b', '#d98e5b', '#b0613a', '#2a9d8f', '#1d6b63', '#0b2b2a'] },
 };
+
+// A palette of the design's own has this many colours.
+export const kMinStops = 2;
+export const kMaxStops = 8;
 
 export const kSheetPresets = {
     '600x400': { label: '600 x 400 mm', w_mm: 600, h_mm: 400 },
@@ -74,9 +92,10 @@ function rgb_to_hex(rgb) {
     return '#' + rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('');
 }
 
-// Colour for layer k of n from a palette's stops, interpolated in RGB.
-export function palette_colour(palette_id, k, n) {
-    const stops = kPalettes[palette_id].stops;
+// Colour for layer k of n from a list of colours: blended in RGB from the first at the front to
+// the last at the back, or, with spread "repeat", the colours in turn.
+export function stops_colour(stops, k, n, spread = 'blend') {
+    if (spread === 'repeat') return stops[k % stops.length];
     if (n <= 1) return stops[0];
     const t = (k / (n - 1)) * (stops.length - 1);
     const i = Math.min(stops.length - 2, Math.floor(t));
@@ -84,6 +103,17 @@ export function palette_colour(palette_id, k, n) {
     const a = hex_to_rgb(stops[i]);
     const b = hex_to_rgb(stops[i + 1]);
     return rgb_to_hex(a.map((c, j) => c + (b[j] - c) * f));
+}
+
+// Colour for layer k of n from a named palette, blended (an unknown name falls back to Orb).
+export function palette_colour(palette_id, k, n) {
+    return stops_colour((kPalettes[palette_id] ?? kPalettes.orb).stops, k, n);
+}
+
+// The design's palette colours, front to back: its own when the palette is "custom".
+export function palette_stops(design) {
+    if (design.palette === 'custom' && design.palette_custom?.length >= kMinStops) return design.palette_custom;
+    return (kPalettes[design.palette] ?? kPalettes.orb).stops;
 }
 
 export function default_layer(k, n, palette_id = 'orb') {
@@ -109,6 +139,8 @@ export function base_design(layer_count = 8) {
         name: 'Untitled',
         seed: 1,
         palette: 'orb',
+        palette_custom: null,
+        palette_spread: 'blend',
         materials: {},
         generator: { style: 'classic' },
         piece: {
@@ -192,13 +224,23 @@ export function apply_photo(design, image) {
     return design;
 }
 
-// Applies a palette to every layer's finish colour.
-export function apply_palette(design, palette_id) {
+// Applies a palette (by default the design's own choice again) to every layer's finish colour.
+export function apply_palette(design, palette_id = design.palette) {
     design.palette = palette_id;
+    const stops = palette_stops(design);
     const n = design.layers.length;
     design.layers.forEach((layer, k) => {
-        layer.finish.colour = palette_colour(palette_id, k, n);
+        layer.finish.colour = stops_colour(stops, k, n, design.palette_spread);
     });
+}
+
+// Makes colours (front to back) the design's own palette and applies it. Keeps the valid
+// #rrggbb colours, at most kMaxStops; throws if fewer than kMinStops are left.
+export function set_custom_palette(design, colours) {
+    const stops = colours.filter(c => /^#[0-9a-f]{6}$/i.test(String(c))).map(c => c.toLowerCase()).slice(0, kMaxStops);
+    if (stops.length < kMinStops) throw new Error(`a palette needs ${kMinStops} to ${kMaxStops} colours like #a1b2c3`);
+    design.palette_custom = stops;
+    apply_palette(design, 'custom');
 }
 
 // Sets the layer count. New layers are copies of the last patterned layer, inserted before the
