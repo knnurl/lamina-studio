@@ -213,17 +213,29 @@ test('the loop refuses bad inputs, stops on a refusal, and caps the rounds', asy
     assert.equal((await a6.send('go', { signal: ctl.signal })).reason, 'stopped');
 });
 
-// A stand-in Gemini client: each call to generateContent() returns the next scripted response.
+// A stand-in Gemini client: each call to generateContentStream() streams the next scripted
+// response, one part per chunk, with the finish reason and usage on the last chunk.
 function gemini_stand_in(script) {
     const calls = [];
     return {
         calls,
         models: {
-            async generateContent(params) {
+            async generateContentStream(params) {
                 calls.push(structuredClone({ ...params, config: { ...params.config, abortSignal: undefined } }));
                 const next = script.shift();
                 if (next instanceof Error) throw next;
-                return next;
+                return (async function* () {
+                    const c = next.candidates?.[0];
+                    const parts = c?.content?.parts ?? [];
+                    if (!parts.length) return void (yield next);
+                    for (let i = 0; i < parts.length; i++) {
+                        const last = i === parts.length - 1;
+                        yield {
+                            candidates: [{ content: { role: 'model', parts: [parts[i]] }, ...(last ? { finishReason: c.finishReason } : {}) }],
+                            ...(last && next.usageMetadata ? { usageMetadata: next.usageMetadata } : {}),
+                        };
+                    }
+                })();
             },
         },
     };
@@ -262,7 +274,7 @@ test('Gemini: the loop runs tools, answers every call in one turn, and keeps the
     assert.deepEqual(results.parts.map(p => p.functionResponse.id), ['a', 'b']);
     assert.deepEqual(results.parts[0].functionResponse.response, { output: 'no problems' });
     assert.deepEqual(results.parts[1].functionResponse.parts, [{ inlineData: { mimeType: 'image/png', data: 'AAAA' } }]);
-    assert.ok(events.some(e => e.type === 'status' && e.text === 'Building the base stack.'), 'thoughts show as progress');
+    assert.ok(events.some(e => e.type === 'thinking' && e.text === 'Building the base stack.'), 'thoughts stream as progress');
     assert.ok(events.some(e => e.type === 'text' && /lotus/.test(e.text)));
     assert.deepEqual(events.find(e => e.type === 'usage').usage, { input_tokens: 60, cache_read_input_tokens: 40, output_tokens: 12 });
     // The request: the same system prompt and tools, as JSON Schema declarations.
@@ -300,7 +312,7 @@ test('Gemini: bad inputs are not run, blocks end the turn, malformed calls are a
 
     // Input cut off at the token limit is never run.
     let ran4 = 0;
-    const a4 = mk([reply([call('t', 'draw_artwork', { layer: 1, svg: '<svg', as: 'openings' })], 'MAX_TOKENS'), reply([])], async () => ((ran4 += 1), { content: '' }));
+    const a4 = mk([reply([call('t', 'draw_artwork', { layer: 1, svg: '<svg', as: 'openings' })], 'MAX_TOKENS'), reply([{ text: 'ok' }])], async () => ((ran4 += 1), { content: '' }));
     await a4.send('go');
     assert.equal(ran4, 0);
     assert.match(a4.contents[2].parts[0].functionResponse.response.error, /cut off/);
@@ -349,4 +361,27 @@ test('Gemini: a failed turn leaves the history as it was, and errors read as wha
     assert.match(gemini_error_words(429, quota_body(100, 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', '0s')), /today/);
     assert.match(gemini_error_words(400, JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.' } })), /key was not accepted/);
     assert.match(gemini_error_words(400, JSON.stringify({ error: { code: 400, message: 'Invalid JSON payload' } })), /\(400\): Invalid JSON payload$/);
+});
+
+test('Gemini: a reply that goes quiet is dropped with a clear error, and Stop ends a streaming reply', async () => {
+    // A stream that never sends anything until it is aborted.
+    const hang = {
+        models: {
+            async generateContentStream(params) {
+                const signal = params.config.abortSignal;
+                return (async function* () {
+                    await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+                })();
+            },
+        },
+    };
+    const mk = () => new GeminiAssistant({ client: hang, model: 'gemini-flash-latest', effort: 'high', system: 's', tools: tools(), run_tool: async () => ({ content: '' }), idle_ms: 40 });
+    const a = mk();
+    await assert.rejects(a.send('go'), /Gemini sent nothing for 0 s/);
+    assert.equal(a.contents.length, 0, 'the history is as it was');
+    const b = new GeminiAssistant({ client: hang, model: 'gemini-flash-latest', effort: 'high', system: 's', tools: tools(), run_tool: async () => ({ content: '' }) });
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 20);
+    assert.equal((await b.send('go', { signal: ctl.signal })).reason, 'stopped');
+    assert.equal(b.contents.length, 0);
 });

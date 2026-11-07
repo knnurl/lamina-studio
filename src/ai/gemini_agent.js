@@ -1,8 +1,8 @@
-// The assistant's tool loop on Gemini (SPEC M4.5), with the user's own key: generateContent with
-// function calling, the same tools and events as the Claude loop (agent.js). One request from the
-// user may take many rounds of tool calls. A turn ends when a reply calls no tools, on a safety
-// block, at the round cap, or when the user presses Stop. The model's turns go back into the
-// history exactly as they came, so their thought signatures stay valid.
+// The assistant's tool loop on Gemini (SPEC M4.5), with the user's own key: streamed
+// generateContent with function calling, the same tools and events as the Claude loop (agent.js).
+// One request from the user may take many rounds of tool calls. A turn ends when a reply calls no
+// tools, on a safety block, at the round cap, or when the user presses Stop. The model's turns go
+// back into the history exactly as they came, part by part, so their thought signatures stay valid.
 import { invalid_input } from './prompt.js';
 
 // Free keys get no Pro quota (a limit of 0), so Pro needs billing on the key's project.
@@ -39,6 +39,9 @@ export function gemini_error_words(status, raw) {
 const kThinking = { medium: 'LOW', high: 'HIGH', xhigh: 'HIGH' };
 const kBlocked = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY'];
 export const kMaxRounds = 30;
+// A reply that sends nothing for this long is dropped (thinking at high effort can be quiet for a
+// minute or more before the first summary).
+export const kIdleMs = 180000;
 
 export const is_gemini_model = model => String(model).startsWith('gemini-');
 
@@ -66,8 +69,9 @@ export function function_response(call, r) {
 export class GeminiAssistant {
     // client: a GoogleGenAI instance, or anything with models.generateContent(params) (tests pass a
     //   stand-in). The rest is as for Assistant in agent.js.
-    constructor({ client, is_api_error, model, effort, system, tools, run_tool, on_event }) {
+    constructor({ client, is_api_error, model, effort, system, tools, run_tool, on_event, idle_ms = kIdleMs }) {
         this.client_ = client;
+        this.idle_ms_ = idle_ms;
         this.is_api_error_ = is_api_error ?? (err => typeof err?.status === 'number');
         this.model = model;
         this.effort = effort;
@@ -93,6 +97,46 @@ export class GeminiAssistant {
         };
     }
 
+    // One streamed reply, gathered into the shape of a whole one. Thoughts and text are passed on
+    // as they arrive; every part is kept as it came, including empty ones carrying a signature.
+    async request_(signal) {
+        const ctl = new AbortController();
+        const forward = () => ctl.abort();
+        signal?.addEventListener('abort', forward, { once: true });
+        let timer = 0;
+        let idle = false;
+        const poke = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => ((idle = true), ctl.abort()), this.idle_ms_);
+        };
+        const parts = [];
+        let finishReason = '';
+        let usageMetadata = null;
+        let promptFeedback = null;
+        poke();
+        try {
+            const stream = await this.client_.models.generateContentStream(this.params_(ctl.signal));
+            for await (const chunk of stream) {
+                poke();
+                usageMetadata = chunk.usageMetadata ?? usageMetadata;
+                promptFeedback = chunk.promptFeedback ?? promptFeedback;
+                const c = chunk.candidates?.[0];
+                finishReason = c?.finishReason ?? finishReason;
+                for (const p of c?.content?.parts ?? []) {
+                    parts.push(p);
+                    if (p.text) this.on_event_(p.thought ? { type: 'thinking', text: p.text } : { type: 'text', text: p.text });
+                }
+            }
+        } catch (err) {
+            if (idle) throw new Error(`Gemini sent nothing for ${Math.round(this.idle_ms_ / 1000)} s, so the request was dropped. Send again.`);
+            throw err;
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', forward);
+        }
+        return { candidates: [{ content: parts.length ? { role: 'model', parts } : undefined, finishReason }], usageMetadata, promptFeedback };
+    }
+
     async send(content, { signal } = {}) {
         // A turn that fails, is blocked or is stopped leaves the history as it was, so the user can
         // send again (the design keeps any changes, and travels with the next message).
@@ -112,7 +156,7 @@ export class GeminiAssistant {
             if (signal?.aborted) return rollback({ reason: 'stopped' });
             let response;
             try {
-                response = await this.client_.models.generateContent(this.params_(signal));
+                response = await this.request_(signal);
             } catch (err) {
                 if (signal?.aborted) return rollback({ reason: 'stopped' });
                 rollback();
@@ -137,10 +181,6 @@ export class GeminiAssistant {
             retries = 0;
             const parts = candidate.content.parts;
             this.contents.push({ role: 'model', parts });
-            for (const p of parts) {
-                if (!p.text) continue;
-                this.on_event_(p.thought ? { type: 'status', text: p.text } : { type: 'text', text: p.text });
-            }
             const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
             if (!calls.length) return { reason: reason === 'STOP' || !reason ? 'done' : reason.toLowerCase() };
 

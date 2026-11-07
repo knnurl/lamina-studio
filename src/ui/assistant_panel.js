@@ -218,6 +218,23 @@ export class AssistantPanel {
     }
 
     on_event_(e) {
+        if (e.type === 'thinking') {
+            // Gemini's thought summaries stream in pieces: one line per stretch of thinking, showing
+            // its latest heading (or its start when it has none).
+            this.reply_ = null;
+            this.thought_ ??= this.add_('status', '');
+            this.thought_text_ = (this.thought_text_ ?? '') + e.text;
+            const heads = [...this.thought_text_.matchAll(/\*\*(.+?)\*\*/g)];
+            this.thought_.textContent = heads.length ? `${heads.at(-1)[1]}...` : this.thought_text_.replace(/\s+/g, ' ').trim().slice(0, 140);
+            this.log_.scrollTop = this.log_.scrollHeight;
+            return;
+        }
+        if (e.type !== 'usage') {
+            // Anything else ends a stretch of thinking (and the waiting line, if it is still showing).
+            if (this.thought_ && !this.thought_text_) this.thought_.remove();
+            this.thought_ = null;
+            this.thought_text_ = '';
+        }
         if (e.type === 'text') {
             this.reply_ ??= this.add_('assistant', '');
             this.reply_.textContent += e.text;
@@ -273,6 +290,11 @@ export class AssistantPanel {
         this.running_ = new AbortController();
         this.send_btn_.hidden = true;
         this.stop_btn_.hidden = false;
+        // Until the model's first thoughts arrive, say who it is waiting for; the Stop button counts.
+        this.thought_ = this.add_('status', `Waiting for ${(kModels[this.settings_.model] ?? this.settings_.model).replace(/ \(.*\)$/, '')} to start thinking...`);
+        this.thought_text_ = '';
+        const t0 = Date.now();
+        const tick = setInterval(() => (this.stop_btn_.textContent = `Stop (${Math.round((Date.now() - t0) / 1000)} s)`), 1000);
         const sent_ids = this.pending_.splice(0);
         try {
             const assistant = await this.assistant_for_();
@@ -295,6 +317,10 @@ export class AssistantPanel {
             if (this.assistant_ instanceof GeminiAssistant) this.pending_.unshift(...sent_ids);
             if (this.no_free_quota_?.(err) && this.settings_.model !== kFreeGeminiModel) this.offer_free_model_();
         } finally {
+            clearInterval(tick);
+            if (this.thought_ && !this.thought_text_) this.thought_.remove();
+            this.thought_ = null;
+            this.stop_btn_.textContent = 'Stop';
             this.running_ = null;
             this.send_btn_.hidden = false;
             this.stop_btn_.hidden = true;
