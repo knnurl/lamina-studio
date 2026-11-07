@@ -1,10 +1,17 @@
 // Layer view (SPEC 10): one layer, flat, for inspecting and editing. Material is drawn in the
 // layer's colour; bridges, islands (by policy), locators for glue-on islands from the layer in
 // front, and check boxes (red fatal, amber warning) are drawn over it. Click an island to cycle
-// its policy, or a lattice cell to paint it; drag a bridge to move it (Alt-click resets it); the
-// wheel zooms at the cursor; drag pans; double-click refits.
-// Assumptions: paths in micrometres, y up; the canvas works in mm.
+// its policy, or a lattice cell to paint it; drag a bridge to move it (Alt-click resets it); drag
+// a shape's nodes and handles on its first copy (every copy follows through the rebuild), and
+// double-click its outline to add a node or a node to delete it; the wheel zooms at the cursor;
+// drag pans; double-click elsewhere refits.
+// Assumptions: paths in micrometres, y up; the canvas works in mm; shape nodes in local mm.
 import { kUmPerMm } from '../core/units.js';
+import { flatten_shape, move_anchor, move_handle, nearest_on_shape, split_segment, delete_node } from '../geom/bezier.js';
+
+const kNodePx = 7; // pick radius for nodes and handles
+const r2 = v => Math.round(v * 100) / 100;
+const rounded = nodes => nodes.map(n => ({ x: r2(n.x), y: r2(n.y), ix: r2(n.ix), iy: r2(n.iy), ox: r2(n.ox), oy: r2(n.oy) }));
 
 const kPolicyColour = { bridge: '#b4f03c', glue: '#46b4ff', drop: '#8f849f' };
 
@@ -33,7 +40,9 @@ export class LayerView {
     //   on_cell_click(point)             a click anywhere else (cell paint)
     //   on_bridge_drag(bridge, angle_deg) a bridge dropped at a new angle around its island
     //   on_bridge_reset(bridge)          an Alt-click on a bridge
-    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset }) {
+    //   on_shape_edit(motif, nodes, drag) new nodes for the shape motif at index motif; drag is
+    //                                    an ID shared by every move of one drag (one undo step)
+    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset, on_shape_edit }) {
         this.container_ = container;
         this.canvas_ = document.createElement('canvas');
         this.canvas_.className = 'layer-canvas';
@@ -46,6 +55,7 @@ export class LayerView {
             '<span class="key drop"></span>dropped <span class="key dowel"></span>dowel ' +
             '<span class="key id"></span>engraved number. Click an island to change it, or a lattice ' +
             'cell to make it solid (again to clear). Drag a bridge to move it, Alt-click to reset it. ' +
+            "Drag a shape's nodes and handles; double-click its outline to add a node, a node to delete it. " +
             'Wheel zooms, drag pans, double-click refits. Boxes mark check findings.';
         container.append(this.canvas_, this.legend_);
         this.ctx_ = this.canvas_.getContext('2d');
@@ -55,12 +65,15 @@ export class LayerView {
         this.on_cell_click_ = on_cell_click;
         this.on_bridge_drag_ = on_bridge_drag;
         this.on_bridge_reset_ = on_bridge_reset;
+        this.on_shape_edit_ = on_shape_edit;
         this.guide_ = null; // { from, to } in micrometres while a bridge is dragged
+        this.drags_ = 0;
 
         let drag = null;
         this.canvas_.addEventListener('pointerdown', e => {
-            const bridge = this.bridge_at_(e.offsetX, e.offsetY);
-            drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, bridge, alt: e.altKey };
+            const node = this.node_at_(e.offsetX, e.offsetY);
+            const bridge = node ? null : this.bridge_at_(e.offsetX, e.offsetY);
+            drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, node, bridge, alt: e.altKey, id: ++this.drags_ };
             this.canvas_.setPointerCapture(e.pointerId);
         });
         this.canvas_.addEventListener('pointermove', e => {
@@ -68,7 +81,16 @@ export class LayerView {
             const dx = e.offsetX - drag.x;
             const dy = e.offsetY - drag.y;
             if (Math.abs(e.offsetX - drag.x0) + Math.abs(e.offsetY - drag.y0) > 3) drag.moved = true;
-            if (drag.moved && drag.bridge) {
+            if (drag.moved && drag.node) {
+                // The node follows the pointer at once; the material follows the rebuild.
+                const { shape, index, which } = drag.node;
+                const sh = this.data_.shapes[shape];
+                const p = this.shape_local_(sh, this.to_world_(e.offsetX, e.offsetY));
+                const nodes = rounded(which === 'anchor' ? move_anchor(sh.nodes, index, p.x, p.y) : move_handle(sh.nodes, index, which, p.x, p.y));
+                sh.nodes = nodes;
+                this.draw_();
+                this.on_shape_edit_?.(sh.motif, nodes, `drag${drag.id}`);
+            } else if (drag.moved && drag.bridge) {
                 // A guide from the island's centre to the pointer: the new bridge angle.
                 const island = this.data_.built.islands.find(i => i.id === drag.bridge.island);
                 if (island) this.guide_ = { from: island.centre, to: this.to_world_(e.offsetX, e.offsetY) };
@@ -87,7 +109,7 @@ export class LayerView {
                 this.on_bridge_drag_?.(drag.bridge, (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
             } else if (drag?.bridge && drag.alt && !drag.moved) {
                 this.on_bridge_reset_?.(drag.bridge);
-            } else if (drag && !drag.moved) {
+            } else if (drag && !drag.moved && !drag.node && !this.segment_at_(e.offsetX, e.offsetY)) {
                 this.click_(e.offsetX, e.offsetY);
             }
             this.guide_ = null;
@@ -106,7 +128,20 @@ export class LayerView {
             },
             { passive: false },
         );
-        this.canvas_.addEventListener('dblclick', () => {
+        this.canvas_.addEventListener('dblclick', e => {
+            // On a node: delete it. On a shape's outline: add a node there. Elsewhere: refit.
+            const node = this.node_at_(e.offsetX, e.offsetY);
+            if (node?.which === 'anchor') {
+                const sh = this.data_.shapes[node.shape];
+                this.on_shape_edit_?.(sh.motif, delete_node(sh.nodes, node.index), null);
+                return;
+            }
+            const seg = this.segment_at_(e.offsetX, e.offsetY);
+            if (seg) {
+                const sh = this.data_.shapes[seg.shape];
+                this.on_shape_edit_?.(sh.motif, rounded(split_segment(sh.nodes, seg.seg, seg.t)), null);
+                return;
+            }
             this.view_ = null;
             this.draw_();
         });
@@ -168,6 +203,65 @@ export class LayerView {
             path.closePath();
         }
         return path;
+    }
+
+    // A shape's first copy: local mm to world micrometres, and back. The copy is the motif placed
+    // at its radius, turned by its offset plus the symmetry's phase (sh.rot, radians).
+    shape_world_(sh, p) {
+        const x = sh.r_mm + p.x;
+        const c = Math.cos(sh.rot);
+        const s = Math.sin(sh.rot);
+        return { x: (c * x - s * p.y) * kUmPerMm, y: (s * x + c * p.y) * kUmPerMm };
+    }
+
+    shape_local_(sh, w) {
+        const c = Math.cos(sh.rot);
+        const s = Math.sin(sh.rot);
+        const x = (c * w.x + s * w.y) / kUmPerMm;
+        const y = (-s * w.x + c * w.y) / kUmPerMm;
+        return { x: x - sh.r_mm, y };
+    }
+
+    to_screen_(w) {
+        const v = this.view_;
+        return { x: v.ox + (w.x / kUmPerMm) * v.scale, y: v.oy - (w.y / kUmPerMm) * v.scale };
+    }
+
+    // The node or handle under a screen point: { shape, index, which: 'anchor' | 'in' | 'out' }.
+    // Handles win a close call over anchors, so a short handle can still be pulled out.
+    node_at_(sx, sy) {
+        if (!this.data_?.shapes?.length || !this.view_) return null;
+        let best = null;
+        let best_d = kNodePx;
+        this.data_.shapes.forEach((sh, shape) => {
+            sh.nodes.forEach((n, index) => {
+                for (const [which, x, y, bias] of [
+                    ['in', n.ix, n.iy, 0.5],
+                    ['out', n.ox, n.oy, 0.5],
+                    ['anchor', n.x, n.y, 0],
+                ]) {
+                    if (which !== 'anchor' && Math.hypot(x - n.x, y - n.y) < 1e-6) continue;
+                    const q = this.to_screen_(this.shape_world_(sh, { x, y }));
+                    const d = Math.hypot(q.x - sx, q.y - sy) - bias;
+                    if (d < best_d) {
+                        best_d = d;
+                        best = { shape, index, which };
+                    }
+                }
+            });
+        });
+        return best;
+    }
+
+    // The point of a shape's outline under a screen point (within the pick radius).
+    segment_at_(sx, sy) {
+        if (!this.data_?.shapes?.length || !this.view_) return null;
+        const w = this.to_world_(sx, sy);
+        for (const [shape, sh] of this.data_.shapes.entries()) {
+            const near = nearest_on_shape(sh.nodes, this.shape_local_(sh, w));
+            if (near.d * this.view_.scale <= kNodePx) return { shape, seg: near.seg, t: near.t };
+        }
+        return null;
     }
 
     click_(sx, sy) {
@@ -258,6 +352,46 @@ export class LayerView {
             ctx.lineTo(v.ox + (to.x / kUmPerMm) * v.scale, v.oy - (to.y / kUmPerMm) * v.scale);
             ctx.stroke();
             ctx.setLineDash([]);
+        }
+
+        // Shapes: the outline of the first copy, handles and nodes.
+        const cyan = css.getPropertyValue('--cyan').trim() || '#46b4ff';
+        for (const sh of this.data_.shapes ?? []) {
+            const tol = Math.max(0.5 / v.scale, 0.005); // half a pixel, in mm
+            const outline = flatten_shape(sh.nodes, tol).map(p => this.to_screen_(this.shape_world_(sh, p)));
+            ctx.strokeStyle = cyan;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 3]);
+            ctx.beginPath();
+            outline.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            for (const n of sh.nodes) {
+                const a = this.to_screen_(this.shape_world_(sh, { x: n.x, y: n.y }));
+                ctx.strokeStyle = cyan;
+                ctx.lineWidth = 1;
+                for (const [hx, hy] of [
+                    [n.ix, n.iy],
+                    [n.ox, n.oy],
+                ]) {
+                    if (Math.hypot(hx - n.x, hy - n.y) < 1e-6) continue;
+                    const h = this.to_screen_(this.shape_world_(sh, { x: hx, y: hy }));
+                    ctx.beginPath();
+                    ctx.moveTo(a.x, a.y);
+                    ctx.lineTo(h.x, h.y);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(h.x, h.y, 3.5, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#14101c';
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#14101c';
+                ctx.fillRect(a.x - 4, a.y - 4, 8, 8);
+                ctx.strokeRect(a.x - 4, a.y - 4, 8, 8);
+            }
         }
 
         for (const c of checks) {

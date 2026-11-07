@@ -5,6 +5,7 @@ import { Store } from '../core/store.js';
 import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
+import { to_shape } from '../sources/curves.js';
 import { write_param } from '../core/actions.js';
 import { unpack_paths } from '../geom/pack.js';
 import { check_level } from '../core/check_level.js';
@@ -80,6 +81,20 @@ function new_motif(type, design, layer) {
             return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
         case 'fret':
             return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
+        case 'scroll': {
+            // Not symmetric: off the mirror lines under a kaleidoscope.
+            const sym = design.piece.symmetry;
+            const angle_deg = sym.kind === 'dihedral' ? Math.round(900 / Math.max(1, sym.n)) / 10 : 0;
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.08), turns: 1.25, mult: 1, angle_deg };
+        }
+        case 'ruyi':
+            return { type, r_mm: v(0.6), length_mm: v(0.2), width_mm: v(0.16), mult: 1, angle_deg: 0 };
+        case 'ogee':
+            return { type, r_mm: v(0.6), length_mm: v(0.24), width_mm: v(0.12), mult: 1, angle_deg: 0 };
+        case 'lotus':
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.16), mult: 1, angle_deg: 0 };
+        case 'shape':
+            return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
         case 'circuit':
             return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
         default:
@@ -170,7 +185,18 @@ export function start_app({ worker, preview, stage }) {
             dowels: state.built.registration.dowels_mm,
             hole_d_mm: state.built.registration.hole_d_mm,
             drilled: k > 0 || d.registration.through_front,
+            shapes: shapes_of(store.design, k),
         });
+    }
+
+    // The shape motifs of layer k for node editing, from the current design (not the last
+    // build), so nodes follow the pointer while the geometry catches up. rot turns the first copy:
+    // the motif's offset plus the symmetry's phase.
+    function shapes_of(design, k) {
+        const phase = ((design.piece.symmetry.phase_deg ?? 0) * Math.PI) / 180;
+        return (design.layers[k]?.source.motifs ?? [])
+            .map((m, i) => (m.type === 'shape' ? { motif: i, nodes: m.nodes, r_mm: m.r_mm, rot: phase + ((m.angle_deg ?? 0) * Math.PI) / 180 } : null))
+            .filter(Boolean);
     }
 
     function render_status() {
@@ -210,6 +236,23 @@ export function start_app({ worker, preview, stage }) {
         },
         add_motif(type) {
             edit(d => current(d).source.motifs.push(new_motif(type, d, current(d))));
+        },
+        // A petal or curve motif becomes a shape with the same outline, whose nodes can be
+        // dragged in the Layer view (SPEC 8.4).
+        convert_motif(i) {
+            edit(d => {
+                const motifs = current(d).source.motifs;
+                motifs[i] = to_shape(motifs[i]);
+            });
+            app.set_view('layer');
+            set_status('busy', 'Now a shape: drag its nodes and handles in the Layer view.');
+        },
+        // New nodes for a shape motif; every move of one drag is one undo step.
+        edit_shape(i, nodes, drag) {
+            const k = ui.layer;
+            edit(d => {
+                d.layers[k].source.motifs[i].nodes = nodes;
+            }, drag ? `shape@${k}.${i}.${drag}` : null);
         },
         remove_motif(i) {
             edit(d => current(d).source.motifs.splice(i, 1));
@@ -390,6 +433,7 @@ export function start_app({ worker, preview, stage }) {
         on_cell_click: p => app.paint_cell(p),
         on_bridge_drag: (bridge, angle_deg) => app.drag_bridge(bridge, angle_deg),
         on_bridge_reset: bridge => app.reset_bridges(bridge),
+        on_shape_edit: (i, nodes, drag) => app.edit_shape(i, nodes, drag),
     });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);
