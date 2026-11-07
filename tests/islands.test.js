@@ -141,3 +141,49 @@ test('no preset has a fatal finding', () => {
         assert.deepEqual(fatal.map(c => c.key), [], p.id);
     }
 });
+
+test('concentric islands get distinct IDs, so policies and bridges stay per island', () => {
+    const d = base_design(3);
+    d.layers[0].source.motifs = [ring(90, 6), ring(80, 6), ring(70, 6), ring(60, 6)];
+    const b = build_design(d).layers[0];
+    assert.equal(b.islands.length, 4, 'three rings and the centre disc, all centred on the origin');
+    assert.equal(new Set(b.islands.map(i => i.id)).size, 4);
+    // Shared IDs mixed the islands' bridges, so extra bridges found no room: each island gets the
+    // count its area asks for (two under 2500 mm2, three above).
+    for (const i of b.islands) {
+        const want = i.area_mm2 < 2500 ? 2 : 3;
+        assert.equal(b.bridges.filter(x => x.island === i.id).length, want, `island of ${i.area_mm2.toFixed(0)} mm2`);
+    }
+});
+
+test('a dragged bridge keeps its angle, and only that island changes', () => {
+    const d = nested_rings();
+    const before = build_design(d).layers[0];
+    const [outer, inner] = [...before.islands].sort((p, q) => q.area_mm2 - p.area_mm2);
+    d.layers[0].overrides.bridge_angles = { [outer.id]: [45, 165] };
+    const after = build_design(d).layers[0];
+    const own = after.bridges.filter(x => x.island === outer.id);
+    assert.equal(own.length, 2);
+    const gap = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+    assert.ok(gap(own[0].angle_deg, 45) < 3, `first at ${own[0].angle_deg}`);
+    assert.ok(gap(own[1].angle_deg, 165) < 3, `second at ${own[1].angle_deg}`);
+    assert.deepEqual(after.unbridged, []);
+    assert.equal(components(after.material).length, 1);
+    const inner_before = before.bridges.filter(x => x.island === inner.id).map(x => x.angle_deg);
+    const inner_after = after.bridges.filter(x => x.island === inner.id).map(x => x.angle_deg);
+    assert.equal(inner_after.length, inner_before.length);
+});
+
+test('islands packed among islands all reach the body (spanning tree, not nearest three only)', () => {
+    // A grid of small discs cut free by a lattice of slots: every disc's nearest neighbours are
+    // other discs, so only a group-to-group tie reaches the body.
+    const d = base_design(2);
+    d.piece.outline = { kind: 'rect', w_mm: 160, h_mm: 160 };
+    d.piece.symmetry = { kind: 'none', n: 1, phase_deg: 0 };
+    d.piece.depth_mode = 'field';
+    d.piece.field = { kind: 'chladni', scale_mm: 14, k: 5, a: 0, lo: 0.42, hi: 1 };
+    const b = build_design(d).layers[0];
+    assert.ok(b.islands.length > 20, `${b.islands.length} islands`);
+    assert.deepEqual(b.unbridged, []);
+    assert.equal(components(b.material).length, 1);
+});
