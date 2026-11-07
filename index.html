@@ -93651,11 +93651,11 @@ return { kModels, kEfforts, kMaxRounds, Assistant };
 // src/ai/gemini_agent.js
 const __m_ai_gemini_agent_js = (function () {
 const { invalid_input } = __m_ai_prompt_js;
-// The assistant's tool loop on Gemini (SPEC M4.5), with the user's own key: generateContent with
-// function calling, the same tools and events as the Claude loop (agent.js). One request from the
-// user may take many rounds of tool calls. A turn ends when a reply calls no tools, on a safety
-// block, at the round cap, or when the user presses Stop. The model's turns go back into the
-// history exactly as they came, so their thought signatures stay valid.
+// The assistant's tool loop on Gemini (SPEC M4.5), with the user's own key: streamed
+// generateContent with function calling, the same tools and events as the Claude loop (agent.js).
+// One request from the user may take many rounds of tool calls. A turn ends when a reply calls no
+// tools, on a safety block, at the round cap, or when the user presses Stop. The model's turns go
+// back into the history exactly as they came, part by part, so their thought signatures stay valid.
 
 
 // Free keys get no Pro quota (a limit of 0), so Pro needs billing on the key's project.
@@ -93692,6 +93692,9 @@ function gemini_error_words(status, raw) {
 const kThinking = { medium: 'LOW', high: 'HIGH', xhigh: 'HIGH' };
 const kBlocked = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY'];
 const kMaxRounds = 30;
+// A reply that sends nothing for this long is dropped (thinking at high effort can be quiet for a
+// minute or more before the first summary).
+const kIdleMs = 180000;
 
 const is_gemini_model = model => String(model).startsWith('gemini-');
 
@@ -93719,8 +93722,9 @@ function function_response(call, r) {
 class GeminiAssistant {
     // client: a GoogleGenAI instance, or anything with models.generateContent(params) (tests pass a
     //   stand-in). The rest is as for Assistant in agent.js.
-    constructor({ client, is_api_error, model, effort, system, tools, run_tool, on_event }) {
+    constructor({ client, is_api_error, model, effort, system, tools, run_tool, on_event, idle_ms = kIdleMs }) {
         this.client_ = client;
+        this.idle_ms_ = idle_ms;
         this.is_api_error_ = is_api_error ?? (err => typeof err?.status === 'number');
         this.model = model;
         this.effort = effort;
@@ -93746,6 +93750,46 @@ class GeminiAssistant {
         };
     }
 
+    // One streamed reply, gathered into the shape of a whole one. Thoughts and text are passed on
+    // as they arrive; every part is kept as it came, including empty ones carrying a signature.
+    async request_(signal) {
+        const ctl = new AbortController();
+        const forward = () => ctl.abort();
+        signal?.addEventListener('abort', forward, { once: true });
+        let timer = 0;
+        let idle = false;
+        const poke = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => ((idle = true), ctl.abort()), this.idle_ms_);
+        };
+        const parts = [];
+        let finishReason = '';
+        let usageMetadata = null;
+        let promptFeedback = null;
+        poke();
+        try {
+            const stream = await this.client_.models.generateContentStream(this.params_(ctl.signal));
+            for await (const chunk of stream) {
+                poke();
+                usageMetadata = chunk.usageMetadata ?? usageMetadata;
+                promptFeedback = chunk.promptFeedback ?? promptFeedback;
+                const c = chunk.candidates?.[0];
+                finishReason = c?.finishReason ?? finishReason;
+                for (const p of c?.content?.parts ?? []) {
+                    parts.push(p);
+                    if (p.text) this.on_event_(p.thought ? { type: 'thinking', text: p.text } : { type: 'text', text: p.text });
+                }
+            }
+        } catch (err) {
+            if (idle) throw new Error(`Gemini sent nothing for ${Math.round(this.idle_ms_ / 1000)} s, so the request was dropped. Send again.`);
+            throw err;
+        } finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', forward);
+        }
+        return { candidates: [{ content: parts.length ? { role: 'model', parts } : undefined, finishReason }], usageMetadata, promptFeedback };
+    }
+
     async send(content, { signal } = {}) {
         // A turn that fails, is blocked or is stopped leaves the history as it was, so the user can
         // send again (the design keeps any changes, and travels with the next message).
@@ -93765,7 +93809,7 @@ class GeminiAssistant {
             if (signal?.aborted) return rollback({ reason: 'stopped' });
             let response;
             try {
-                response = await this.client_.models.generateContent(this.params_(signal));
+                response = await this.request_(signal);
             } catch (err) {
                 if (signal?.aborted) return rollback({ reason: 'stopped' });
                 rollback();
@@ -93790,10 +93834,6 @@ class GeminiAssistant {
             retries = 0;
             const parts = candidate.content.parts;
             this.contents.push({ role: 'model', parts });
-            for (const p of parts) {
-                if (!p.text) continue;
-                this.on_event_(p.thought ? { type: 'status', text: p.text } : { type: 'text', text: p.text });
-            }
             const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
             if (!calls.length) return { reason: reason === 'STOP' || !reason ? 'done' : reason.toLowerCase() };
 
@@ -93823,7 +93863,7 @@ class GeminiAssistant {
         return { reason: 'round_cap' };
     }
 }
-return { kGeminiModels, kFreeGeminiModel, no_free_quota, gemini_error_words, kMaxRounds, is_gemini_model, to_parts, function_response, GeminiAssistant };
+return { kGeminiModels, kFreeGeminiModel, no_free_quota, gemini_error_words, kMaxRounds, kIdleMs, is_gemini_model, to_parts, function_response, GeminiAssistant };
 })();
 // src/ai/sdk.js
 const __m_ai_sdk_js = (function () {
@@ -94764,6 +94804,23 @@ class AssistantPanel {
     }
 
     on_event_(e) {
+        if (e.type === 'thinking') {
+            // Gemini's thought summaries stream in pieces: one line per stretch of thinking, showing
+            // its latest heading (or its start when it has none).
+            this.reply_ = null;
+            this.thought_ ??= this.add_('status', '');
+            this.thought_text_ = (this.thought_text_ ?? '') + e.text;
+            const heads = [...this.thought_text_.matchAll(/\*\*(.+?)\*\*/g)];
+            this.thought_.textContent = heads.length ? `${heads.at(-1)[1]}...` : this.thought_text_.replace(/\s+/g, ' ').trim().slice(0, 140);
+            this.log_.scrollTop = this.log_.scrollHeight;
+            return;
+        }
+        if (e.type !== 'usage') {
+            // Anything else ends a stretch of thinking (and the waiting line, if it is still showing).
+            if (this.thought_ && !this.thought_text_) this.thought_.remove();
+            this.thought_ = null;
+            this.thought_text_ = '';
+        }
         if (e.type === 'text') {
             this.reply_ ??= this.add_('assistant', '');
             this.reply_.textContent += e.text;
@@ -94819,6 +94876,11 @@ class AssistantPanel {
         this.running_ = new AbortController();
         this.send_btn_.hidden = true;
         this.stop_btn_.hidden = false;
+        // Until the model's first thoughts arrive, say who it is waiting for; the Stop button counts.
+        this.thought_ = this.add_('status', `Waiting for ${(kModels[this.settings_.model] ?? this.settings_.model).replace(/ \(.*\)$/, '')} to start thinking...`);
+        this.thought_text_ = '';
+        const t0 = Date.now();
+        const tick = setInterval(() => (this.stop_btn_.textContent = `Stop (${Math.round((Date.now() - t0) / 1000)} s)`), 1000);
         const sent_ids = this.pending_.splice(0);
         try {
             const assistant = await this.assistant_for_();
@@ -94841,6 +94903,10 @@ class AssistantPanel {
             if (this.assistant_ instanceof GeminiAssistant) this.pending_.unshift(...sent_ids);
             if (this.no_free_quota_?.(err) && this.settings_.model !== kFreeGeminiModel) this.offer_free_model_();
         } finally {
+            clearInterval(tick);
+            if (this.thought_ && !this.thought_text_) this.thought_.remove();
+            this.thought_ = null;
+            this.stop_btn_.textContent = 'Stop';
             this.running_ = null;
             this.send_btn_.hidden = false;
             this.stop_btn_.hidden = true;
