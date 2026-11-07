@@ -1,5 +1,6 @@
 // Layer strip (SPEC 11): a thumbnail of every layer under the preview, front first. Clicking one
-// selects it for every per-layer control. Each has an eye button that shows or hides the layer in
+// selects it for every per-layer control; the "All layers" switch makes those controls change
+// every layer at once, and marks every thumbnail. Each has an eye button that shows or hides the layer in
 // the 3D and 2D views (the view only: checks and cut files keep every layer), and "Show all"
 // appears while any layer is hidden. A thumbnail redraws only when its layer's material or colour
 // changes, so dense lattices cost nothing on edits that leave them alone.
@@ -13,19 +14,30 @@ const kEyeOff = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="tr
 
 export class LayerStrip {
     // on_select(k) is called with the clicked layer's index, on_toggle(k) with the index whose eye
-    // was clicked, and on_show_all() by "Show all".
-    constructor(container, { on_select, on_toggle, on_show_all }) {
+    // was clicked, on_show_all() by "Show all", and on_all_layers(on) by the "All layers" switch.
+    constructor(container, { on_select, on_toggle, on_show_all, on_all_layers }) {
         this.container_ = container;
         this.on_select_ = on_select;
         this.on_toggle_ = on_toggle;
         this.items_ = [];
         this.show_all_ = el('button', { type: 'button', class: 'tool small', text: 'Show all', hidden: '' });
         this.show_all_.addEventListener('click', () => on_show_all());
-        container.append(el('span', { class: 'strip-label', text: 'Layers' }), this.show_all_);
+        this.all_ = el('button', {
+            type: 'button',
+            class: 'switch',
+            role: 'switch',
+            'aria-checked': 'false',
+            title: 'On: changes to a layer\'s colour, material, gap, frame ring, structure and "Keep this layer" go to every layer',
+        }, [el('span', { class: 'switch-knob' }), el('span', { text: 'All layers' })]);
+        this.all_.addEventListener('click', () => on_all_layers(this.all_.getAttribute('aria-checked') !== 'true'));
+        container.append(el('span', { class: 'strip-label', text: 'Layers' }), this.all_, this.show_all_);
     }
 
-    // design and its built layers (unpacked), the selected layer index, and the hidden indices.
-    show(design, layers, selected, hidden = new Set()) {
+    // design and its built layers (unpacked), the selected layer index, the hidden indices, and
+    // whether edits go to every layer.
+    show(design, layers, selected, hidden = new Set(), all = false) {
+        this.all_.setAttribute('aria-checked', String(all));
+        this.container_.classList.toggle('all', all);
         const n = design.layers.length;
         while (this.items_.length < n) this.add_();
         while (this.items_.length > n) this.items_.pop().cell.remove();

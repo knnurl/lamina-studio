@@ -17,11 +17,11 @@ const kGroups = {
     pattern: [{ panel: 'pattern' }],
     look: [
         { panel: 'material', heading: () => 'Every layer' },
-        { panel: 'layers', heading: k => `Layer ${k + 1}` },
+        { panel: 'layers', per_layer: true, heading: k => `Layer ${k + 1}` },
         { panel: 'light', heading: () => 'Light' },
     ],
     structure: [
-        { panel: 'structure', scope: 'layer', heading: k => `Layer ${k + 1}` },
+        { panel: 'structure', scope: 'layer', per_layer: true, heading: k => `Layer ${k + 1}` },
         { panel: 'structure', scope: 'design', heading: () => 'Dowels and spacers' },
     ],
     make: [{ panel: 'make' }],
@@ -47,7 +47,7 @@ export class Panels {
         const layer = d.layers[k];
         const panels = kGroups[step].map(g => g.panel);
         const shown = SCHEMA.filter(e => panels.includes(e.panel) && shown_if(e, d, layer)).map(e => e.id);
-        const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(',')];
+        const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(','), this.app_.ui.all_layers];
         if (step === 'pattern') parts.push(d.piece.depth_mode, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
@@ -75,7 +75,7 @@ export class Panels {
             const basic = entries.filter(e => e.tier !== 'advanced');
             advanced.push(...entries.filter(e => e.tier === 'advanced'));
             if (!basic.length) continue;
-            if (group.heading) body.append(el('h3', { class: 'sub', text: group.heading(k) }));
+            if (group.heading) body.append(el('h3', { class: 'sub', text: group.per_layer && app.ui.all_layers ? `All layers (showing layer ${k + 1})` : group.heading(k) }));
             for (const entry of basic) body.append(this.control_(entry));
         }
         if (step === 'pattern') this.motif_editor_(body);
@@ -175,7 +175,8 @@ export class Panels {
             return;
         }
 
-        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value => app.set_layer_locked(value));
+        if (app.ui.all_layers) body.append(el('p', { class: 'step-note', text: 'Openings are edited one layer at a time, even with All layers on.' }));
+        const keep = make_control({ type: 'toggle', label: app.ui.all_layers ? 'Keep every layer when randomising' : 'Keep this layer when randomising' }, value => app.set_layer_locked(value));
         body.append(keep.el);
         this.refreshers_.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
         keep.refresh(layer.locked);

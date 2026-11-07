@@ -254,6 +254,41 @@ button { font: inherit; color: inherit; }
 .strip-item[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
 .strip-thumb { width: 44px; height: 44px; display: block; }
 .strip-cell { position: relative; flex: none; }
+.layer-strip.all .strip-item { border-color: color-mix(in srgb, var(--acid) 55%, var(--rule)); }
+.switch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    background: none;
+    border: 0;
+    color: var(--ink-2);
+    font-size: 12px;
+    cursor: pointer;
+}
+.switch-knob {
+    position: relative;
+    width: 28px;
+    height: 16px;
+    border-radius: 8px;
+    background: var(--stage-b);
+    border: 1px solid var(--rule);
+}
+.switch-knob::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ink-2);
+    transition: left 0.15s;
+}
+.switch[aria-checked="true"] { color: var(--ink); }
+.switch[aria-checked="true"] .switch-knob { border-color: var(--acid); }
+.switch[aria-checked="true"] .switch-knob::after { left: 14px; background: var(--acid); }
 .strip-eye {
     position: absolute;
     top: -6px;

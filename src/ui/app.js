@@ -125,6 +125,8 @@ export function start_app({ worker, preview, stage }) {
         locks: new Set(),
         more: new Set(Array.isArray(saved_more) ? saved_more : []),
         draw: { tool: 'select', width_mm: 3, filled: true },
+        // On: per-layer settings (and "Keep this layer") change every layer at once.
+        all_layers: false,
         // Layers left out of the 3D and 2D views (the view only), and the peel slider's position.
         hidden: new Set(),
         peel: 0,
@@ -247,7 +249,7 @@ export function start_app({ worker, preview, stage }) {
             tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
         }
         render_layer_view();
-        strip.show(store.design, state.built?.layers, ui.layer, ui.hidden);
+        strip.show(store.design, state.built?.layers, ui.layer, ui.hidden, ui.all_layers);
     }
 
     // After the first piece opens, the tour is offered once, in a card over the preview.
@@ -272,7 +274,15 @@ export function start_app({ worker, preview, stage }) {
             return store.design;
         },
         set_param(entry, value, coalesce) {
+            if (entry.scope === 'layer' && ui.all_layers) {
+                edit(d => d.layers.forEach((_, k) => write_param(entry, d, k, value)), coalesce ? `${entry.id}@all` : null);
+                return;
+            }
             edit(d => write_param(entry, d, ui.layer, value), coalesce ? `${entry.id}@${ui.layer}` : null);
+        },
+        set_all_layers(on) {
+            ui.all_layers = on;
+            render_ui();
         },
         set_motif_param(i, key, value, coalesce) {
             edit(d => {
@@ -345,7 +355,7 @@ export function start_app({ worker, preview, stage }) {
         },
         set_layer_locked(value) {
             edit(d => {
-                current(d).locked = value;
+                for (const layer of ui.all_layers ? d.layers : [current(d)]) layer.locked = value;
             });
         },
         select_layer(k) {
@@ -739,6 +749,7 @@ export function start_app({ worker, preview, stage }) {
         on_select: k => app.select_layer(k),
         on_toggle: k => app.toggle_layer_shown(k),
         on_show_all: () => app.show_all_layers(),
+        on_all_layers: on => app.set_all_layers(on),
     });
     tour = new Tour(document.getElementById('tour'));
     const svg_input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
@@ -804,7 +815,7 @@ export function start_app({ worker, preview, stage }) {
             preview.show(design, state.built.layers);
             render2d.show(design, state.built.layers);
             render_layer_view();
-            strip.show(store.design, state.built.layers, ui.layer, ui.hidden);
+            strip.show(store.design, state.built.layers, ui.layer, ui.hidden, ui.all_layers);
             schedule_sheets();
             render_status();
             clearTimeout(check_timer);
