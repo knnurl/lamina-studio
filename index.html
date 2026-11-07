@@ -93658,10 +93658,36 @@ const { invalid_input } = __m_ai_prompt_js;
 // history exactly as they came, so their thought signatures stay valid.
 
 
+// Free keys get no Pro quota (a limit of 0), so Pro needs billing on the key's project.
 const kGeminiModels = {
-    'gemini-pro-latest': 'Gemini Pro (best designs)',
-    'gemini-flash-latest': 'Gemini Flash (faster, cheaper)',
+    'gemini-pro-latest': 'Gemini Pro (best designs, needs billing)',
+    'gemini-flash-latest': 'Gemini Flash (works with a free key)',
 };
+const kFreeGeminiModel = 'gemini-flash-latest';
+
+// The SDK's ApiError message is Google's JSON error body. True when the key's tier has no quota
+// at all for the model, which waiting does not fix.
+const no_free_quota = (status, raw) => status === 429 && /limit: 0\b|"quotaValue":"0"/.test(String(raw));
+
+// Plain words for a Gemini API error a user can act on.
+function gemini_error_words(status, raw) {
+    let message = String(raw);
+    try {
+        message = JSON.parse(raw).error?.message ?? message;
+    } catch {
+        // Not JSON: use it as it is.
+    }
+    if (status === 401 || status === 403 || (status === 400 && /api key/i.test(message))) return 'The Gemini key was not accepted. Check it in the assistant settings.';
+    if (status === 404) return 'Your Gemini key cannot use this model. Pick another in the assistant settings.';
+    if (no_free_quota(status, raw)) return 'Your key’s free tier does not include this model: Google gives it a limit of 0, so waiting will not help. Use Gemini Flash, which works with a free key, or turn on billing for the key’s project in AI Studio.';
+    if (status === 429 && /PerDay/.test(raw)) return 'The Gemini key has used today’s free requests for this model. Try again tomorrow, pick another model, or turn on billing in AI Studio.';
+    if (status === 429) {
+        const wait_s = /"retryDelay":"(\d+)/.exec(raw)?.[1];
+        return `The Gemini key has hit its per-minute limit. Wait ${wait_s ? `${wait_s} s` : 'a minute'} and send again.`;
+    }
+    if (status >= 500) return 'Gemini is busy. Wait a minute and try again.';
+    return `Gemini returned an error (${status}): ${message}`;
+}
 // Effort maps onto the thinking levels every Gemini 3 model accepts (the SDK's ThinkingLevel values).
 const kThinking = { medium: 'LOW', high: 'HIGH', xhigh: 'HIGH' };
 const kBlocked = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY'];
@@ -93721,15 +93747,28 @@ class GeminiAssistant {
     }
 
     async send(content, { signal } = {}) {
-        this.contents.push({ role: 'user', parts: to_parts(content) });
+        // A turn that fails, is blocked or is stopped leaves the history as it was, so the user can
+        // send again (the design keeps any changes, and travels with the next message).
+        const start = this.contents.length;
+        // After the round cap the history ends with function responses: the new words join them.
+        const last = this.contents.at(-1);
+        const merged_from = last?.role === 'user' ? last.parts.length : null;
+        if (merged_from !== null) last.parts.push(...to_parts(content));
+        else this.contents.push({ role: 'user', parts: to_parts(content) });
+        const rollback = result => {
+            this.contents.length = start;
+            if (merged_from !== null) last.parts.length = merged_from;
+            return result;
+        };
         let retries = 0;
         for (let round = 0; round < kMaxRounds; round++) {
-            if (signal?.aborted) return { reason: 'stopped' };
+            if (signal?.aborted) return rollback({ reason: 'stopped' });
             let response;
             try {
                 response = await this.client_.models.generateContent(this.params_(signal));
             } catch (err) {
-                if (signal?.aborted) return { reason: 'stopped' };
+                if (signal?.aborted) return rollback({ reason: 'stopped' });
+                rollback();
                 throw err;
             }
             const u = response.usageMetadata;
@@ -93741,12 +93780,11 @@ class GeminiAssistant {
             const reason = candidate?.finishReason ?? '';
             const blocked = response.promptFeedback?.blockReason;
             if (blocked || kBlocked.includes(reason)) {
-                // Nothing of a blocked reply joins the conversation.
-                return { reason: 'refused', detail: response.promptFeedback?.blockReasonMessage ?? null };
+                return rollback({ reason: 'refused', detail: response.promptFeedback?.blockReasonMessage ?? null });
             }
             // A function call the model could not form: ask again, a few times.
             if (reason === 'MALFORMED_FUNCTION_CALL' || reason === 'UNEXPECTED_TOOL_CALL' || !candidate?.content?.parts) {
-                if (retries++ >= 2) return { reason: reason || 'empty' };
+                if (retries++ >= 2) return rollback({ reason: reason || 'empty' });
                 continue;
             }
             retries = 0;
@@ -93780,19 +93818,22 @@ class GeminiAssistant {
             }
             // Every result of the round in one turn, in the order of the calls.
             this.contents.push({ role: 'user', parts: results });
-            if (signal?.aborted) return { reason: 'stopped' };
+            if (signal?.aborted) return rollback({ reason: 'stopped' });
         }
         return { reason: 'round_cap' };
     }
 }
-return { kGeminiModels, kMaxRounds, is_gemini_model, to_parts, function_response, GeminiAssistant };
+return { kGeminiModels, kFreeGeminiModel, no_free_quota, gemini_error_words, kMaxRounds, is_gemini_model, to_parts, function_response, GeminiAssistant };
 })();
 // src/ai/sdk.js
 const __m_ai_sdk_js = (function () {
+const { gemini_error_words, no_free_quota } = __m_ai_gemini_agent_js;
 // The AI SDKs (SPEC 14), loaded on first use from jsDelivr at pinned versions, so the page works
 // without them and without keys. Each user brings their own keys, so the clients run in the
 // browser (the Anthropic one with dangerouslyAllowBrowser).
-const kAnthropicUrl = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
+
+
+const kAnthropicUrl ='https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
 const kGenAiUrl = 'https://cdn.jsdelivr.net/npm/@google/genai@2.31.0/+esm';
 const kPictureModel = 'gemini-nano-banana-2.1';
 
@@ -93827,13 +93868,10 @@ async function gemini_client(api_key) {
         is_api_error: err => err instanceof ApiError,
         explain(err) {
             if (!(err instanceof ApiError)) return err instanceof TypeError ? 'Could not reach Gemini. Check the internet connection.' : (err?.message ?? String(err));
-            const s = err.status;
-            if (s === 401 || s === 403 || (s === 400 && /api key/i.test(err.message))) return 'The Gemini key was not accepted. Check it in the assistant settings.';
-            if (s === 404) return 'Your Gemini key cannot use this model. Pick another in the assistant settings.';
-            if (s === 429) return 'The Gemini key has hit its limit: free keys allow a few requests a minute and a daily total. Wait a minute, pick Gemini Flash, or turn on billing in AI Studio.';
-            if (s >= 500) return 'Gemini is busy. Wait a minute and try again.';
-            return `Gemini returned an error (${s}): ${err.message}`;
+            return gemini_error_words(err.status, err.message);
         },
+        // The key's tier has no quota for the model at all: the panel offers the free model.
+        no_free_quota: err => err instanceof ApiError && no_free_quota(err.status, err.message),
     };
 }
 
@@ -94500,7 +94538,7 @@ return { load_settings, save_settings, forget_keys };
 const __m_ui_assistant_panel_js = (function () {
 const { el } = __m_ui_dom_js;
 const { Assistant, kModels: kClaudeModels, kEfforts } = __m_ai_agent_js;
-const { GeminiAssistant, kGeminiModels, is_gemini_model } = __m_ai_gemini_agent_js;
+const { GeminiAssistant, kGeminiModels, kFreeGeminiModel, is_gemini_model } = __m_ai_gemini_agent_js;
 const { claude_client, gemini_client } = __m_ai_sdk_js;
 const { system_prompt, tools } = __m_ai_prompt_js;
 const { design_summary } = __m_ai_ops_js;
@@ -94616,6 +94654,7 @@ class AssistantPanel {
         go.addEventListener('click', () => this.show_settings_(true));
         card.append(go);
         this.log_.append(card);
+        this.setup_card_ = card;
     }
 
     show_settings_(open) {
@@ -94644,7 +94683,8 @@ class AssistantPanel {
             this.refresh_chip_();
             this.show_settings_(false);
             const s2 = this.settings_;
-            this.add_('note', `Saved. ${key_for(s2) ? 'Ready.' : `Add a ${engine(s2)} key to start, or pick a model for the key you have.`}${s2.gemini_key ? ' Pictures from a description are on.' : ''}`);
+            if (key_for(s2)) this.setup_card_?.remove();
+            this.add_('note',`Saved. ${key_for(s2) ? 'Ready.' : `Add a ${engine(s2)} key to start, or pick a model for the key you have.`}${s2.gemini_key ? ' Pictures from a description are on.' : ''}`);
         });
         const forget = el('button', { type: 'button', class: 'btn ghost', text: 'Forget keys' });
         forget.addEventListener('click', () => {
@@ -94679,6 +94719,7 @@ class AssistantPanel {
         const gemini = is_gemini_model(this.settings_.model);
         const sdk = globalThis.__lamina_ai_stand_in ?? (gemini ? await gemini_client(this.settings_.gemini_key) : await claude_client(this.settings_.claude_key));
         this.explain_ = sdk.explain ?? (err => err?.message ?? String(err));
+        this.no_free_quota_ = sdk.no_free_quota ?? (() => false);
         const ctx = {
             ...this.ctx_,
             pictures: this.pictures_,
@@ -94746,6 +94787,22 @@ class AssistantPanel {
         }
     }
 
+    // A free key has no quota for this model: one click moves to the free model and sends again.
+    offer_free_model_() {
+        const go = el('button', { type: 'button', class: 'btn', text: `Use ${kModels[kFreeGeminiModel].replace(/ \(.*\)$/, '')} and send again` });
+        const card = el('div', { class: 'msg setup' }, [go]);
+        go.addEventListener('click', () => {
+            card.remove();
+            this.settings_ = { ...this.settings_, model: kFreeGeminiModel };
+            save_settings(this.settings_);
+            this.assistant_ = null;
+            this.refresh_chip_();
+            this.send(this.input_.value);
+        });
+        this.log_.append(card);
+        this.log_.scrollTop = this.log_.scrollHeight;
+    }
+
     // Sends a message with the current design attached. Resolves when the turn ends.
     async send(text) {
         text = String(text ?? '').trim();
@@ -94762,11 +94819,12 @@ class AssistantPanel {
         this.running_ = new AbortController();
         this.send_btn_.hidden = true;
         this.stop_btn_.hidden = false;
+        const sent_ids = this.pending_.splice(0);
         try {
             const assistant = await this.assistant_for_();
             const content = [{ type: 'text', text }];
             // Pictures the user added since the last message, with their ids for trace_picture.
-            for (const id of this.pending_.splice(0)) {
+            for (const id of sent_ids) {
                 const p = this.pictures_.get(id);
                 content.push({ type: 'image', source: { type: 'base64', media_type: p.mime_type, data: p.data } }, { type: 'text', text: `That is picture ${id}, added by the user (${p.source}).` });
             }
@@ -94777,6 +94835,11 @@ class AssistantPanel {
             else if (r.reason === 'round_cap') this.add_('note', 'That took many steps, so the assistant paused. Say "carry on" to continue.');
         } catch (err) {
             this.add_('note bad', this.explain_ ? this.explain_(err) : err.message);
+            // The message was not taken: it goes back in the box, its pictures with it (a Gemini
+            // turn that fails leaves no trace in the conversation).
+            if (!this.input_.value) this.input_.value = text;
+            if (this.assistant_ instanceof GeminiAssistant) this.pending_.unshift(...sent_ids);
+            if (this.no_free_quota_?.(err) && this.settings_.model !== kFreeGeminiModel) this.offer_free_model_();
         } finally {
             this.running_ = null;
             this.send_btn_.hidden = false;
