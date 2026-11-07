@@ -8,14 +8,10 @@ import { apply_ops, design_summary } from './ops.js';
 import { make_picture } from './sdk.js';
 import { draw_stack } from '../ui/start_screen.js';
 import { import_into_layer, piece_radius_mm } from '../core/design.js';
+import { bytes_to_base64 } from '../image/raster.js';
+import { picture_raster } from '../image/photo.js';
 
 const kLookPx = 768; // pictures for the model: enough to judge, small enough to send often
-
-export function bytes_to_base64(bytes) {
-    let s = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return btoa(s);
-}
 
 const canvas_png = canvas => new Promise(resolve => canvas.toBlob(async blob => resolve(new Uint8Array(await blob.arrayBuffer())), 'image/png'));
 const image_block = (data, media_type = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type, data } });
@@ -58,26 +54,6 @@ function draw_layer(canvas, design, layer) {
     ctx.fill(trace(layer.material), 'evenodd');
     ctx.fillStyle = '#b4f03c';
     for (const b of layer.bridges) ctx.fill(trace([b.rect]));
-}
-
-// A picture, decoded and drawn into a grey raster at most max_px on its longest side.
-async function grey_raster(picture, max_px = 320) {
-    const blob = await (await fetch(`data:${picture.mime_type};base64,${picture.data}`)).blob();
-    const bitmap = await createImageBitmap(blob);
-    const k = Math.min(1, max_px / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * k));
-    const h = Math.max(1, Math.round(bitmap.height * k));
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    const rgba = ctx.getImageData(0, 0, w, h).data;
-    const grey = new Uint8Array(w * h);
-    for (let i = 0; i < grey.length; i++) grey[i] = Math.round(0.2126 * rgba[4 * i] + 0.7152 * rgba[4 * i + 1] + 0.0722 * rgba[4 * i + 2]);
-    const data = bytes_to_base64(grey);
-    // A short content hash, so caches can name the picture without its bytes.
-    let h1 = 2166136261;
-    for (let i = 0; i < grey.length; i++) h1 = Math.imul(h1 ^ grey[i], 16777619);
-    return { w, h, data, hash: `${w}x${h}-${(h1 >>> 0).toString(36)}` };
 }
 
 // A smaller copy of a picture for the model (JPEG, at most kLookPx).
@@ -188,7 +164,7 @@ export function make_tool_runner(ctx) {
             case 'trace_picture': {
                 const picture = ctx.pictures.get(input.picture);
                 if (!picture) return { content: `There is no picture ${input.picture}. Pictures so far: ${[...ctx.pictures.keys()].join(', ') || 'none'}.`, is_error: true };
-                const image = await grey_raster(picture);
+                const image = await picture_raster(picture);
                 const next = structuredClone(ctx.design());
                 next.piece.depth_mode = 'field';
                 Object.assign(next.piece.field, {
