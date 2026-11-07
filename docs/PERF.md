@@ -15,7 +15,8 @@ The bench re-run on 2026-11-07 is slower on the 20-layer case than on 2026-11-06
 | Cold build, 12 layers, 300 mm | none | 51 to 55 ms median; 63 to 70 ms on 2026-11-07 | `node tools/bench.js` |
 | Build, every check and the export zip, 20 layers, 600 mm, cold | under 5 s | 322 to 329 ms median; 395 to 458 ms on 2026-11-07 | `node tools/bench.js` |
 | Dense lattice slider change, Lattice orb, 12 layers, 290 mm (M2, 2026-11-07) | under 400 ms | 186 ms median | `node tools/bench.js` |
-| The same in the browser: worker round trip and 3D render (M2, 2026-11-07) | under 400 ms | 223 ms median of 7 (range 194 to 312), checks idle between samples | `node tools/shot.js out.png --timeout=120000 --eval-file=tools/lattice_latency.page.js` |
+| Slider change in the browser after the guided UI, Orb at 12 layers (2026-11-07) | under 150 ms | 37 ms median of 7 (range 35 to 42) | `node tools/shot.js out.png --eval-file=tools/slider_latency.page.js` |
+| The same in the browser: worker round trip and 3D render (M2, 2026-11-07) | under 400 ms | 223 ms median of 7 (range 194 to 312), checks idle between samples; 199 ms (range 185 to 257) after the guided UI | `node tools/shot.js out.png --timeout=120000 --eval-file=tools/lattice_latency.page.js` |
 | Field slider change, 12 layers, 290 mm, rings: every layer rebuilds (M2) | none | 723 ms median; about 1.1 s in the browser | `node tools/bench.js` |
 | Circuit panel, 6 layers, 380 x 280 mm (M3): cold build, slow checks, slider change | none | 54 ms, 34 ms, 26 ms (median of 5, Node) | a Node script: `build_design` and `slow_checks` on the preset, then +1 trace on layer 3 |
 | Mandala, 10 layers, 290 mm (M4): cold build, slow checks, slider change | none | 65 ms, 79 ms, 20 ms (median of 5, Node) | a Node script: `build_design` and `slow_checks` on the preset, then a curve length on layer 2 |
@@ -46,6 +47,7 @@ Stage caches (SPEC 6.2) make edits that do not touch geometry (colour, gaps, lig
 - **Dowels search a window around each target angle first (M2), then whole layers,** sparsest first. On the mandala, windows alone measured slower (273 ms against 192 ms). On dense lattices whole-layer intersections are slow. After one window miss the windows are skipped. The mandala's cold build measured the same as M1's, interleaved: 800 to 900 ms after the first, JIT-cold run of about 1.05 s.
 - **Per-layer, registration and slow-check caches,** keyed by their inputs.
 - **The 3D preview keeps extruded geometry per layer** (M2), keyed by the layer's material and thickness. Before, every build re-triangulated every layer, one 250 to 330 ms main-thread task per edit on the Lattice orb (PerformanceObserver long tasks). That cut the browser median from 460 ms to 223 ms.
+- **The layer strip redraws a thumbnail only when its layer's material or colour changes,** and finds the shared scale again only when some material changed. Scanning every point of the Lattice orb on each build put the browser median at 272 ms; caching brought it to 199 ms.
 - **Island bridging searches a segment grid** (M2): nearest points, crossing tests, and only the cells near an island's outline. A field slider on 8 Orb layers went from 1.2 to 1.6 s down to 0.4 to 0.7 s, with field sampling at 0.75 mm, 0.03 mm simplification, mitre joins for the opening, and numeric contour keys.
 
 ## Known limits

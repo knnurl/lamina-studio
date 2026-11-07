@@ -422,20 +422,42 @@ The test card and the calculator share one set of ladders.
 
 ## 11. UI and UX
 
-- **Layout**:
-  - A header with the name, presets, seed (←, →, ↻), randomise, undo/redo, open/save, Export and Help.
-  - A left sidebar of steps in decision order: Piece, Material and colour, Layers, Pattern, Structure (islands, bridges, dowels, spacers), Light, Make (sheet, checks, export).
-  - A main viewport with tabs 3D, 2D, Layer and Sheets.
+- **Layout (guided, 2026-11-07, owner's choice from clickable mockups):** one step on screen at a time, with no scrolling between steps.
+  - A top bar with the name, a step bar, undo and redo, New, Open, Save and the theme toggle.
+  - **Five steps** in decision order. Each has a one-line guide, Back and Next buttons, and opens the view it needs:
+    - Piece: outline, size, layers and symmetry. Opens 3D.
+    - Pattern: style, Randomise and seed, depth mode, and the selected layer's openings or artwork. Opens 3D.
+    - Look: palette, material, colour, gap and frame ring of the selected layer, and light. Opens 3D.
+    - Structure: islands, bridges, dowels and spacers. Opens the Layer view.
+    - Make: sheet, checks, export and calibration. Opens the Sheets view.
+  - Any step can be clicked at any time; nothing is locked. The view tabs (3D, 2D, Layer, Sheets) stay available, and a step change resets them to that step's view.
+  - **A layer strip** under the preview shows a thumbnail of every layer, front first. Clicking one selects it for every per-layer control.
   - A status bar with the check light, chips and cut length.
+- **Start screen:** "What are you making?" with four kinds:
+  - round wall piece;
+  - framed shadow box (box frames arrive in M6);
+  - festival panel;
+  - from a photo (M5).
+  - Each kind shows a gallery of matching presets, drawn from their real geometry, plus "Start blank".
+  - Opening a preset goes to the Pattern step; starting blank goes to the Piece step.
+  - It shows on the first visit and from New. A returning visitor opens straight into the last design.
+  - A one-minute spotlight tour is offered on the start screen and once after the first piece opens.
 - **Parameter registry**:
   - Every control is declared once in a `SCHEMA` entry: `{id, scope, label, type, min, max, step, unit, default, tier: basic|advanced, randomisable, lockable, show_if, desc}`.
   - Controls are generated from it, following coaxial's `SCHEMA` and `buildControl`.
   - Presets and the design JSON serialise by id.
-- **Basic and Advanced**: Basic shows about 15 controls. Advanced shows everything.
+- **More options (replaces Basic and Advanced):** each step shows its essential controls, and a "More options" fold holds the registry entries marked `tier: advanced`. Motif cards fold their own advanced parameters the same way. Nothing is hidden by a global mode.
 - **Randomise**:
   - Seeded and lock-aware, with checks as in section 7.
   - An undo history of 80 steps, as in fieldform.
-- **Onboarding** (M6): a spotlight tour (`TUT_STEPS` from fieldform and coaxial), a tutorial page, preset thumbnails, and a "make your first piece" path.
+- **Onboarding:** the start screen and spotlight tour above (2026-11-07). M6 adds the tutorial page.
+- **As built (2026-11-07):** driven in headless Edge.
+  - A first visit opens on the start screen, with real thumbnails of all six round presets.
+  - Opening the Mandala lands on step 2, Pattern, in 3D, with a 10-layer strip and the tour offer.
+  - Next walks Piece, Pattern and Look (3D), Structure (Layer view) and Make (Sheets); Next is disabled on Make.
+  - "More options" adds the advanced controls, and the Look panel follows the layer picked in the strip.
+  - The tour lights each part in turn, with the panel's note beside it.
+  - Slider latency in the browser: 37 ms median on the Orb (12 layers) and 199 ms on the Lattice orb, after the strip stopped rescanning every point each build (272 ms before).
 - **Theme**:
   - Psy neon dark is the default, with a light toggle saved in localStorage.
   - Tokens on `:root`: deep purple-black background, violet panels, acid-green primary accent, orange-red secondary, cool blue info. Final values are set in M1.
@@ -862,6 +884,10 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Island IDs include the box size | Concentric rings shared IDs, so their bridges and policies mixed |
 | 2026-11-07 | Lattice orb seed 6 | The densest of a rendered sweep and the closest to the orb reference, still inside the 400 ms slider target |
 | 2026-11-07 | The 3D preview keeps extruded geometry per layer, keyed by its material | Browser slider latency on the Lattice orb: 460 ms median down to 223 ms |
+| 2026-11-07 | Guided layout: one step on screen at a time (Piece, Pattern, Look, Structure, Make), each opening its view, with a layer strip under the preview | Owner: the long scrolling sidebar was hard to use. Chosen from three clickable mockups drawn with real presets |
+| 2026-11-07 | Start screen on the first visit and from New; a returning visitor opens their last design | Owner chose the start screen; resuming saves returning users a click every visit |
+| 2026-11-07 | "More options" folds per step replace the Basic and Advanced switch | Owner: nothing hidden by a global mode |
+| 2026-11-07 | Symmetry moves to the Piece step | It shapes the whole piece, and the Pattern step was the longest |
 | 2026-11-07 | Bezier maths in a module with no geometry library | The Layer view edits nodes on the main thread, which must not load Clipper2 (a test enforces it) |
 | 2026-11-07 | Scrolls sit mid-way between mirror lines under a kaleidoscope | The only asymmetric curve: on a mirror line its mirrored copy crosses it and cuts islands |
 | 2026-11-07 | Mandala preset seed 7 | From a rendered sweep of 12 seeds: a lotus ring inside a ring of arc slots |

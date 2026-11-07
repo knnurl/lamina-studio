@@ -91,12 +91,34 @@ button { font: inherit; color: inherit; }
     align-items: baseline;
     gap: 10px;
 }
-.mark span {
-    font: 400 14px/1 "IBM Plex Sans", system-ui, sans-serif;
-    letter-spacing: 0;
+.steps { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
+.step-chev { color: var(--rule); }
+.step-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
     color: var(--ink-2);
-    text-shadow: none;
+    font-weight: 500;
+    white-space: nowrap;
 }
+.step-btn:hover { color: var(--ink); }
+.step-dot {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    font: 600 12px/1 "Chakra Petch", system-ui, sans-serif;
+}
+.step-btn.done .step-dot { border-color: var(--acid); color: var(--acid); background: color-mix(in srgb, var(--acid) 16%, transparent); }
+.step-btn[aria-current="step"] { background: var(--panel-2); color: var(--ink); }
+.step-btn[aria-current="step"] .step-dot { background: var(--acid); border-color: var(--acid); color: var(--on-acid); }
 .chip {
     font-size: 12px;
     padding: 2px 8px;
@@ -119,44 +141,41 @@ button { font: inherit; color: inherit; }
 .icon-btn:hover { color: var(--ink); border-color: var(--ink-2); }
 
 .side {
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     background: var(--panel);
     border-right: 1px solid var(--rule);
-    padding: 8px 0 16px;
 }
-.step { border-bottom: 1px solid var(--rule); }
-.step > summary {
-    list-style: none;
-    cursor: pointer;
+.panel-head { display: grid; gap: 6px; padding: 16px 18px 6px; }
+.panel-kicker { font: 600 11px/1 "Chakra Petch", system-ui, sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--violet); }
+.panel-title { margin: 0; font: 600 22px/1.15 "Chakra Petch", system-ui, sans-serif; }
+.panel-guide { margin: 0; font-size: 13px; color: var(--ink-2); }
+.panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: grid;
-    grid-template-columns: 28px 1fr;
-    gap: 2px 8px;
-    padding: 12px 16px;
-}
-.step > summary::-webkit-details-marker { display: none; }
-.step-num {
-    grid-row: span 2;
-    font: 600 15px/1.35 "Chakra Petch", system-ui, sans-serif;
-    color: var(--violet);
-}
-.step-title { font-weight: 600; }
-.step-hint { font-size: 13px; color: var(--ink-2); }
-.step[open] .step-num { color: var(--acid); }
-.step-body {
-    padding: 0 16px 14px 52px;
+    align-content: start;
+    gap: 10px;
+    padding: 10px 18px 18px;
     font-size: 13px;
     color: var(--ink-2);
 }
-
+.panel-foot { display: flex; justify-content: space-between; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--rule); }
+.panel-foot .btn:disabled { cursor: default; }
 .step-note { margin: 0 0 10px; }
-.step-body { display: grid; gap: 10px; }
-.step-body .sub {
+.panel-body .sub, .start .sub {
     margin: 6px 0 0;
     font: 600 12px/1.2 "Chakra Petch", system-ui, sans-serif;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--violet);
 }
+.seed-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.more-toggle { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--cyan); font-weight: 500; cursor: pointer; }
+.more-toggle:hover { text-decoration: underline; }
+.more { display: grid; gap: 10px; padding-top: 10px; border-top: 1px dashed var(--rule); }
 
 /* Controls generated from the registry */
 .ctl { display: grid; gap: 4px; color: var(--ink); }
@@ -175,7 +194,7 @@ button { font: inherit; color: inherit; }
 }
 .ctl-unit { width: 26px; font-size: 12px; color: var(--ink-2); }
 .ctl input[type="range"] { width: 100%; accent-color: var(--acid); margin: 0; }
-.ctl select, .add-row select, .tool-select {
+.ctl select, .add-row select {
     background: var(--field);
     color: var(--ink);
     border: 1px solid var(--rule);
@@ -198,21 +217,32 @@ button { font: inherit; color: inherit; }
 }
 .lock[aria-pressed="true"] { filter: none; opacity: 1; }
 
-.layer-strip { display: flex; flex-wrap: wrap; gap: 6px; }
-.layer-chip {
-    display: inline-flex;
+.layer-strip {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 8px 3px 4px;
-    background: var(--field);
-    border: 1px solid var(--rule);
-    border-radius: 999px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--ink-2);
+    gap: 8px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    border-top: 1px solid var(--rule);
+    background: var(--panel);
 }
-.layer-chip .swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--rule); }
-.layer-chip[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
+.strip-label { font: 600 11px/1 "Chakra Petch", system-ui, sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); margin-right: 4px; }
+.strip-item {
+    flex: none;
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    padding: 3px 3px 2px;
+    background: var(--stage-b);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--ink-2);
+    font-size: 11px;
+}
+.strip-item:hover { border-color: var(--ink-2); }
+.strip-item[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
+.strip-thumb { width: 44px; height: 44px; display: block; }
 
 .motif {
     display: grid;
@@ -297,10 +327,6 @@ button { font: inherit; color: inherit; }
     font: inherit;
     font-size: 14px;
 }
-.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
-.seg-btn { background: none; border: 0; padding: 5px 12px; cursor: pointer; color: var(--ink-2); font-size: 14px; }
-.seg-btn + .seg-btn { border-left: 1px solid var(--rule); }
-.seg-btn[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); }
 .btn {
     background: var(--acid);
     color: var(--on-acid);
@@ -315,8 +341,9 @@ button { font: inherit; color: inherit; }
 .btn:disabled { opacity: 0.5; cursor: progress; }
 
 .view {
+    position: relative;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     min-width: 0;
 }
 .tabs {
@@ -439,30 +466,124 @@ button { font: inherit; color: inherit; }
 /* Status bar chip */
 .status-chip { margin-left: auto; color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .status-chip[hidden] { display: none; }
+
+/* Start screen (SPEC 11) */
+.start { position: fixed; inset: 0; z-index: 50; overflow-y: auto; background: radial-gradient(ellipse at 30% 0%, var(--stage-a), var(--bg) 60%); }
+.start[hidden] { display: none; }
+.start-inner { max-width: 1120px; margin: 0 auto; padding: 22px 24px 40px; display: grid; gap: 18px; }
+.start-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.start-tag { color: var(--ink-2); }
+.start h2 { margin: 6px 0 0; font: 600 32px/1.15 "Chakra Petch", system-ui, sans-serif; }
+.kinds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kind {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    text-align: left;
+    padding: 14px;
+    background: var(--panel);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    cursor: pointer;
+}
+.kind svg { width: 44px; height: 44px; fill: none; stroke: var(--violet); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.kind strong { font: 600 17px/1.2 "Chakra Petch", system-ui, sans-serif; }
+.kind span { color: var(--ink-2); font-size: 13px; }
+.kind:hover { border-color: var(--ink-2); }
+.kind[aria-pressed="true"] { border-color: var(--acid); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 25%, transparent); }
+.kind[aria-pressed="true"] svg { stroke: var(--acid); }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.preset {
+    display: grid;
+    gap: 4px;
+    text-align: left;
+    padding: 10px;
+    background: var(--stage-b);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    cursor: pointer;
+}
+.preset:hover { border-color: var(--acid); }
+.preset small { color: var(--ink-2); }
+.preset-thumb { width: 100%; aspect-ratio: 1; height: auto; display: block; max-width: 100%; }
+.blank-art { display: grid; place-items: center; aspect-ratio: 1; border: 2px dashed var(--rule); border-radius: 10px; font: 600 40px/1 "Chakra Petch", system-ui, sans-serif; color: var(--ink-2); }
+.start-note { margin: 0; color: var(--warn); }
+.start-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--ink-2); font-size: 13px; }
+@media (max-width: 860px) {
+    .kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Tour */
+.tour { position: fixed; inset: 0; z-index: 60; }
+.tour[hidden] { display: none; }
+.tour-spot {
+    position: fixed;
+    border-radius: 12px;
+    outline: 2px solid var(--acid);
+    box-shadow: 0 0 0 9999px rgba(5, 3, 9, 0.72);
+    pointer-events: none;
+    transition: all 0.2s ease;
+}
+.tour-bubble, .tour-offer {
+    position: fixed;
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--panel);
+    color: var(--ink);
+    border: 1px solid var(--acid);
+    border-radius: 12px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+.tour-bubble p, .tour-offer p { margin: 0; }
+.tour-buttons { display: flex; align-items: center; gap: 8px; }
+.tour-offer { position: absolute; right: 16px; bottom: 76px; z-index: 5; width: min(380px, calc(100% - 32px)); }
+.tour-buttons .btn { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
+
+/* Narrow windows: the step bar keeps numbers and the current step's name. */
+@media (max-width: 1180px) {
+    .step-btn:not([aria-current="step"]) .step-name { display: none; }
+}
 </style>
 </head>
 <body>
 <div class="app">
   <header class="top">
-    <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
-    <span class="chip" title="Current milestone">M4 done</span>
-    <div class="tools" id="tools-left"></div>
+    <h1 class="mark">Lamina</h1>
+    <nav class="steps" id="steps" aria-label="Steps"></nav>
     <div class="spacer"></div>
     <div class="tools" id="tools-right"></div>
     <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
     </button>
   </header>
-  <aside class="side" id="side" aria-label="Design steps"></aside>
+  <aside class="side" id="panel" aria-labelledby="panel-title">
+    <div class="panel-head">
+      <span class="panel-kicker" id="panel-kicker"></span>
+      <h2 class="panel-title" id="panel-title"></h2>
+      <p class="panel-guide" id="panel-guide"></p>
+    </div>
+    <div class="panel-body" id="panel-body"></div>
+    <div class="panel-foot">
+      <button class="btn ghost" id="panel-back" type="button">‹ Back</button>
+      <button class="btn" id="panel-next" type="button">Next</button>
+    </div>
+  </aside>
   <main class="view">
     <nav class="tabs" id="tabs" role="tablist" aria-label="Views"></nav>
     <div class="stage" id="stage"></div>
+    <div class="layer-strip" id="layer-strip" role="listbox" aria-label="Layers, front first"></div>
   </main>
   <footer class="status" role="status">
     <span class="light" id="status-light" data-level="busy"></span>
     <span id="status-text">Starting</span>
   </footer>
 </div>
+<div class="start" id="start" hidden></div>
+<div class="tour" id="tour" hidden></div>
 <script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 32 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
@@ -1290,7 +1411,7 @@ const SCHEMA = [
     {
         id: 'symmetry.kind',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Symmetry',
         type: 'select',
         options: [
@@ -1305,7 +1426,7 @@ const SCHEMA = [
     {
         id: 'symmetry.n',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Repeats',
         type: 'range',
         min: 2,
@@ -1320,7 +1441,7 @@ const SCHEMA = [
     {
         id: 'symmetry.phase_deg',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Turn the pattern',
         type: 'range',
         min: 0,
@@ -6248,7 +6369,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 34 modules.
+<script>// Lamina Studio bundle: src/main.js and 37 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -6282,64 +6403,66 @@ return { el, save_bytes };
 // src/ui/shell.js
 const __m_ui_shell_js = (function () {
 const { el } = __m_ui_dom_js;
-// Builds the static shell: the design steps in the sidebar, the view tabs and the status bar.
-// The steps follow SPEC 11 in decision order. Their controls arrive in M1 from the SCHEMA registry.
+// The static shell (SPEC 11): the step bar in the top bar, one step panel with Back and Next, the
+// view tabs, the layer strip under the preview, and the status bar. Five steps in decision order;
+// each opens the view it needs. Panels fill the step panel from the SCHEMA registry.
 
 
 const kSteps = [
-    { id: 'piece', title: 'Piece', hint: 'Outline, size and number of layers' },
-    { id: 'material', title: 'Material and colour', hint: 'Sheet, thickness and finish per layer' },
-    { id: 'layers', title: 'Layers', hint: 'Stack order, gaps and what each layer shows' },
-    { id: 'pattern', title: 'Pattern', hint: 'Generators, symmetry and imported artwork' },
-    { id: 'structure', title: 'Structure', hint: 'Islands, bridges, dowels and spacers' },
-    { id: 'light', title: 'Light', hint: 'Unlit or backlit' },
-    { id: 'make', title: 'Make', hint: 'Sheets, checks and export' },
+    { id: 'piece', title: 'Piece', view: '3d', guide: 'Choose the outline, its size, how many layers it has and its symmetry.' },
+    { id: 'pattern', title: 'Pattern', view: '3d', guide: 'Pick a style and roll variations, then shape the chosen layer. Pick layers in the strip under the preview.' },
+    { id: 'look', title: 'Look', view: '3d', guide: 'Material, colour and spacing for each layer, and how the piece is lit.' },
+    { id: 'structure', title: 'Structure', view: 'layer', guide: 'Bridges hold loose parts, dowels line the layers up, spacers set the gaps. The Layer view shows them.' },
+    { id: 'make', title: 'Make', view: 'sheets', guide: 'Check, then download the cut files. The Sheets view shows what goes on the laser.' },
 ];
 
 const kTabs = [
-    { id: '3d', label: '3D', ready: true },
-    { id: '2d', label: '2D', ready: true },
-    { id: 'layer', label: 'Layer', ready: true },
-    { id: 'sheets', label: 'Sheets', ready: true },
+    { id: '3d', label: '3D' },
+    { id: '2d', label: '2D' },
+    { id: 'layer', label: 'Layer' },
+    { id: 'sheets', label: 'Sheets' },
 ];
 
-// The body element of a design step, for panels to fill.
-function step_body(id) {
-    return document.querySelector(`.step[data-step="${id}"] .step-body`);
+// The parts of the step panel, for panels and the app to fill and wire.
+function panel_parts() {
+    const q = id => document.getElementById(id);
+    return { kicker: q('panel-kicker'), title: q('panel-title'), guide: q('panel-guide'), body: q('panel-body'), back: q('panel-back'), next: q('panel-next') };
 }
 
 function build_shell() {
-    const side = document.getElementById('side');
+    const bar = document.getElementById('steps');
     kSteps.forEach((step, i) => {
-        const details = el('details', { class: 'step', 'data-step': step.id });
-        if (i === 0) details.open = true;
-        details.append(
-            el('summary', {}, [
-                el('span', { class: 'step-num', text: String(i + 1).padStart(2, '0') }),
-                el('span', { class: 'step-title', text: step.title }),
-                el('span', { class: 'step-hint', text: step.hint }),
-            ]),
-            el('div', { class: 'step-body', text: 'Controls arrive in M1.' }),
-        );
-        side.append(details);
+        if (i) bar.append(el('span', { class: 'step-chev', 'aria-hidden': 'true', text: '›' }));
+        const button = el('button', { type: 'button', class: 'step-btn', 'data-step-go': step.id, title: step.guide }, [
+            el('span', { class: 'step-dot', text: String(i + 1) }),
+            el('span', { class: 'step-name', text: step.title }),
+        ]);
+        bar.append(button);
     });
 
     const tabs = document.getElementById('tabs');
     for (const tab of kTabs) {
-        const button = el('button', {
-            class: 'tab',
-            type: 'button',
-            role: 'tab',
-            'aria-selected': String(tab.id === '3d'),
-            'data-view': tab.id,
-            text: tab.label,
-        });
-        if (!tab.ready) {
-            button.disabled = true;
-            button.title = 'Arrives in M1';
-        }
-        tabs.append(button);
+        tabs.append(el('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': String(tab.id === '3d'), 'data-view': tab.id, text: tab.label }));
     }
+}
+
+// Marks the current step in the bar (earlier steps show a tick) and fills the panel heading.
+function show_step(id) {
+    const i = kSteps.findIndex(s => s.id === id);
+    document.querySelectorAll('.step-btn').forEach((b, j) => {
+        b.classList.toggle('done', j < i);
+        if (j === i) b.setAttribute('aria-current', 'step');
+        else b.removeAttribute('aria-current');
+        b.querySelector('.step-dot').textContent = j < i ? '✓' : String(j + 1);
+    });
+    const parts = panel_parts();
+    const step = kSteps[i];
+    parts.kicker.textContent = `Step ${i + 1} of ${kSteps.length}`;
+    parts.title.textContent = step.title;
+    parts.guide.textContent = step.guide;
+    parts.back.disabled = i === 0;
+    parts.next.disabled = i === kSteps.length - 1;
+    parts.next.textContent = i < kSteps.length - 1 ? `Next: ${kSteps[i + 1].title} ›` : 'Last step';
 }
 
 function set_status(level, text) {
@@ -6351,7 +6474,7 @@ function show_stage_message(text) {
     const stage = document.getElementById('stage');
     stage.append(el('div', { class: 'stage-msg', text }));
 }
-return { step_body, build_shell, set_status, show_stage_message };
+return { kSteps, panel_parts, build_shell, show_step, set_status, show_stage_message };
 })();
 // src/ui/theme.js
 const __m_ui_theme_js = (function () {
@@ -88991,7 +89114,7 @@ const SCHEMA = [
     {
         id: 'symmetry.kind',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Symmetry',
         type: 'select',
         options: [
@@ -89006,7 +89129,7 @@ const SCHEMA = [
     {
         id: 'symmetry.n',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Repeats',
         type: 'range',
         min: 2,
@@ -89021,7 +89144,7 @@ const SCHEMA = [
     {
         id: 'symmetry.phase_deg',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Turn the pattern',
         type: 'range',
         min: 0,
@@ -91593,10 +91716,12 @@ const { kCurveTypes } = __m_sources_curves_js;
 const { options_for, read_param } = __m_core_actions_js;
 const { make_control } = __m_ui_controls_js;
 const { el } = __m_ui_dom_js;
-const { step_body } = __m_ui_shell_js;
-// Sidebar step panels, generated from the registry (SPEC 11). Each step rebuilds only when its
-// structure changes (layer count, selected layer, motif list, Basic or Advanced); otherwise its
-// controls refresh in place, so a slider keeps focus while it is dragged.
+const { panel_parts } = __m_ui_shell_js;
+// The step panel (SPEC 11): one step at a time, generated from the registry. Each step shows its
+// essential controls; entries marked advanced sit in a "More options" fold at the end, and motif
+// cards fold their own advanced parameters. The panel rebuilds only when its structure changes
+// (step, layer, motif list, folds); otherwise controls refresh in place, so a slider keeps focus
+// while it is dragged.
 
 
 
@@ -91604,109 +91729,134 @@ const { step_body } = __m_ui_shell_js;
 
 
 
-const kSteps = ['piece', 'material', 'layers', 'pattern', 'structure', 'light', 'make'];
+// Registry panels shown in each step, with the sub-heading over each group.
+const kGroups = {
+    piece: [{ panel: 'piece' }],
+    pattern: [{ panel: 'pattern' }],
+    look: [
+        { panel: 'material', heading: () => 'Every layer' },
+        { panel: 'layers', heading: k => `Layer ${k + 1}` },
+        { panel: 'light', heading: () => 'Light' },
+    ],
+    structure: [
+        { panel: 'structure', scope: 'layer', heading: k => `Layer ${k + 1}` },
+        { panel: 'structure', scope: 'design', heading: () => 'Dowels and spacers' },
+    ],
+    make: [{ panel: 'make' }],
+};
 
-function visible(entry, design, layer, tier) {
-    if (entry.tier === 'advanced' && tier !== 'advanced') return false;
-    return !entry.show_if || entry.show_if(design, layer);
-}
+const shown_if = (entry, design, layer) => !entry.show_if || entry.show_if(design, layer);
 
 class Panels {
-    // app: { design, ui: { layer, tier, locks }, set_param, set_motif_param, add_motif,
-    //        remove_motif, set_layer_locked, select_layer }
-    // extras: { make: (container) => void } fills fixed content after a step's controls.
+    // app: { design, ui: { step, layer, locks, more }, set_param, set_motif_param, add_motif,
+    //        remove_motif, convert_motif, set_layer_locked, set_seed, randomise, toggle_more }
+    // extras: { [step]: (container) => void } fills fixed content after a step's controls.
     constructor(app, extras = {}) {
         this.app_ = app;
         this.extras_ = extras;
-        this.sig_ = {};
-        this.refreshers_ = {};
+        this.sig_ = null;
+        this.refreshers_ = [];
     }
 
-    render() {
-        for (const step of kSteps) this.render_step_(step);
-    }
-
-    signature_(step) {
+    signature_() {
         const d = this.app_.design;
-        const { layer: k, tier } = this.app_.ui;
+        const { step, layer: k, more } = this.app_.ui;
         const layer = d.layers[k];
-        const shown = SCHEMA.filter(e => e.panel === step && visible(e, d, layer, tier)).map(e => e.id);
-        const parts = [tier, shown.join(',')];
-        if (step === 'piece') parts.push(d.piece.outline.custom ? 'custom' : '');
-        if (step === 'layers') parts.push(d.layers.length, k);
-        if (step === 'pattern') parts.push(k, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
-        if (step === 'structure') parts.push(k);
+        const panels = kGroups[step].map(g => g.panel);
+        const shown = SCHEMA.filter(e => panels.includes(e.panel) && shown_if(e, d, layer)).map(e => e.id);
+        const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(',')];
+        if (step === 'pattern') parts.push(layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
     }
 
-    render_step_(step) {
-        const sig = this.signature_(step);
-        if (sig === this.sig_[step]) {
-            for (const refresh of this.refreshers_[step]) refresh();
+    render() {
+        const sig = this.signature_();
+        if (sig === this.sig_) {
+            for (const refresh of this.refreshers_) refresh();
             return;
         }
-        this.sig_[step] = sig;
-        const body = step_body(step);
+        this.sig_ = sig;
+        const body = panel_parts().body;
+        const keep_scroll = body.scrollTop;
         body.textContent = '';
-        const refreshers = (this.refreshers_[step] = []);
-        const d = this.app_.design;
-        const { layer: k, tier } = this.app_.ui;
+        this.refreshers_ = [];
+        const app = this.app_;
+        const d = app.design;
+        const { step, layer: k } = app.ui;
+        const advanced = [];
 
-        if (step === 'layers') {
-            const strip = this.layer_strip_();
-            body.append(strip.el);
-            refreshers.push(strip.refresh);
+        if (step === 'pattern') this.seed_row_(body);
+        for (const group of kGroups[step]) {
+            const entries = SCHEMA.filter(e => e.panel === group.panel && (!group.scope || e.scope === group.scope) && shown_if(e, d, d.layers[k]));
+            const basic = entries.filter(e => e.tier !== 'advanced');
+            advanced.push(...entries.filter(e => e.tier === 'advanced'));
+            if (!basic.length) continue;
+            if (group.heading) body.append(el('h3', { class: 'sub', text: group.heading(k) }));
+            for (const entry of basic) body.append(this.control_(entry));
         }
-        const heading = { layers: `Layer ${k + 1}`, pattern: 'Symmetry', structure: `Islands on layer ${k + 1}` }[step];
-        if (heading) body.append(el('h3', { class: 'sub', text: heading }));
-
-        for (const entry of SCHEMA.filter(e => e.panel === step && visible(e, d, d.layers[k], tier))) {
-            const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, d) } : entry;
-            const state = entry.lockable
-                ? { locked: () => this.app_.ui.locks.has(entry.id), toggle_lock: () => this.app_.toggle_lock(entry.id) }
-                : {};
-            const control = make_control(spec, (value, { coalesce }) => this.app_.set_param(entry, value, coalesce), state);
-            body.append(control.el);
-            const refresh = () => control.refresh(read_param(entry, this.app_.design, this.app_.ui.layer));
-            refresh();
-            refreshers.push(refresh);
-        }
-
-        if (step === 'pattern') this.motif_editor_(body, refreshers);
+        if (step === 'pattern') this.motif_editor_(body);
         if (this.extras_[step]) this.extras_[step](body);
+        if (advanced.length) {
+            const box = this.fold_(body, step, 'More options', 'Fewer options');
+            for (const entry of advanced) box?.append(this.control_(entry));
+        }
+        body.scrollTop = keep_scroll;
     }
 
-    layer_strip_() {
-        const d = this.app_.design;
-        const strip = el('div', { class: 'layer-strip', role: 'listbox', 'aria-label': 'Layers, front first' });
-        d.layers.forEach((layer, k) => {
-            const chip = el('button', {
-                type: 'button',
-                class: 'layer-chip',
-                role: 'option',
-                'aria-selected': String(k === this.app_.ui.layer),
-                title: `Layer ${k + 1}${k === 0 ? ' (front)' : k === d.layers.length - 1 ? ' (back)' : ''}`,
-            });
-            chip.append(el('span', { class: 'swatch' }), el('span', { text: String(k + 1) }));
-            chip.firstChild.style.background = layer.finish.colour;
-            chip.addEventListener('click', () => this.app_.select_layer(k));
-            strip.append(chip);
-        });
-        const refresh = () => {
-            [...strip.children].forEach((chip, k) => {
-                chip.firstChild.style.background = this.app_.design.layers[k].finish.colour;
-            });
+    control_(entry) {
+        const app = this.app_;
+        const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, app.design) } : entry;
+        const state = entry.lockable ? { locked: () => app.ui.locks.has(entry.id), toggle_lock: () => app.toggle_lock(entry.id) } : {};
+        const control = make_control(spec, (value, { coalesce }) => app.set_param(entry, value, coalesce), state);
+        const refresh = () => control.refresh(read_param(entry, app.design, app.ui.layer));
+        refresh();
+        this.refreshers_.push(refresh);
+        return control.el;
+    }
+
+    // A fold toggled by key (kept in ui.more); returns its content box when open, else null.
+    fold_(parent, key, open_text, close_text) {
+        const open = this.app_.ui.more.has(key);
+        const toggle = el('button', { type: 'button', class: 'more-toggle', 'aria-expanded': String(open), text: open ? close_text : open_text });
+        toggle.addEventListener('click', () => this.app_.toggle_more(key));
+        parent.append(toggle);
+        if (!open) return null;
+        const box = el('div', { class: 'more' });
+        parent.append(box);
+        return box;
+    }
+
+    // Randomise and the seed, at the top of the Pattern step.
+    seed_row_(body) {
+        const app = this.app_;
+        const seed = el('input', { type: 'number', class: 'seed', min: 0, step: 1, 'aria-label': 'Seed' });
+        seed.addEventListener('change', () => app.set_seed(Math.max(0, Math.round(Number(seed.value) || 0))));
+        const step_button = (text, title, delta) => {
+            const b = el('button', { type: 'button', class: 'tool', title, 'aria-label': title, text });
+            b.addEventListener('click', () => app.set_seed(Math.max(0, app.design.seed + delta)));
+            return b;
         };
-        return { el: strip, refresh };
+        const randomise = el('button', {
+            type: 'button',
+            class: 'btn',
+            text: 'Randomise',
+            title: 'A new pattern from a random seed. Tries up to 10 and keeps the first with no fatal problem. Locked values and kept layers stay.',
+        });
+        randomise.addEventListener('click', () => app.randomise());
+        body.append(el('div', { class: 'seed-row' }, [randomise, el('div', { class: 'seed-group' }, [step_button('‹', 'Previous seed', -1), seed, step_button('›', 'Next seed', 1)])]));
+        const refresh = () => {
+            if (document.activeElement !== seed) seed.value = app.design.seed;
+        };
+        refresh();
+        this.refreshers_.push(refresh);
     }
 
-    motif_editor_(body, refreshers) {
+    motif_editor_(body) {
         const app = this.app_;
         const k = app.ui.layer;
-        const tier = app.ui.tier;
         const layer = app.design.layers[k];
-        body.append(el('h3', { class: 'sub', text: `Pattern of layer ${k + 1}` }));
+        body.append(el('h3', { class: 'sub', text: `Layer ${k + 1}` }));
 
         if (layer.source.kind === 'svg') {
             const src = layer.source;
@@ -91723,23 +91873,19 @@ class Panels {
                 value => app.set_layer_fill_rule(value),
             );
             rule.refresh(src.fill_rule ?? 'evenodd');
-            refreshers.push(() => rule.refresh(app.design.layers[app.ui.layer].source.fill_rule ?? 'evenodd'));
+            this.refreshers_.push(() => rule.refresh(app.design.layers[app.ui.layer].source.fill_rule ?? 'evenodd'));
             const remove = el('button', { type: 'button', class: 'btn ghost', text: 'Remove artwork' });
             remove.addEventListener('click', () => app.remove_artwork());
             body.append(rule.el, remove);
             return;
         }
 
-        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value =>
-            app.set_layer_locked(value),
-        );
+        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value => app.set_layer_locked(value));
         body.append(keep.el);
-        refreshers.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
+        this.refreshers_.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
         keep.refresh(layer.locked);
 
-        if (!layer.source.motifs.length) {
-            body.append(el('p', { class: 'step-note', text: 'No openings: this layer is solid.' }));
-        }
+        if (!layer.source.motifs.length) body.append(el('p', { class: 'step-note', text: 'No openings: this layer is solid.' }));
         layer.source.motifs.forEach((motif, i) => {
             const card = el('div', { class: 'motif' });
             const remove = el('button', { type: 'button', class: 'icon-btn small', 'aria-label': 'Remove', text: '×' });
@@ -91752,16 +91898,20 @@ class Panels {
             }
             card.append(el('div', { class: 'motif-head' }, [...head, remove]));
             if (motif.type === 'shape') card.append(el('p', { class: 'step-note', text: 'Drag its nodes and handles in the Layer view. Double-click the outline to add a node, a node to delete it.' }));
-            for (const key of kMotifTypes[motif.type].params) {
+            const params = kMotifTypes[motif.type].params;
+            const add = key => {
                 const p = kMotifParams[key];
-                if (p.tier === 'advanced' && tier !== 'advanced') continue;
-                const control = make_control({ ...p, type: p.type ?? 'range' }, (value, { coalesce }) =>
-                    app.set_motif_param(i, key, value, coalesce),
-                );
-                card.append(control.el);
+                const control = make_control({ ...p, type: p.type ?? 'range' }, (value, { coalesce }) => app.set_motif_param(i, key, value, coalesce));
                 const refresh = () => control.refresh(app.design.layers[app.ui.layer].source.motifs[i]?.[key] ?? 0);
                 refresh();
-                refreshers.push(refresh);
+                this.refreshers_.push(refresh);
+                return control.el;
+            };
+            for (const key of params.filter(key => kMotifParams[key].tier !== 'advanced')) card.append(add(key));
+            const extra = params.filter(key => kMotifParams[key].tier === 'advanced');
+            if (extra.length) {
+                const box = this.fold_(card, `motif:${i}`, 'More', 'Less');
+                for (const key of extra) box?.append(add(key));
             }
             body.append(card);
         });
@@ -91777,11 +91927,10 @@ return { Panels };
 })();
 // src/ui/header.js
 const __m_ui_header_js = (function () {
-const { kPresets } = __m_core_presets_js;
 const { el } = __m_ui_dom_js;
-// Header tools: presets, seed stepping, Randomise, undo and redo on the left; Basic or Advanced,
-// open and save on the right. Returns refresh() for state that follows the design and history.
-
+// Top bar actions (SPEC 11): undo and redo, New (the start screen), Open and Save. Presets and
+// Randomise live on the start screen and in the Pattern step. Returns refresh() for state that
+// follows the history.
 
 
 function button(text, title, on_click, cls = 'tool') {
@@ -91791,53 +91940,28 @@ function button(text, title, on_click, cls = 'tool') {
 }
 
 function build_header(app) {
-    const left = document.getElementById('tools-left');
     const right = document.getElementById('tools-right');
-
-    const presets = el('select', { class: 'tool-select', 'aria-label': 'Start from a preset' });
-    presets.append(el('option', { value: '', text: 'Presets' }));
-    for (const p of kPresets) presets.append(el('option', { value: p.id, text: p.name }));
-    presets.addEventListener('change', () => {
-        if (presets.value) app.load_preset(presets.value);
-        presets.value = '';
-    });
-
-    const seed = el('input', { type: 'number', class: 'seed', min: 0, step: 1, 'aria-label': 'Seed' });
-    seed.addEventListener('change', () => app.set_seed(Math.max(0, Math.round(Number(seed.value) || 0))));
-    const prev = button('←', 'Previous seed', () => app.set_seed(Math.max(0, app.design.seed - 1)));
-    const next = button('→', 'Next seed', () => app.set_seed(app.design.seed + 1));
-    const randomise = button(
-        'Randomise',
-        'New pattern from a random seed; tries up to 10 and keeps the first with no fatal problem. Locked values and kept layers stay.',
-        () => app.randomise(),
-        'btn',
-    );
     const undo = button('↶', 'Undo (Ctrl+Z)', () => app.undo());
     const redo = button('↷', 'Redo (Ctrl+Shift+Z)', () => app.redo());
-    left.append(presets, el('div', { class: 'seed-group' }, [prev, seed, next]), randomise, undo, redo);
-
-    const basic = button('Basic', 'Show the main controls', () => app.set_tier('basic'), 'seg-btn');
-    const advanced = button('Advanced', 'Show every control', () => app.set_tier('advanced'), 'seg-btn');
     const file = el('input', { type: 'file', accept: '.json,application/json', hidden: '' });
     file.addEventListener('change', () => {
         if (file.files[0]) app.open(file.files[0]);
         file.value = '';
     });
     right.append(
-        el('div', { class: 'seg', role: 'group', 'aria-label': 'Detail' }, [basic, advanced]),
+        undo,
+        redo,
+        button('New', 'Start a new piece from a preset or a blank outline', () => app.show_start()),
         button('Open', 'Open a saved design (.lamina.json)', () => file.click()),
         button('Save', 'Save this design as .lamina.json', () => app.save()),
         file,
     );
-
     return {
         refresh() {
-            if (document.activeElement !== seed) seed.value = app.design.seed;
             undo.disabled = !app.store.can_undo();
             redo.disabled = !app.store.can_redo();
-            basic.setAttribute('aria-pressed', String(app.ui.tier === 'basic'));
-            advanced.setAttribute('aria-pressed', String(app.ui.tier === 'advanced'));
         },
+        open_file: () => file.click(),
     };
 }
 return { build_header };
@@ -92142,10 +92266,403 @@ function build_calibrate_panel(container, app) {
 }
 return { build_calibrate_panel };
 })();
+// src/ui/layer_strip.js
+const __m_ui_layer_strip_js = (function () {
+const { el } = __m_ui_dom_js;
+// Layer strip (SPEC 11): a thumbnail of every layer under the preview, front first. Clicking one
+// selects it for every per-layer control. A thumbnail redraws only when its layer's material or
+// colour changes, so dense lattices cost nothing on edits that leave them alone.
+// Assumptions: built layers carry material (micrometres, y up) and material_key.
+
+
+const kSizePx = 44;
+
+class LayerStrip {
+    // on_select(k) is called with the clicked layer's index.
+    constructor(container, { on_select }) {
+        this.container_ = container;
+        this.on_select_ = on_select;
+        this.items_ = [];
+        container.append(el('span', { class: 'strip-label', text: 'Layers' }));
+    }
+
+    // design and its built layers (unpacked), and the selected layer index.
+    show(design, layers, selected) {
+        const n = design.layers.length;
+        while (this.items_.length < n) this.add_();
+        while (this.items_.length > n) this.items_.pop().button.remove();
+        // One scale for every thumbnail: the box round all the layers' material, found again only
+        // when some layer's material changed (a scan of every point of a dense stack).
+        const keys = (layers ?? []).map(l => l.material_key).join('|');
+        if (keys !== this.box_keys_) {
+            this.box_keys_ = keys;
+            let x0 = Infinity;
+            let y0 = Infinity;
+            let x1 = -Infinity;
+            let y1 = -Infinity;
+            for (const l of layers ?? []) {
+                for (const path of l.material) {
+                    for (const p of path) {
+                        if (p.x < x0) x0 = p.x;
+                        if (p.x > x1) x1 = p.x;
+                        if (p.y < y0) y0 = p.y;
+                        if (p.y > y1) y1 = p.y;
+                    }
+                }
+            }
+            this.b_ = { x0, y0, x1, y1 };
+        }
+        const { x0, y0, x1, y1 } = this.b_;
+        const box = `${x0}|${y0}|${x1}|${y1}`;
+        this.items_.forEach((item, k) => {
+            const colour = design.layers[k].finish.colour;
+            item.button.setAttribute('aria-selected', String(k === selected));
+            item.button.title = `Layer ${k + 1}${k === 0 ? ', the front' : k === n - 1 ? ', the back' : ''}`;
+            const layer = layers?.[k];
+            const key = layer ? `${layer.material_key}|${colour}|${box}` : null;
+            if (!layer || key === item.key) return;
+            item.key = key;
+            this.draw_(item.canvas, layer.material, colour, { x0, y0, x1, y1 });
+        });
+    }
+
+    add_() {
+        const k = this.items_.length;
+        const canvas = el('canvas', { class: 'strip-thumb', width: kSizePx, height: kSizePx });
+        const button = el('button', { type: 'button', class: 'strip-item', role: 'option' }, [canvas, el('span', { text: `L${k + 1}` })]);
+        button.addEventListener('click', () => this.on_select_(k));
+        this.container_.append(button);
+        this.items_.push({ button, canvas, key: null });
+    }
+
+    draw_(canvas, material, colour, b) {
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(kSizePx * dpr);
+        canvas.height = Math.round(kSizePx * dpr);
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const span = Math.max(b.x1 - b.x0, b.y1 - b.y0) || 1;
+        const s = (canvas.width * 0.9) / span;
+        const cx = (b.x0 + b.x1) / 2;
+        const cy = (b.y0 + b.y1) / 2;
+        const path = new Path2D();
+        for (const p of material) {
+            if (!p.length) continue;
+            path.moveTo(canvas.width / 2 + (p[0].x - cx) * s, canvas.height / 2 - (p[0].y - cy) * s);
+            for (let i = 1; i < p.length; i++) path.lineTo(canvas.width / 2 + (p[i].x - cx) * s, canvas.height / 2 - (p[i].y - cy) * s);
+            path.closePath();
+        }
+        ctx.fillStyle = colour;
+        ctx.fill(path, 'evenodd');
+    }
+}
+return { LayerStrip };
+})();
+// src/ui/start_screen.js
+const __m_ui_start_screen_js = (function () {
+const { kPresets, preset_by_id } = __m_core_presets_js;
+const { el } = __m_ui_dom_js;
+// Start screen (SPEC 11): "What are you making?" Four kinds of piece, each with a gallery of
+// matching presets drawn from their real geometry, plus a blank start. Thumbnails are built in
+// the worker one at a time and kept for the session. Shows on the first visit and from New.
+
+
+
+const kKinds = [
+    {
+        id: 'round',
+        title: 'Round wall piece',
+        text: 'Mandalas, lattices and orbs, stacked and nested.',
+        presets: ['mandala', 'lattice', 'orb', 'rose', 'sun', 'lantern'],
+        blank: { outline: { kind: 'circle', w_mm: 290 }, symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 }, layers: 8 },
+        icon: '<circle cx="24" cy="24" r="17"/><circle cx="24" cy="24" r="10"/><circle cx="24" cy="24" r="3.5"/>',
+    },
+    {
+        id: 'box',
+        title: 'Framed shadow box',
+        text: 'A deep frame with a scene in layers.',
+        presets: [],
+        note: 'Box frames and their presets arrive with M6. Start blank for now.',
+        blank: { outline: { kind: 'rect', w_mm: 300, h_mm: 300 }, symmetry: { kind: 'mirror_x', n: 1, phase_deg: 0 }, layers: 8 },
+        icon: '<rect x="7" y="7" width="34" height="34" rx="2"/><rect x="13" y="13" width="22" height="22" rx="1"/><path d="M17 31l6-8 4 5 3-3 4 6"/>',
+    },
+    {
+        id: 'panel',
+        title: 'Festival panel',
+        text: 'Large rectangles: circuits, gates and signs.',
+        presets: ['circuit', 'gate'],
+        blank: { outline: { kind: 'rect', w_mm: 380, h_mm: 280 }, symmetry: { kind: 'mirror_xy', n: 1, phase_deg: 0 }, layers: 6 },
+        icon: '<rect x="5" y="11" width="38" height="26" rx="2"/><path d="M11 17h8l4 4h6M11 31h6l4-4h10M33 21v-4h4"/><circle cx="37" cy="17" r="1.8"/>',
+    },
+    {
+        id: 'photo',
+        title: 'From a photo',
+        text: 'Layers from a picture or a depth map.',
+        presets: [],
+        note: 'Photo to layers arrives with M5.',
+        icon: '<rect x="6" y="10" width="36" height="28" rx="3"/><circle cx="17" cy="19" r="4"/><path d="M9 35l11-10 7 6 5-4 9 8"/>',
+    },
+];
+
+// Draws a stack's front view: layers back to front in their colours, with a soft shadow.
+function draw_stack(canvas, design, layers) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const l of layers) {
+        for (const path of l.material) {
+            for (const p of path) {
+                if (p.x < x0) x0 = p.x;
+                if (p.x > x1) x1 = p.x;
+                if (p.y < y0) y0 = p.y;
+                if (p.y > y1) y1 = p.y;
+            }
+        }
+    }
+    const s = (Math.min(canvas.width, canvas.height) * 0.92) / (Math.max(x1 - x0, y1 - y0) || 1);
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    for (let k = layers.length - 1; k >= 0; k--) {
+        const path = new Path2D();
+        for (const p of layers[k].material) {
+            if (!p.length) continue;
+            path.moveTo(canvas.width / 2 + (p[0].x - cx) * s, canvas.height / 2 - (p[0].y - cy) * s);
+            for (let i = 1; i < p.length; i++) path.lineTo(canvas.width / 2 + (p[i].x - cx) * s, canvas.height / 2 - (p[i].y - cy) * s);
+            path.closePath();
+        }
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+        ctx.shadowBlur = 3;
+        ctx.shadowOffsetY = 1;
+        ctx.fillStyle = design.layers[k].finish.colour;
+        ctx.fill(path, 'evenodd');
+        ctx.restore();
+    }
+}
+
+class StartScreen {
+    // actions: { build(design) -> Promise<layers>, open_preset(id), start_blank(kind), close(),
+    //            open_file(), import_svg(), tour() }
+    constructor(root, actions) {
+        this.root_ = root;
+        this.actions_ = actions;
+        this.kind_ = 'round';
+        this.thumbs_ = new Map(); // preset id -> canvas, drawn once
+        this.queue_ = Promise.resolve();
+        this.first_visit_ = false;
+        this.continue_name_ = null;
+        root.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && !this.first_visit_) this.actions_.close();
+        });
+    }
+
+    // first_visit hides the way back (there is no design of theirs to go back to).
+    show({ first_visit = false, continue_name = null } = {}) {
+        this.first_visit_ = first_visit;
+        this.continue_name_ = continue_name;
+        this.render_();
+        this.root_.hidden = false;
+        this.root_.querySelector('.kind[aria-pressed="true"]')?.focus();
+    }
+
+    hide() {
+        this.root_.hidden = true;
+    }
+
+    get open() {
+        return !this.root_.hidden;
+    }
+
+    render_() {
+        const a = this.actions_;
+        const root = this.root_;
+        root.textContent = '';
+        const top = el('div', { class: 'start-top' }, [el('span', { class: 'mark', text: 'Lamina' }), el('span', { class: 'start-tag', text: 'layered laser art studio' }), el('span', { class: 'spacer' })]);
+        const open = el('button', { type: 'button', class: 'tool', text: 'Open a saved design' });
+        open.addEventListener('click', () => a.open_file());
+        top.append(open);
+        if (!this.first_visit_) {
+            const back = el('button', { type: 'button', class: 'btn', text: this.continue_name_ ? `Back to ${this.continue_name_}` : 'Back' });
+            back.addEventListener('click', () => a.close());
+            top.append(back);
+        }
+
+        const kinds = el('div', { class: 'kinds' });
+        for (const kind of kKinds) {
+            const card = el('button', { type: 'button', class: 'kind', 'aria-pressed': String(kind.id === this.kind_) });
+            const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            icon.setAttribute('viewBox', '0 0 48 48');
+            icon.setAttribute('aria-hidden', 'true');
+            icon.innerHTML = kind.icon;
+            card.append(icon, el('strong', { text: kind.title }), el('span', { text: kind.text }));
+            card.addEventListener('click', () => {
+                this.kind_ = kind.id;
+                this.render_();
+                this.root_.querySelector('.kind[aria-pressed="true"]')?.focus();
+            });
+            kinds.append(card);
+        }
+
+        const kind = kKinds.find(k => k.id === this.kind_);
+        const gallery = el('div', { class: 'gallery' });
+        for (const id of kind.presets) gallery.append(this.preset_card_(id));
+        if (kind.blank) {
+            const blank = el('button', { type: 'button', class: 'preset blank' }, [
+                el('span', { class: 'blank-art', text: '+' }),
+                el('strong', { text: 'Start blank' }),
+                el('small', { text: `${kind.blank.layers} plain layers, ${kind.blank.outline.w_mm}${kind.blank.outline.h_mm ? ` x ${kind.blank.outline.h_mm}` : ''} mm` }),
+            ]);
+            blank.addEventListener('click', () => a.start_blank(kind));
+            gallery.append(blank);
+        }
+        const note = kind.note ? el('p', { class: 'start-note', text: kind.note }) : null;
+
+        const foot = el('div', { class: 'start-foot' });
+        const tour = el('button', { type: 'button', class: 'btn ghost', text: 'Take the one-minute tour' });
+        tour.addEventListener('click', () => a.tour());
+        const svg = el('button', { type: 'button', class: 'btn ghost', text: 'Import SVG artwork' });
+        svg.addEventListener('click', () => a.import_svg());
+        foot.append(tour, svg, el('span', { text: 'A preset opens at the Pattern step; a blank start at the Piece step.' }));
+
+        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, el('h3', { class: 'sub', text: 'Start from one of these' }), ...(note ? [note] : []), gallery, foot]);
+        root.append(inner);
+    }
+
+    preset_card_(id) {
+        const p = kPresets.find(x => x.id === id);
+        const design = preset_by_id(id);
+        const o = design.piece.outline;
+        let canvas = this.thumbs_.get(id);
+        if (!canvas) {
+            canvas = el('canvas', { class: 'preset-thumb', width: 320, height: 320, 'aria-hidden': 'true' });
+            this.thumbs_.set(id, canvas);
+            // One build at a time, so the worker stays free for the editor in between.
+            this.queue_ = this.queue_
+                .then(() => this.actions_.build(design))
+                .then(layers => draw_stack(canvas, design, layers))
+                .catch(() => {});
+        }
+        const card = el('button', { type: 'button', class: 'preset' }, [
+            canvas,
+            el('strong', { text: p.name }),
+            el('small', { text: `${design.layers.length} layers, ${o.w_mm}${o.kind === 'rect' || o.kind === 'arch' ? ` x ${o.h_mm}` : ''} mm` }),
+        ]);
+        card.addEventListener('click', () => this.actions_.open_preset(id));
+        return card;
+    }
+}
+return { kKinds, draw_stack, StartScreen };
+})();
+// src/ui/tour.js
+const __m_ui_tour_js = (function () {
+const { el } = __m_ui_dom_js;
+// Spotlight tour (SPEC 11): about a minute, six stops, each lighting up one part of the editor with
+// a short note. Back, Next and Skip; Escape closes it. Offered on the start screen and once after
+// the first piece opens.
+
+
+const kStops = [
+    { target: '#steps', text: 'Five steps take you from an outline to cut files. Work through them in order, or click any step to jump to it.' },
+    { target: '#panel', text: 'Each step shows only what it needs. "More options" at the bottom of a step holds the rest.' },
+    { target: '#stage', text: 'The preview follows the step: 3D while you design, the Layer view for structure, the Sheets to make. Drag to turn it; the tabs switch views by hand.' },
+    { target: '#layer-strip', text: 'Every layer, front first. Click one to edit it in the Pattern, Look and Structure steps.' },
+    { target: '#panel-next', text: 'Next takes you to the following step. Nothing is locked, so go back any time.' },
+    { target: '.status', text: 'The light turns amber for warnings and red for anything that would break when cut. The Make step lists each one with a box on the layer.' },
+];
+
+class Tour {
+    constructor(root) {
+        this.root_ = root;
+        this.at_ = 0;
+        this.on_key_ = e => {
+            if (e.key === 'Escape') this.stop();
+            if (e.key === 'ArrowRight') this.go_(1);
+            if (e.key === 'ArrowLeft') this.go_(-1);
+        };
+        this.on_resize_ = () => this.place_();
+    }
+
+    start() {
+        this.at_ = 0;
+        this.root_.hidden = false;
+        document.addEventListener('keydown', this.on_key_);
+        window.addEventListener('resize', this.on_resize_);
+        this.render_();
+    }
+
+    stop() {
+        this.root_.hidden = true;
+        this.root_.textContent = '';
+        document.removeEventListener('keydown', this.on_key_);
+        window.removeEventListener('resize', this.on_resize_);
+    }
+
+    go_(delta) {
+        const next = this.at_ + delta;
+        if (next < 0) return;
+        if (next >= kStops.length) {
+            this.stop();
+            return;
+        }
+        this.at_ = next;
+        this.render_();
+    }
+
+    render_() {
+        const stop = kStops[this.at_];
+        this.root_.textContent = '';
+        const spot = el('div', { class: 'tour-spot' });
+        const back = el('button', { type: 'button', class: 'btn ghost', text: 'Back' });
+        back.disabled = this.at_ === 0;
+        back.addEventListener('click', () => this.go_(-1));
+        const next = el('button', { type: 'button', class: 'btn', text: this.at_ === kStops.length - 1 ? 'Done' : 'Next' });
+        next.addEventListener('click', () => this.go_(1));
+        const skip = el('button', { type: 'button', class: 'more-toggle', text: 'Skip the tour' });
+        skip.addEventListener('click', () => this.stop());
+        const bubble = el('div', { class: 'tour-bubble', role: 'dialog', 'aria-label': 'Tour' }, [
+            el('span', { class: 'panel-kicker', text: `${this.at_ + 1} of ${kStops.length}` }),
+            el('p', { text: stop.text }),
+            el('div', { class: 'tour-buttons' }, [skip, el('span', { class: 'spacer' }), back, next]),
+        ]);
+        this.root_.append(spot, bubble);
+        this.place_();
+        next.focus();
+    }
+
+    // The spotlight hugs the target; the bubble sits below it, or above when there is no room.
+    place_() {
+        const spot = this.root_.querySelector('.tour-spot');
+        const bubble = this.root_.querySelector('.tour-bubble');
+        const target = document.querySelector(kStops[this.at_]?.target);
+        if (!spot || !bubble || !target) return;
+        const r = target.getBoundingClientRect();
+        const pad = 6;
+        Object.assign(spot.style, { left: `${r.left - pad}px`, top: `${r.top - pad}px`, width: `${r.width + 2 * pad}px`, height: `${r.height + 2 * pad}px` });
+        const bw = Math.min(360, window.innerWidth - 32);
+        const left = Math.max(16, Math.min(window.innerWidth - bw - 16, r.left + r.width / 2 - bw / 2));
+        bubble.style.width = `${bw}px`;
+        bubble.style.left = `${left}px`;
+        const below = r.bottom + pad + 12;
+        const bh = bubble.offsetHeight;
+        bubble.style.top = below + bh < window.innerHeight - 8 ? `${below}px` : `${Math.max(8, r.top - pad - 12 - bh)}px`;
+        // A tall target: the bubble goes beside it when there is room (the step panel), else just
+        // inside its top edge (the preview).
+        if (r.height > window.innerHeight * 0.6) {
+            bubble.style.top = `${Math.max(8, r.top + 48)}px`;
+            if (r.right + 24 + bw < window.innerWidth) bubble.style.left = `${r.right + 24}px`;
+        }
+    }
+}
+return { Tour };
+})();
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
-const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of } = __m_core_design_js;
+const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of, base_design } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { to_shape } = __m_sources_curves_js;
@@ -92160,11 +92677,18 @@ const { build_header } = __m_ui_header_js;
 const { build_make_extras } = __m_ui_make_panel_js;
 const { make_checks_view } = __m_ui_checks_view_js;
 const { build_calibrate_panel } = __m_ui_calibrate_panel_js;
-const { set_status } = __m_ui_shell_js;
+const { set_status, kSteps, show_step, panel_parts } = __m_ui_shell_js;
+const { LayerStrip } = __m_ui_layer_strip_js;
+const { StartScreen } = __m_ui_start_screen_js;
+const { Tour } = __m_ui_tour_js;
 const { save_bytes, el } = __m_ui_dom_js;
-// App controller: the design store, UI state, header and panels, the geometry worker and the
-// views. Every edit goes through the store (one undo step per action or slider drag). Every new
-// design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
+// App controller: the design store, UI state, the step panel, the geometry worker and the views.
+// Every edit goes through the store (one undo step per action or slider drag). Every new design is
+// rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
+// screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
+
+
+
 
 
 
@@ -92185,7 +92709,8 @@ const { save_bytes, el } = __m_ui_dom_js;
 
 
 const kDesignKey = 'lamina-design';
-const kTierKey = 'lamina-tier';
+const kMoreKey = 'lamina-more'; // which steps have "More options" open
+const kTourKey = 'lamina-tour-seen';
 const kMaterialsKey = 'lamina-materials';
 
 // Measured materials kept in this browser, so new designs start measured.
@@ -92266,6 +92791,16 @@ function new_motif(type, design, layer) {
     }
 }
 
+// A blank piece of a start-screen kind: plain layers in its outline and symmetry.
+function blank_design(kind) {
+    const d = base_design(kind.blank.layers);
+    d.name = `New ${kind.title.toLowerCase()}`;
+    Object.assign(d.piece.outline, kind.blank.outline);
+    d.piece.symmetry = { ...kind.blank.symmetry };
+    d.generator.style = { round: 'mandala', panel: 'circuit' }[kind.id] ?? 'classic';
+    return d;
+}
+
 const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -92294,12 +92829,20 @@ function status_line(design, built, checks, pending) {
 }
 
 function start_app({ worker, preview, stage }) {
-    const store = new Store(restore_design() ?? with_library(preset_by_id('orb')));
+    const restored = restore_design();
+    const store = new Store(restored ?? with_library(preset_by_id('orb')));
+    let saved_more = [];
+    try {
+        saved_more = JSON.parse(storage_get(kMoreKey) ?? '[]');
+    } catch {
+        saved_more = [];
+    }
     const ui = {
         layer: 0,
+        step: 'pattern',
         view: '3d',
-        tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic',
         locks: new Set(),
+        more: new Set(Array.isArray(saved_more) ? saved_more : []),
     };
     const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
@@ -92309,6 +92852,9 @@ function start_app({ worker, preview, stage }) {
     let sheets_view;
     let checks_view;
     let unmeasured;
+    let strip;
+    let start;
+    let tour;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -92376,12 +92922,29 @@ function start_app({ worker, preview, stage }) {
 
     function render_ui() {
         ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
+        show_step(ui.step);
         panels.render();
         header.refresh();
         for (const tab of document.querySelectorAll('#tabs .tab')) {
             tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
         }
         render_layer_view();
+        strip.show(store.design, state.built?.layers, ui.layer);
+    }
+
+    // After the first piece opens, the tour is offered once, in a card over the preview.
+    function offer_tour() {
+        if (storage_get(kTourKey)) return;
+        storage_set(kTourKey, '1');
+        const take = el('button', { type: 'button', class: 'btn', text: 'Take the one-minute tour' });
+        const later = el('button', { type: 'button', class: 'btn ghost', text: 'Not now' });
+        const card = el('div', { class: 'tour-offer', role: 'dialog', 'aria-label': 'Tour' }, [el('p', { text: 'New to Lamina? A one-minute tour shows where everything is.' }), el('div', { class: 'tour-buttons' }, [later, take])]);
+        take.addEventListener('click', () => {
+            card.remove();
+            tour.start();
+        });
+        later.addEventListener('click', () => card.remove());
+        document.querySelector('.view').append(card);
     }
 
     const app = {
@@ -92466,6 +93029,38 @@ function start_app({ worker, preview, stage }) {
         select_layer(k) {
             ui.layer = k;
             render_ui();
+        },
+        // A step opens the view it needs; the view tabs still switch by hand.
+        set_step(step) {
+            ui.step = step;
+            panel_parts().body.scrollTop = 0;
+            app.set_view(kSteps.find(s => s.id === step).view);
+        },
+        go_step(delta) {
+            const i = kSteps.findIndex(s => s.id === ui.step) + delta;
+            if (i >= 0 && i < kSteps.length) app.set_step(kSteps[i].id);
+        },
+        toggle_more(key) {
+            if (ui.more.has(key)) ui.more.delete(key);
+            else ui.more.add(key);
+            storage_set(kMoreKey, JSON.stringify([...ui.more].filter(k => !k.startsWith('motif:'))));
+            render_ui();
+        },
+        show_start() {
+            start.show({ continue_name: store.design.name });
+        },
+        open_preset(id) {
+            app.load_preset(id);
+            start.hide();
+            app.set_step('pattern');
+            offer_tour();
+        },
+        start_blank(kind) {
+            ui.layer = 0;
+            store.replace(with_library(blank_design(kind)));
+            start.hide();
+            app.set_step('piece');
+            offer_tour();
         },
         show_layer(k) {
             ui.layer = k;
@@ -92553,11 +93148,6 @@ function start_app({ worker, preview, stage }) {
             if (ui.locks.has(id)) ui.locks.delete(id);
             else ui.locks.add(id);
         },
-        set_tier(tier) {
-            ui.tier = tier;
-            storage_set(kTierKey, tier);
-            render_ui();
-        },
         set_seed(seed) {
             edit(d => generate_stack(d, seed, { lock_n: ui.locks.has('symmetry.n') }));
         },
@@ -92644,8 +93234,8 @@ function start_app({ worker, preview, stage }) {
         container.append(button);
     };
     panels = new Panels(app, {
-        piece: import_extras,
-        layers: layer_extras,
+        pattern: import_extras,
+        look: layer_extras,
         make: build_make_extras(worker, checks_view, () => app.export_zip(), container => build_calibrate_panel(container, app)),
     });
     header = build_header(app);
@@ -92654,6 +93244,37 @@ function start_app({ worker, preview, stage }) {
             if (!tab.disabled) app.set_view(tab.dataset.view);
         });
     }
+    for (const b of document.querySelectorAll('[data-step-go]')) b.addEventListener('click', () => app.set_step(b.dataset.stepGo));
+    panel_parts().back.addEventListener('click', () => app.go_step(-1));
+    panel_parts().next.addEventListener('click', () => app.go_step(1));
+    strip = new LayerStrip(document.getElementById('layer-strip'), { on_select: k => app.select_layer(k) });
+    tour = new Tour(document.getElementById('tour'));
+    const svg_input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
+    svg_input.addEventListener('change', () => {
+        if (svg_input.files.length) app.import_svg(svg_input.files);
+        svg_input.value = '';
+    });
+    document.body.append(svg_input);
+    start = new StartScreen(document.getElementById('start'), {
+        build: async design => (await worker.call('build', design)).layers.map(unpack_layer),
+        open_preset: id => app.open_preset(id),
+        start_blank: kind => app.start_blank(kind),
+        close: () => start.hide(),
+        open_file: () => {
+            start.hide();
+            header.open_file();
+        },
+        import_svg: () => {
+            start.hide();
+            app.set_step('pattern');
+            svg_input.click();
+        },
+        tour: () => {
+            start.hide();
+            storage_set(kTourKey, '1');
+            tour.start();
+        },
+    });
 
     // Builds run latest-wins; the slow checks follow once edits pause.
     let busy = false;
@@ -92672,6 +93293,7 @@ function start_app({ worker, preview, stage }) {
             preview.show(design, state.built.layers);
             render2d.show(design, state.built.layers);
             render_layer_view();
+            strip.show(store.design, state.built.layers, ui.layer);
             schedule_sheets();
             render_status();
             clearTimeout(check_timer);
@@ -92718,8 +93340,10 @@ function start_app({ worker, preview, stage }) {
         event.preventDefault();
     });
 
-    render_ui();
+    app.set_step(ui.step);
     build(store.design);
+    // A first visit starts on the start screen; a returning visitor opens their last design.
+    if (!restored) start.show({ first_visit: true });
     return app;
 }
 return { start_app };
