@@ -6,6 +6,7 @@ import { generate_stack } from '../src/core/generate.js';
 import { build_design } from '../src/pipeline/compose.js';
 import { slow_checks } from '../src/pipeline/checks.js';
 import { export_design } from '../src/export/export_design.js';
+import { preset_by_id } from '../src/core/presets.js';
 
 const kRuns = 5;
 
@@ -49,6 +50,32 @@ report(
         const m = motifs.find(x => x.type !== 'disc') ?? motifs[0];
         if (m.r_mm !== undefined) m.r_mm += 1;
         else m.d_mm += 1;
+        return time(() => build_design(d));
+    }),
+);
+
+// M2: the dense Lattice orb (12 layers, 290 mm): a lattice openness change on one layer.
+report(
+    '12 x 290 mm dense lattice: slider change on one layer',
+    400,
+    Array.from({ length: kRuns }, (_, i) => {
+        const d = preset_by_id('lattice');
+        build_design(d);
+        const m = d.layers[2].source.motifs.find(x => x.type === 'lattice');
+        m.openness = Math.min(1, m.openness + 0.05 * (i + 1));
+        return time(() => build_design(d));
+    }),
+);
+
+// M2: field mode (12 layers, 290 mm, rings): a field slider changes every layer.
+report(
+    '12 x 290 mm field: field slider change (all layers)',
+    null,
+    Array.from({ length: kRuns }, (_, i) => {
+        const d = preset_by_id('lattice');
+        d.piece.depth_mode = 'field';
+        build_design(d);
+        d.piece.field.lo += 0.01 * (i + 1);
         return time(() => build_design(d));
     }),
 );

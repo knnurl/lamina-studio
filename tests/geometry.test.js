@@ -88,11 +88,18 @@ test('a layer is its outline minus the openings inside its frame ring', () => {
     assert.ok(area_mm2(material) >= ring_mm2, 'the frame ring stays whole');
 });
 
+// SPEC 13.6: a slider change under 400 ms on a dense lattice (the cold first build, JIT start-up
+// included, only gets a sanity bound). The change is one layer's frame ring: that layer, the
+// dowels and the IDs it touches are rebuilt.
 test('every preset builds quickly enough to sculpt with', () => {
     for (const p of kPresets) {
-        const built = build_design(p.make());
-        assert.ok(built.layers.every(l => l.area_mm2 > 0), p.id);
-        assert.ok(built.ms < 400, `${p.id} took ${built.ms.toFixed(0)} ms`);
+        const design = p.make();
+        const cold = build_design(design);
+        assert.ok(cold.layers.every(l => l.area_mm2 > 0), p.id);
+        assert.ok(cold.ms < 1500, `${p.id} cold build took ${cold.ms.toFixed(0)} ms`);
+        design.layers[Math.floor(design.layers.length / 2)].frame_ring_mm += 1;
+        const edit = build_design(design);
+        assert.ok(edit.ms < 400, `${p.id} slider change took ${edit.ms.toFixed(0)} ms`);
     }
 });
 

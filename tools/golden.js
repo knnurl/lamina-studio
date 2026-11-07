@@ -42,8 +42,24 @@ function svg_design() {
     return design_from_import({ layers: r.layers.map(l => ({ name: l.name, paths: to_flat(l.paths) })), outline: to_flat(r.outline), size_mm: r.size_mm }, 'Golden SVG');
 }
 
+// Field mode (M2): a Chladni field sliced into 6 layers, with islands bridged by the spanning tree.
+function field_design() {
+    const d = base_design(6);
+    d.name = 'Golden field';
+    d.piece.outline = { kind: 'circle', w_mm: 200 };
+    d.piece.symmetry = { kind: 'dihedral', n: 6, phase_deg: 0 };
+    d.piece.depth_mode = 'field';
+    d.piece.field = { kind: 'chladni', scale_mm: 18, k: 5, a: 0.6, lo: 0.3, hi: 1 };
+    return d;
+}
+
 export function golden_designs() {
-    return [...kPresets.map(p => ({ id: p.id, design: p.make() })), { id: 'islands', design: islands_design() }, { id: 'svg', design: svg_design() }];
+    return [
+        ...kPresets.map(p => ({ id: p.id, design: p.make() })),
+        { id: 'islands', design: islands_design() },
+        { id: 'svg', design: svg_design() },
+        { id: 'field', design: field_design() },
+    ];
 }
 
 export function metrics(design) {
