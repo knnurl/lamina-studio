@@ -19,6 +19,11 @@ export const kMotifTypes = {
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
     lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
     fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
+    circuit: {
+        label: 'Circuit traces',
+        params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
+        replicated: true,
+    },
 };
 
 // scales: the value is a length that follows the piece when it is resized. Structural widths
@@ -46,6 +51,23 @@ export const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
+    area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
+    area_h_mm: { label: 'Area height', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
+    reach_mm: { label: 'Round limit (0 is none)', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'advanced' },
+    strands: { label: 'Strands', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
+    strand_mm: { label: 'Strand width', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    gap_mm: { label: 'Strand gap', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    traces: { label: 'Traces', min: 1, max: 200, step: 1, unit: '', scales: false, tier: 'basic' },
+    length: { label: 'Longest trace', min: 3, max: 120, step: 1, unit: 'cells', scales: false, tier: 'basic' },
+    straight: { label: 'Straightness', min: 0, max: 1, step: 0.05, unit: '', scales: false, tier: 'advanced' },
+    terminal: {
+        label: 'Ends',
+        type: 'select',
+        options: [['mix', 'Mixed'], ['drop', 'Drops'], ['bulb', 'Bulbs'], ['ring', 'Ring pads'], ['via', 'Vias']],
+        scales: false,
+        tier: 'basic',
+    },
 };
 
 const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
@@ -142,6 +164,7 @@ export const SCHEMA = [
         options: [
             ['classic', 'Openings'],
             ['lattice', 'Lattice and key fret'],
+            ['circuit', 'Circuit traces'],
         ],
         tier: 'basic',
         desc: 'What Randomise and the seed arrows build.',

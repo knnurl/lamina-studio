@@ -5,6 +5,7 @@ import { circle_path, regular_polygon_path, circle_segments, union_all } from '.
 import { rotate_path, replicate, rotation_order } from '../geom/symmetry.js';
 import { kMotifTypes } from '../core/schema.js';
 import { lattice_openings, fret_openings } from './lattice.js';
+import { circuit_openings } from './circuit.js';
 import { mm_to_um } from '../core/units.js';
 
 const kDeg = Math.PI / 180;
@@ -98,6 +99,7 @@ export function motif_openings(m, sym) {
     // Lattices and frets are built in the fundamental domain, then replicated.
     if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
     if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);
+    if (m.type === 'circuit') return replicate(circuit_openings(m, sym), sym);
     const mult = Math.max(1, Math.round(m.mult ?? 1));
     const wedge = (2 * Math.PI) / rotation_order(sym);
     const base = base_paths(m, wedge / mult);
