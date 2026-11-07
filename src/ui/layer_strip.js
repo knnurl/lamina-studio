@@ -4,7 +4,8 @@
 // the 3D and 2D views (the view only: checks and cut files keep every layer), and "Show all"
 // appears while any layer is hidden. A thumbnail redraws only when its layer's material or colour
 // changes, so dense lattices cost nothing on edits that leave them alone.
-// Assumptions: built layers carry material (micrometres, y up) and material_key.
+// Assumptions: built layers carry material and look (the material plus glue-on parts; micrometres,
+// y up) and material_key, which changes whenever either can.
 import { el } from './dom.js';
 
 const kSizePx = 44;
@@ -82,7 +83,7 @@ export class LayerStrip {
             const key = layer ? `${layer.material_key}|${colour}|${box}` : null;
             if (!layer || key === item.key) return;
             item.key = key;
-            this.draw_(item.canvas, layer.material, colour, { x0, y0, x1, y1 });
+            this.draw_(item.canvas, layer.look, colour, { x0, y0, x1, y1 });
         });
         this.show_all_.hidden = !any_hidden;
     }

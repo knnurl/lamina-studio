@@ -85,13 +85,18 @@ function blank_design(kind) {
 const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+// look is the layer as it hangs, for the previews: its material plus its glue-on parts in place
+// (cut separately, glued in the same plane onto the layer behind, which check G-03 keeps at gap 0).
 function unpack_layer(l) {
+    const material = unpack_paths(l.packed);
+    const parts = l.parts.map(unpack_paths);
     return {
         ...l,
-        material: unpack_paths(l.packed),
+        material,
+        look: parts.length ? [...material, ...parts.flat()] : material,
         islands: l.islands.map(i => ({ ...i, outer: unpack_paths(i.outer)[0] })),
         bridges: l.bridges.map(b => ({ ...b, rect: unpack_paths(b.rect)[0] })),
-        parts: l.parts.map(unpack_paths),
+        parts,
         locators: unpack_paths(l.locators),
         ids: unpack_paths(l.ids),
     };

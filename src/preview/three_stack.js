@@ -124,8 +124,8 @@ export class StackPreview {
         this.resize_();
     }
 
-    // built: [{ material: paths, material_key }] front first, as the worker returned them for
-    // design. The back layer sits at z = 0 and each layer in front sits on the one behind plus its
+    // built: [{ look: paths, material_key }] front first, as the worker returned them for design
+    // (look: the material plus any glue-on parts in place). The back layer sits at z = 0 and each layer in front sits on the one behind plus its
     // gap. The camera is reframed only when the piece's size changes.
     // Extruded geometry is kept by material_key and thickness: triangulating a dense lattice layer
     // is the main cost of a redraw, and an edit usually changes one layer.
@@ -145,7 +145,7 @@ export class StackPreview {
             const key = built[k].material_key ? `${built[k].material_key}|${thickness_mm}` : null;
             let geometry = key && (next.get(key) ?? old.get(key));
             if (!geometry) {
-                geometry = new ExtrudeGeometry(to_shapes(built[k].material), { depth: thickness_mm, bevelEnabled: false });
+                geometry = new ExtrudeGeometry(to_shapes(built[k].look), { depth: thickness_mm, bevelEnabled: false });
                 geometry.computeBoundingSphere();
             }
             if (key) next.set(key, geometry);

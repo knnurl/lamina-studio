@@ -22,7 +22,7 @@ function fast_findings(checks) {
     return { fatal: fatal.map(c => `${c.id} layer ${c.layer + 1}: ${c.message}`), warnings: warn.map(c => `${c.id} layer ${c.layer + 1}: ${c.message}`) };
 }
 
-// One layer drawn flat, with its bridges, on a dark ground.
+// One layer drawn flat, with its glue-on parts in place and its bridges, on a dark ground.
 function draw_layer(canvas, design, layer) {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#07050b';
@@ -51,7 +51,7 @@ function draw_layer(canvas, design, layer) {
         return path;
     };
     ctx.fillStyle = design.layers[0]?.finish.colour ?? '#d8c09a';
-    ctx.fill(trace(layer.material), 'evenodd');
+    ctx.fill(trace(layer.look ?? layer.material), 'evenodd');
     ctx.fillStyle = '#b4f03c';
     for (const b of layer.bridges) ctx.fill(trace([b.rect]));
 }

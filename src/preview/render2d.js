@@ -2,6 +2,7 @@
 // soft drop shadow, in the style of the AngelShadowBox preview. The fast view for very dense
 // pieces. Backlit pieces get a glow in the light colour behind the back layer's silhouette.
 // Hidden layers (the strip's eye buttons and the peel slider) are left out.
+// Each layer is drawn as it hangs: its material plus its glue-on parts in place (look).
 // Assumptions: paths in micrometres, y up.
 import { kUmPerMm } from '../core/units.js';
 
@@ -78,7 +79,7 @@ export class Render2D {
         }
         for (let k = built.length - 1; k >= 0; k--) {
             if (this.hidden_.has(k)) continue;
-            const path = trace(built[k].material);
+            const path = trace(built[k].look);
             ctx.save();
             ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
             ctx.shadowBlur = 6 + Math.min(10, design.layers[k].gap_mm);
