@@ -1,7 +1,8 @@
 // Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
 // on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
 // engine fills the circle. Returns paths in micrometres, counter-clockwise.
-import { circle_path, regular_polygon_path, circle_segments, union_all } from '../geom/clip.js';
+import { circle_path, regular_polygon_path, circle_segments, union_all, union_fill } from '../geom/clip.js';
+import { from_flat } from '../geom/pack.js';
 import { rotate_path, replicate, rotation_order } from '../geom/symmetry.js';
 import { kMotifTypes } from '../core/schema.js';
 import { lattice_openings, fret_openings } from './lattice.js';
@@ -104,10 +105,28 @@ function base_paths(m, wedge_rad) {
     }
 }
 
+// Artwork (SPEC M4.5): imported paths, centred on their own box, scaled to width_mm, turned by
+// angle_deg and placed at (x_mm, y_mm); holes follow the even-odd rule. Cut once, or repeated
+// round the piece by its symmetry.
+function art_openings(m, sym) {
+    const paths = from_flat(m.paths ?? []);
+    if (!paths.length || !(m.src_w_mm > 0)) return [];
+    const k = (m.width_mm ?? m.src_w_mm) / m.src_w_mm;
+    const a = (m.angle_deg ?? 0) * kDeg;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const dx = mm_to_um(m.x_mm ?? 0);
+    const dy = mm_to_um(m.y_mm ?? 0);
+    const placed = paths.map(p => p.map(q => ({ x: Math.round(dx + k * (c * q.x - s * q.y)), y: Math.round(dy + k * (s * q.x + c * q.y)) })));
+    const art = union_fill(placed, true);
+    return m.repeat === 'around' ? replicate(art, sym) : art;
+}
+
 // All openings of one motif under the piece's symmetry.
 export function motif_openings(m, sym) {
     if (!(m.type in kMotifTypes)) throw new Error(`unknown motif "${m.type}"`);
     if (m.type === 'disc') return m.d_mm > 0 ? [circle_path(0, 0, mm_to_um(m.d_mm) / 2)] : [];
+    if (m.type === 'art') return art_openings(m, sym);
     // Lattices and frets are built in the fundamental domain, then replicated.
     if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
     if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);

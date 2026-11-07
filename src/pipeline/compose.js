@@ -100,7 +100,9 @@ export function build_design(design) {
     const shape_key = JSON.stringify([design.piece.outline, design.piece.symmetry]);
     const layers = design.layers.map((layer, k) => {
         const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
-        const field = design.piece.depth_mode === 'field' ? [design.piece.field, k, design.layers.length] : null;
+        // The picture enters the key by its hash: its bytes would cost a long stringify per layer.
+        const f = design.piece.field;
+        const field = design.piece.depth_mode === 'field' ? [{ ...f, image: f.image?.hash ?? null }, k, design.layers.length] : null;
         const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm, field]));
         const geo = cached(layer_cache, key, () => {
             const { outline, material: raw } = compose_layer(design, k);

@@ -116,7 +116,7 @@ export function base_design(layer_count = 8) {
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
             lighting: { mode: 'unlit', colour: '#ff5b2e' },
             depth_mode: 'per_layer',
-            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1 },
+            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1, zoom: 1, smooth_mm: 1, invert: false, image: null },
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
         sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },

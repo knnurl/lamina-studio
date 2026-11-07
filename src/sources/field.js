@@ -14,6 +14,71 @@ const kKeyScale = 2 ** 24;
 
 export const kFieldKinds = ['rings', 'chladni', 'interference', 'rose'];
 
+// A picture source (SPEC M4.5, M5's image field): field.image is { w, h, data, hash }, data being
+// base64 grey bytes, row by row from the top. Values are grey / 255 (dark is 0), swapped by
+// field.invert. The picture fits inside the piece at zoom 1 and is never folded by the symmetry.
+const raster_cache = new Map();
+
+function grey_values(image, blur_px) {
+    const key = `${image.hash}|${blur_px}`;
+    if (raster_cache.has(key)) return raster_cache.get(key);
+    const bin = atob(image.data);
+    let v = new Float32Array(image.w * image.h);
+    for (let i = 0; i < v.length; i++) v[i] = bin.charCodeAt(i) / 255;
+    // Two box passes each way, close to a Gaussian.
+    const box = (src, horizontal) => {
+        const out = new Float32Array(src.length);
+        const n = horizontal ? image.w : image.h;
+        const lines = horizontal ? image.h : image.w;
+        for (let line = 0; line < lines; line++) {
+            const at = i => (horizontal ? line * image.w + i : i * image.w + line);
+            let sum = 0;
+            for (let i = -blur_px; i <= blur_px; i++) sum += src[at(Math.min(n - 1, Math.max(0, i)))];
+            for (let i = 0; i < n; i++) {
+                out[at(i)] = sum / (2 * blur_px + 1);
+                sum += src[at(Math.min(n - 1, i + blur_px + 1))] - src[at(Math.max(0, i - blur_px))];
+            }
+        }
+        return out;
+    };
+    if (blur_px > 0) for (let pass = 0; pass < 2; pass++) v = box(box(v, true), false);
+    raster_cache.set(key, v);
+    if (raster_cache.size > 6) raster_cache.delete(raster_cache.keys().next().value);
+    return v;
+}
+
+// Samples the picture over the bounds at kResMm (outside the picture reads as 1, far and light).
+function sample_image(f, b) {
+    const img = f.image;
+    const step = kResMm * kUmPerMm;
+    const nx = Math.ceil((b.x1 - b.x0) / step) + 1;
+    const ny = Math.ceil((b.y1 - b.y0) / step) + 1;
+    const out = new Float32Array(nx * ny).fill(1);
+    if (!img?.data) return { v: out, nx, ny, step, x0: b.x0, y0: b.y0 };
+    const cx = (b.x0 + b.x1) / 2 / kUmPerMm;
+    const cy = (b.y0 + b.y1) / 2 / kUmPerMm;
+    const mm_per_px = Math.min((b.x1 - b.x0) / kUmPerMm / img.w, (b.y1 - b.y0) / kUmPerMm / img.h) / Math.max(0.1, f.zoom ?? 1);
+    const g = grey_values(img, Math.max(0, Math.round((f.smooth_mm ?? 0) / mm_per_px)));
+    const at = (i, j) => g[Math.min(img.h - 1, Math.max(0, j)) * img.w + Math.min(img.w - 1, Math.max(0, i))];
+    for (let j = 0; j < ny; j++) {
+        const y = (b.y0 + j * step) / kUmPerMm;
+        const py = (cy - y) / mm_per_px + img.h / 2 - 0.5;
+        if (py < -0.5 || py > img.h - 0.5) continue;
+        for (let i = 0; i < nx; i++) {
+            const x = (b.x0 + i * step) / kUmPerMm;
+            const px = (x - cx) / mm_per_px + img.w / 2 - 0.5;
+            if (px < -0.5 || px > img.w - 0.5) continue;
+            const i0 = Math.floor(px);
+            const j0 = Math.floor(py);
+            const fx = px - i0;
+            const fy = py - j0;
+            const val = at(i0, j0) * (1 - fx) * (1 - fy) + at(i0 + 1, j0) * fx * (1 - fy) + at(i0, j0 + 1) * (1 - fx) * fy + at(i0 + 1, j0 + 1) * fx * fy;
+            out[j * nx + i] = f.invert ? 1 - val : val;
+        }
+    }
+    return { v: out, nx, ny, step, x0: b.x0, y0: b.y0 };
+}
+
 // The raw field at (x, y) in mm, in [0, 1].
 function value(f, x, y) {
     const lambda = Math.max(1, f.scale_mm);
@@ -45,8 +110,14 @@ const sample_cache = new Map();
 
 // Samples the field over the bounds (micrometres) at kResMm, cached by field, symmetry and bounds.
 function sample(f, sym, b) {
-    const key = JSON.stringify([f.kind, f.scale_mm, f.k, f.a, sym, b]);
+    const key = f.kind === 'image' ? JSON.stringify(['image', f.image?.hash, f.zoom, f.smooth_mm, !!f.invert, b]) : JSON.stringify([f.kind, f.scale_mm, f.k, f.a, sym, b]);
     if (sample_cache.has(key)) return sample_cache.get(key);
+    if (f.kind === 'image') {
+        const grid = sample_image(f, b);
+        sample_cache.set(key, grid);
+        if (sample_cache.size > 8) sample_cache.delete(sample_cache.keys().next().value);
+        return grid;
+    }
     const step = kResMm * kUmPerMm;
     const nx = Math.ceil((b.x1 - b.x0) / step) + 1;
     const ny = Math.ceil((b.y1 - b.y0) / step) + 1;
