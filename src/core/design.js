@@ -169,6 +169,29 @@ export function piece_radius_mm(piece) {
     return o.w_mm / 2;
 }
 
+// Slices a picture raster (a photo's tones or depth) into the layers (SPEC M5): field mode, bright
+// parts near, each layer cutting an equal share of the picture's tones (levels 1/n to 1), and the
+// picture covering the whole outline.
+export function apply_photo(design, image) {
+    const n = design.layers.length;
+    const o = design.piece.outline;
+    const w_mm = o.w_mm;
+    const h_mm = o.kind === 'rect' || o.kind === 'arch' ? o.h_mm : o.w_mm;
+    const fit = Math.min(w_mm / image.w, h_mm / image.h);
+    const cover = Math.max(w_mm / image.w, h_mm / image.h);
+    design.piece.depth_mode = 'field';
+    Object.assign(design.piece.field, {
+        kind: 'image',
+        image,
+        invert: true,
+        zoom: Math.min(4, Math.round((cover / fit) * 100) / 100),
+        smooth_mm: 1,
+        lo: Math.round((1 / n) * 100) / 100,
+        hi: 1,
+    });
+    return design;
+}
+
 // Applies a palette to every layer's finish colour.
 export function apply_palette(design, palette_id) {
     design.palette = palette_id;

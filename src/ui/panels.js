@@ -46,7 +46,7 @@ export class Panels {
         const panels = kGroups[step].map(g => g.panel);
         const shown = SCHEMA.filter(e => panels.includes(e.panel) && shown_if(e, d, layer)).map(e => e.id);
         const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(',')];
-        if (step === 'pattern') parts.push(layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
+        if (step === 'pattern') parts.push(d.piece.depth_mode, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
     }
@@ -138,6 +138,12 @@ export class Panels {
         const k = app.ui.layer;
         const layer = app.design.layers[k];
         body.append(el('h3', { class: 'sub', text: `Layer ${k + 1}` }));
+
+        // In field mode the field shapes every layer, and openings are not used (compose.js).
+        if (app.design.piece.depth_mode === 'field' && layer.source.kind !== 'svg') {
+            body.append(el('p', { class: 'step-note', text: 'The field shapes this layer: it keeps the parts below its level. For openings of your own, set "Layers come from" to each layer its own openings.' }));
+            return;
+        }
 
         if (layer.source.kind === 'svg') {
             const src = layer.source;

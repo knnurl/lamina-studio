@@ -3,7 +3,7 @@
 // rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
 // screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
 import { Store } from '../core/store.js';
-import { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design } from '../core/design.js';
+import { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design, apply_palette, apply_photo } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { to_shape } from '../sources/curves.js';
@@ -27,6 +27,7 @@ import { AssistantPanel } from './assistant_panel.js';
 import { SketchBar } from './sketch_bar.js';
 import { to_domain, simplify_line, chaikin, stroke_distance } from '../geom/sketch.js';
 import { save_bytes, el } from './dom.js';
+import { open_photo_flow } from './photo_flow.js';
 
 const kDesignKey = 'lamina-design';
 const kMoreKey = 'lamina-more'; // which steps have "More options" open
@@ -420,6 +421,35 @@ export function start_app({ worker, preview, stage }) {
             assistant.set_open(true);
             assistant.send(text);
         },
+        // A new piece from a photo (the start screen's "From a photo").
+        async from_photo() {
+            const r = await open_photo_flow({ fresh: true, layers: 8 });
+            if (!r) return;
+            const long_mm = 300;
+            const aspect = r.raster.w / r.raster.h;
+            const outline =
+                r.shape === 'round'
+                    ? { kind: 'circle', w_mm: long_mm, h_mm: long_mm }
+                    : { kind: 'rect', w_mm: aspect >= 1 ? long_mm : Math.round(long_mm * aspect), h_mm: aspect >= 1 ? Math.round(long_mm / aspect) : long_mm };
+            const d = blank_design({ id: 'photo', title: 'piece from a photo', blank: { outline, symmetry: { kind: 'none', n: 1, phase_deg: 0 }, layers: r.layers } });
+            d.name = r.photo.name.replace(/\.[a-z0-9]+$/i, '') || 'From a photo';
+            // Light at the front to dark at the back, as the bands preview showed it.
+            apply_palette(d, 'mono');
+            state.photo = r.photo;
+            ui.layer = 0;
+            store.replace(with_library(apply_photo(d, r.raster)));
+            start.hide();
+            app.set_step('pattern');
+            offer_tour();
+        },
+        // The current piece's layers sliced from a photo (the Pattern step), as one undo step.
+        async use_photo() {
+            const r = await open_photo_flow({ fresh: false, layers: store.design.layers.length });
+            if (!r) return;
+            state.photo = r.photo;
+            edit(d => apply_photo(d, r.raster));
+            set_status('ok', `Layers sliced from ${r.photo.name}. Smoothing, zoom and the front layer's fill are in this step; "Swap light and dark" turns it inside out.`);
+        },
         show_start() {
             start.show({ continue_name: store.design.name });
         },
@@ -608,7 +638,12 @@ export function start_app({ worker, preview, stage }) {
         });
         const button = el('button', { type: 'button', class: 'btn ghost', text: 'Import SVG layers' });
         button.addEventListener('click', () => input.click());
+        const photo = el('button', { type: 'button', class: 'btn ghost', text: 'Use a photo' });
+        photo.addEventListener('click', () => app.use_photo());
         container.append(
+            el('h3', { class: 'sub', text: 'From a photo' }),
+            el('p', { class: 'step-note', text: 'Slices a photo into these layers by light and dark, or by depth found by AI.' }),
+            photo,
             el('h3', { class: 'sub', text: 'Import' }),
             el('p', {
                 class: 'step-note',
@@ -667,6 +702,7 @@ export function start_app({ worker, preview, stage }) {
             tour.start();
         },
         describe: (text, kind) => app.describe(text, kind),
+        from_photo: () => app.from_photo(),
     });
     // The assistant's tools work on the studio through this context (SPEC M4.5).
     assistant = new AssistantPanel(

@@ -35,7 +35,7 @@ export const kKinds = [
         title: 'From a photo',
         text: 'Layers from a picture or a depth map.',
         presets: [],
-        note: 'Photo to layers arrives with M5.',
+        photo: true,
         icon: '<rect x="6" y="10" width="36" height="28" rx="3"/><circle cx="17" cy="19" r="4"/><path d="M9 35l11-10 7 6 5-4 9 8"/>',
     },
 ];
@@ -81,7 +81,7 @@ export function draw_stack(canvas, design, layers) {
 
 export class StartScreen {
     // actions: { build(design) -> Promise<layers>, open_preset(id), start_blank(kind), close(),
-    //            open_file(), import_svg(), tour(), describe(text, kind) }
+    //            open_file(), import_svg(), tour(), describe(text, kind), from_photo() }
     constructor(root, actions) {
         this.root_ = root;
         this.actions_ = actions;
@@ -168,6 +168,15 @@ export class StartScreen {
             blank.addEventListener('click', () => a.start_blank(kind));
             gallery.append(blank);
         }
+        if (kind.photo) {
+            const card = el('button', { type: 'button', class: 'preset blank photo-start' }, [
+                el('span', { class: 'blank-art', text: '+' }),
+                el('strong', { text: 'Choose a photo' }),
+                el('small', { text: 'Sliced by light and dark, or by depth found by AI on this computer' }),
+            ]);
+            card.addEventListener('click', () => a.from_photo());
+            gallery.append(card);
+        }
         const note = kind.note ? el('p', { class: 'start-note', text: kind.note }) : null;
 
         const foot = el('div', { class: 'start-foot' });
@@ -177,7 +186,7 @@ export class StartScreen {
         svg.addEventListener('click', () => a.import_svg());
         foot.append(tour, svg, el('span', { text: 'A preset opens at the Pattern step; a blank start at the Piece step.' }));
 
-        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, ...(describe_row ? [describe_row] : []), el('h3', { class: 'sub', text: 'Or start from one of these' }), ...(note ? [note] : []), gallery, foot]);
+        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, ...(describe_row ? [describe_row] : []), el('h3', { class: 'sub', text: kind.photo ? 'Start here' : 'Or start from one of these' }), ...(note ? [note] : []), gallery, foot]);
         root.append(inner);
     }
 
