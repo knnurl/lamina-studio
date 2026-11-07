@@ -225,7 +225,7 @@ button { font: inherit; color: inherit; }
 .motif-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; color: var(--ink); }
 .icon-btn.small { width: 24px; height: 24px; font-size: 16px; line-height: 1; }
 .add-row { display: flex; gap: 8px; }
-.add-row select { flex: 1; }
+.add-row select { flex: 1; min-width: 0; } /* a select sizes to its longest option */
 .btn.ghost {
     background: none;
     color: var(--acid);
@@ -445,7 +445,7 @@ button { font: inherit; color: inherit; }
 <div class="app">
   <header class="top">
     <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
-    <span class="chip" title="Current milestone">M4 in progress</span>
+    <span class="chip" title="Current milestone">M4 done</span>
     <div class="tools" id="tools-left"></div>
     <div class="spacer"></div>
     <div class="tools" id="tools-right"></div>
@@ -463,7 +463,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 30 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 32 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -1037,6 +1037,11 @@ const kMotifTypes = {
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
     lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
     fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
+    scroll: { label: 'Scrolls', params: ['r_mm', 'length_mm', 'width_mm', 'turns', 'mult', 'angle_deg'], replicated: true },
+    ruyi: { label: 'Ruyi clouds', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    ogee: { label: 'Ogee arches', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
@@ -1069,6 +1074,7 @@ const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    turns: { label: 'Turns', min: 0.25, max: 3, step: 0.05, unit: '', scales: false, tier: 'basic' },
     polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
     area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
     area_h_mm: { label: 'Area height', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
@@ -1183,6 +1189,7 @@ const SCHEMA = [
             ['classic', 'Openings'],
             ['lattice', 'Lattice and key fret'],
             ['circuit', 'Circuit traces'],
+            ['mandala', 'Mandala curves'],
         ],
         tier: 'basic',
         desc: 'What Randomise and the seed arrows build.',
@@ -2198,6 +2205,315 @@ function circuit_openings(m, sym) {
 }
 return { kTerminals, circuit_lanes, circuit_routes, circuit_openings };
 })();
+// src/geom/bezier.js
+const __m_geom_bezier_js = (function () {
+// Cubic Bezier shapes (SPEC 8.4, M4): closed outlines of nodes, each an anchor with an incoming
+// and an outgoing handle, in a motif's local frame (mm, x along the radius, origin at the motif's
+// centre). Segment i runs from node i (anchor, out handle) to node i + 1 (in handle, anchor).
+// Pure maths with no geometry library, so the Layer view's node editor can use it on the main
+// thread and the worker can flatten the same shapes.
+// A node is { x, y, ix, iy, ox, oy }: the anchor and its two handles, all absolute.
+
+const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+
+// The four control points of segment i.
+function segment(nodes, i) {
+    const a = nodes[i];
+    const b = nodes[(i + 1) % nodes.length];
+    return [
+        { x: a.x, y: a.y },
+        { x: a.ox, y: a.oy },
+        { x: b.ix, y: b.iy },
+        { x: b.x, y: b.y },
+    ];
+}
+
+function cubic_at([p0, p1, p2, p3], t) {
+    const u = 1 - t;
+    return {
+        x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+        y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+    };
+}
+
+// Steps for a segment so the chords stay within tol of the curve (Wang's bound).
+function cubic_steps([p0, p1, p2, p3], tol) {
+    const d1 = Math.hypot(p0.x - 2 * p1.x + p2.x, p0.y - 2 * p1.y + p2.y);
+    const d2 = Math.hypot(p1.x - 2 * p2.x + p3.x, p1.y - 2 * p2.y + p3.y);
+    return Math.max(1, Math.ceil(Math.sqrt((0.75 * Math.max(d1, d2)) / tol)));
+}
+
+// The closed outline as a polyline (no repeated last point), chords within tol (same unit).
+function flatten_shape(nodes, tol = 0.02) {
+    const out = [];
+    for (let i = 0; i < nodes.length; i++) {
+        const seg = segment(nodes, i);
+        const n = cubic_steps(seg, tol);
+        for (let k = 0; k < n; k++) out.push(cubic_at(seg, k / n));
+    }
+    return out;
+}
+
+// Splits segment i at t (de Casteljau): the outline is unchanged, with one more node.
+function split_segment(nodes, i, t) {
+    const [p0, p1, p2, p3] = segment(nodes, i);
+    const a = lerp(p0, p1, t);
+    const b = lerp(p1, p2, t);
+    const c = lerp(p2, p3, t);
+    const d = lerp(a, b, t);
+    const e = lerp(b, c, t);
+    const m = lerp(d, e, t);
+    const out = nodes.map(n => ({ ...n }));
+    const j = (i + 1) % nodes.length;
+    out[i].ox = a.x;
+    out[i].oy = a.y;
+    out[j].ix = c.x;
+    out[j].iy = c.y;
+    out.splice(i + 1, 0, { x: m.x, y: m.y, ix: d.x, iy: d.y, ox: e.x, oy: e.y });
+    return out;
+}
+
+// The closest point of the outline to p: { seg, t, d }, by sampling then refining.
+function nearest_on_shape(nodes, p) {
+    let best = { seg: 0, t: 0, d: Infinity };
+    for (let i = 0; i < nodes.length; i++) {
+        const seg = segment(nodes, i);
+        for (let k = 0; k <= 32; k++) {
+            const q = cubic_at(seg, k / 32);
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            if (d < best.d) best = { seg: i, t: k / 32, d };
+        }
+    }
+    let step = 1 / 64;
+    const seg = segment(nodes, best.seg);
+    for (let it = 0; it < 12; it++) {
+        for (const t of [best.t - step, best.t + step]) {
+            if (t < 0 || t > 1) continue;
+            const q = cubic_at(seg, t);
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            if (d < best.d) best = { ...best, t, d };
+        }
+        step /= 2;
+    }
+    return best;
+}
+
+// Removes node i, keeping at least three.
+function delete_node(nodes, i) {
+    if (nodes.length <= 3) return nodes;
+    return nodes.filter((_, k) => k !== i).map(n => ({ ...n }));
+}
+
+// Moves anchor i to (x, y), its handles with it.
+function move_anchor(nodes, i, x, y) {
+    return nodes.map((n, k) => {
+        if (k !== i) return n;
+        const dx = x - n.x;
+        const dy = y - n.y;
+        return { x, y, ix: n.ix + dx, iy: n.iy + dy, ox: n.ox + dx, oy: n.oy + dy };
+    });
+}
+
+// Moves handle 'in' or 'out' of node i to (x, y). A smooth node (handles in line through the
+// anchor) stays smooth: the other handle turns to match and keeps its length.
+function move_handle(nodes, i, which, x, y) {
+    return nodes.map((n, k) => {
+        if (k !== i) return n;
+        const mine = which === 'in' ? { x: n.ix, y: n.iy } : { x: n.ox, y: n.oy };
+        const other = which === 'in' ? { x: n.ox, y: n.oy } : { x: n.ix, y: n.iy };
+        const a = { x: mine.x - n.x, y: mine.y - n.y };
+        const b = { x: other.x - n.x, y: other.y - n.y };
+        const la = Math.hypot(a.x, a.y);
+        const lb = Math.hypot(b.x, b.y);
+        const smooth = la > 1e-9 && lb > 1e-9 && (a.x * b.x + a.y * b.y) / (la * lb) < -0.999;
+        let o = other;
+        if (smooth) {
+            const nx = x - n.x;
+            const ny = y - n.y;
+            const ln = Math.hypot(nx, ny) || 1;
+            o = { x: n.x - (nx / ln) * lb, y: n.y - (ny / ln) * lb };
+        }
+        return which === 'in' ? { ...n, ix: x, iy: y, ox: o.x, oy: o.y } : { ...n, ox: x, oy: y, ix: o.x, iy: o.y };
+    });
+}
+
+// Smooth closed nodes through points (Catmull-Rom); points flagged corner get no handles.
+function nodes_through(points, corners = new Set()) {
+    const n = points.length;
+    return points.map((p, i) => {
+        if (corners.has(i)) return { x: p.x, y: p.y, ix: p.x, iy: p.y, ox: p.x, oy: p.y };
+        const a = points[(i - 1 + n) % n];
+        const b = points[(i + 1) % n];
+        const tx = (b.x - a.x) / 6;
+        const ty = (b.y - a.y) / 6;
+        return { x: p.x, y: p.y, ix: p.x - tx, iy: p.y - ty, ox: p.x + tx, oy: p.y + ty };
+    });
+}
+
+// Signed area of the flattened outline (positive counter-clockwise).
+function shape_area(nodes) {
+    const pts = flatten_shape(nodes, 0.01);
+    let a = 0;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += (pts[j].x - pts[i].x) * (pts[j].y + pts[i].y);
+    return a / 2;
+}
+return { segment, cubic_at, cubic_steps, flatten_shape, split_segment, nearest_on_shape, delete_node, move_anchor, move_handle, nodes_through, shape_area };
+})();
+// src/sources/curves.js
+const __m_sources_curves_js = (function () {
+const { nodes_through } = __m_geom_bezier_js;
+// Curve motifs (SPEC 8.4, M4) as cubic Bezier nodes in the motif's local frame: mm, x along the
+// radius (outwards), origin at the motif's centre, length along x and width across. The worker
+// flattens them; the UI converts any of them (and a petal) into an editable shape with the same
+// nodes. No geometry library here, so the main thread can use it.
+// Scroll: a spiral curl on a stem. Ruyi: a three-lobed cloud head on a stem. Ogee: a pointed
+// onion arch with S-curved flanks. Lotus: a centre petal with two side petals.
+
+
+const kCurveTypes = ['scroll', 'ruyi', 'ogee', 'lotus'];
+
+const node = (x, y, ix = x, iy = y, ox = x, oy = y) => ({ x, y, ix, iy, ox, oy });
+
+// The closed outline from its lower half (base corner first, the tip left out) and the tip:
+// the upper half mirrors the lower across the x axis, in reverse, handles swapped.
+function mirrored(lower, tip) {
+    const flip = n => ({ x: n.x, y: -n.y, ix: n.ox, iy: -n.oy, ox: n.ix, oy: -n.iy });
+    return [...lower, { ...tip, ox: tip.ix, oy: -tip.iy }, ...[...lower].reverse().map(flip)];
+}
+
+// A lens of two circular arcs (the petal motif exactly), each arc as two cubics.
+function petal_nodes(L, W) {
+    const hl = L / 2;
+    const hw = Math.min(W / 2, hl * 0.98);
+    const R = (hl * hl + hw * hw) / (2 * hw);
+    const beta = Math.asin(hl / R);
+    const k = (4 / 3) * Math.tan(beta / 4) * R;
+    const T = th => ({ x: -Math.sin(th), y: Math.cos(th) });
+    const tu0 = T(Math.PI / 2 - beta);
+    const tu1 = T(Math.PI / 2 + beta);
+    const tl0 = T(-Math.PI / 2 - beta);
+    const tl1 = T(-Math.PI / 2 + beta);
+    return [
+        node(hl, 0, hl - k * tl1.x, -k * tl1.y, hl + k * tu0.x, k * tu0.y),
+        node(0, hw, k, hw, -k, hw),
+        node(-hl, 0, -hl - k * tu1.x, -k * tu1.y, -hl + k * tl0.x, k * tl0.y),
+        node(0, -hw, -k, -hw, k, -hw),
+    ];
+}
+
+function ogee_nodes(L, W) {
+    const X = f => -L / 2 + f * L;
+    const Y = f => f * W;
+    return mirrored(
+        [
+            node(X(0), Y(-0.3), X(0), Y(-0.3), X(0.08), Y(-0.46)),
+            node(X(0.33), Y(-0.5), X(0.17), Y(-0.5), X(0.5), Y(-0.5)),
+            node(X(0.72), Y(-0.17), X(0.62), Y(-0.27), X(0.82), Y(-0.07)),
+        ],
+        node(X(1), 0, X(0.9), Y(-0.02)),
+    );
+}
+
+function lotus_nodes(L, W) {
+    const X = f => -L / 2 + f * L;
+    const Y = f => f * W;
+    return mirrored(
+        [
+            node(X(0), Y(-0.1), X(0), Y(-0.1), X(0.12), Y(-0.32)),
+            node(X(0.56), Y(-0.5), X(0.34), Y(-0.52), X(0.5), Y(-0.38)),
+            // The notch: the side petal comes in from below and the centre petal leaves almost
+            // along the axis, so the material point between them is about 84 degrees wide, not a
+            // hairline (a 16 degree point measured G-02).
+            node(X(0.44), Y(-0.2), X(0.44), Y(-0.3), X(0.6), Y(-0.22)),
+        ],
+        node(X(1), 0, X(0.86), Y(-0.18)),
+    );
+}
+
+// A three-lobed cloud head, rho = R (0.7 + 0.3 cos 3 phi) round its centre, on a narrow stem
+// from the inner end. The two back lobes point towards the stem, so they read as curling in.
+function ruyi_nodes(L, W) {
+    const R = 0.55 * W;
+    const c = { x: L / 2 - R, y: 0 };
+    const s = 0.1 * W; // stem half-width
+    const rho = phi => R * (0.7 + 0.3 * Math.cos(3 * phi));
+    // Where the head meets the stem: the angle (round from the back) at which the head is s wide.
+    let back = Math.PI - 0.05;
+    while (back > Math.PI / 2 && Math.abs(rho(back) * Math.sin(back)) < s) back -= 0.01;
+    const pts = [{ x: -L / 2, y: -s }];
+    const steps = 36;
+    for (let k = 0; k <= steps; k++) {
+        const phi = -back + (2 * back * k) / steps;
+        pts.push({ x: c.x + rho(phi) * Math.cos(phi), y: c.y + rho(phi) * Math.sin(phi) });
+    }
+    pts.push({ x: -L / 2, y: s });
+    return nodes_through(pts, new Set([0, 1, steps + 1, steps + 2]));
+}
+
+// A band along a stem and a spiral of `turns` turns that tightens to 45% of its radius. The band
+// is at most half the spacing between arms, so arms never touch and nothing is enclosed.
+function scroll_nodes(L, W, turns) {
+    const R0 = W / 2;
+    const xc = L / 2 - R0;
+    const band = Math.min(W * 0.16, (0.5 * 0.55 * R0) / turns);
+    const line = [];
+    const stem = Math.max(0, xc + L / 2);
+    const n_stem = Math.max(1, Math.round(stem / (R0 * 0.8)));
+    for (let k = 0; k < n_stem; k++) line.push({ x: -L / 2 + (stem * k) / n_stem, y: -R0 });
+    const n_spiral = Math.max(6, Math.round(10 * turns));
+    for (let k = 0; k <= n_spiral; k++) {
+        const t = k / n_spiral;
+        const th = -Math.PI / 2 + t * turns * 2 * Math.PI;
+        const r = R0 * (1 - 0.55 * t);
+        line.push({ x: xc + r * Math.cos(th), y: r * Math.sin(th) });
+    }
+    // Offset each side along the normal; the right side forwards and the left back keeps the
+    // outline counter-clockwise.
+    const side = s =>
+        line.map((p, i) => {
+            const a = line[Math.max(0, i - 1)];
+            const b = line[Math.min(line.length - 1, i + 1)];
+            const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+            return { x: p.x + (s * (b.y - a.y) * band) / (2 * l), y: p.y - (s * (b.x - a.x) * band) / (2 * l) };
+        });
+    const pts = [...side(1), ...side(-1).reverse()];
+    const m = line.length;
+    return nodes_through(pts, new Set([0, m - 1, m, 2 * m - 1]));
+}
+
+// The nodes of a curve motif (or a petal), in its local frame.
+function curve_nodes(m) {
+    const L = Math.max(1, m.length_mm);
+    const W = Math.max(0.5, m.width_mm);
+    switch (m.type) {
+        case 'petal':
+            return petal_nodes(L, W);
+        case 'ogee':
+            return ogee_nodes(L, W);
+        case 'lotus':
+            return lotus_nodes(L, W);
+        case 'ruyi':
+            return ruyi_nodes(L, W);
+        case 'scroll':
+            return scroll_nodes(L, W, Math.max(0.25, Math.min(3, m.turns ?? 1.25)));
+        default:
+            throw new Error(`not a curve motif: "${m.type}"`);
+    }
+}
+
+// An editable shape motif from a curve motif or petal: the same outline, placement and copies.
+function to_shape(m) {
+    const r2 = v => Math.round(v * 100) / 100;
+    return {
+        type: 'shape',
+        r_mm: m.r_mm,
+        mult: m.mult ?? 1,
+        angle_deg: m.angle_deg ?? 0,
+        nodes: curve_nodes(m).map(n => ({ x: r2(n.x), y: r2(n.y), ix: r2(n.ix), iy: r2(n.iy), ox: r2(n.ox), oy: r2(n.oy) })),
+    };
+}
+return { kCurveTypes, curve_nodes, to_shape };
+})();
 // src/sources/motifs.js
 const __m_sources_motifs_js = (function () {
 const { circle_path, regular_polygon_path, circle_segments, union_all } = __m_geom_clip_js;
@@ -2205,10 +2521,14 @@ const { rotate_path, replicate, rotation_order } = __m_geom_symmetry_js;
 const { kMotifTypes } = __m_core_schema_js;
 const { lattice_openings, fret_openings } = __m_sources_lattice_js;
 const { circuit_openings } = __m_sources_circuit_js;
+const { curve_nodes, kCurveTypes } = __m_sources_curves_js;
+const { flatten_shape } = __m_geom_bezier_js;
 const { mm_to_um } = __m_core_units_js;
 // Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
 // on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
 // engine fills the circle. Returns paths in micrometres, counter-clockwise.
+
+
 
 
 
@@ -2284,9 +2604,19 @@ function ray_path(m) {
     return w1 > 0 || w0 > 0 ? [path] : [];
 }
 
+// A Bezier outline (local mm, centred on the motif) placed at radius r_mm on the +x axis,
+// flattened to 0.02 mm.
+function shape_path(nodes, r_mm) {
+    const r = mm_to_um(r_mm);
+    return flatten_shape(nodes, 0.02).map(p => ({ x: Math.round(r + mm_to_um(p.x)), y: Math.round(mm_to_um(p.y)) }));
+}
+
 // Paths for one copy of a motif on the +x axis.
 function base_paths(m, wedge_rad) {
+    if (kCurveTypes.includes(m.type)) return [shape_path(curve_nodes(m), m.r_mm)];
     switch (m.type) {
+        case 'shape':
+            return (m.nodes?.length ?? 0) >= 3 ? [shape_path(m.nodes, m.r_mm)] : [];
         case 'window':
             return [window_path(m)];
         case 'petal':
@@ -4464,6 +4794,7 @@ const kStyles = {
     classic: kTypes,
     lattice: ['lattice', 'fret', 'lattice', 'window'],
     circuit: ['circuit'],
+    mandala: ['lotus', 'ogee', 'ruyi', 'scroll', 'petal', 'lotus', 'ring', 'window'],
 };
 
 // The share of the piece one copy of the fundamental domain covers.
@@ -4566,6 +4897,7 @@ function make_bands(rng, inner_mm, from_mm, count, types, seed) {
             lattice_seed: extra.int(0, 9999),
             open: extra.range(0.5, 1),
             cell_div: extra.int(2, 4),
+            turns: extra.range(0.9, 1.6),
         };
         r += span;
         return band;
@@ -4617,6 +4949,35 @@ function band_motif(band, n, depth, k, sym) {
                 w0_mm: r1(w1 * band.taper),
                 w1_mm: r1(w1),
                 ...common,
+            };
+        }
+        case 'lotus':
+        case 'ogee':
+        case 'ruyi': {
+            // Symmetric about their axis, so they sit on mirror lines like petals.
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            const slim = band.type === 'ogee' ? 0.6 : 0.9;
+            return {
+                type: band.type,
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * (band.type === 'ogee' ? 0.8 : 0.85), length * slim) * s),
+                ...common,
+            };
+        }
+        case 'scroll': {
+            // Not symmetric: under a kaleidoscope it sits mid-way between mirror lines and
+            // shares the wedge with its mirror image, so it takes half the width.
+            const dihedral = sym.kind === 'dihedral';
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            return {
+                type: 'scroll',
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * (dihedral ? 0.36 : 0.7), length * 0.7) * s),
+                turns: r2(band.turns),
+                mult: band.mult,
+                angle_deg: r1(angle_deg + (dihedral ? 90 / copies : 0)),
             };
         }
         case 'lattice': {
@@ -5887,7 +6248,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 32 modules.
+<script>// Lamina Studio bundle: src/main.js and 34 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -88377,6 +88738,11 @@ const kMotifTypes = {
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
     lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
     fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
+    scroll: { label: 'Scrolls', params: ['r_mm', 'length_mm', 'width_mm', 'turns', 'mult', 'angle_deg'], replicated: true },
+    ruyi: { label: 'Ruyi clouds', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    ogee: { label: 'Ogee arches', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
+    shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
@@ -88409,6 +88775,7 @@ const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    turns: { label: 'Turns', min: 0.25, max: 3, step: 0.05, unit: '', scales: false, tier: 'basic' },
     polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
     area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
     area_h_mm: { label: 'Area height', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
@@ -88523,6 +88890,7 @@ const SCHEMA = [
             ['classic', 'Openings'],
             ['lattice', 'Lattice and key fret'],
             ['circuit', 'Circuit traces'],
+            ['mandala', 'Mandala curves'],
         ],
         tier: 'basic',
         desc: 'What Randomise and the seed arrows build.',
@@ -89632,6 +90000,7 @@ const kStyles = {
     classic: kTypes,
     lattice: ['lattice', 'fret', 'lattice', 'window'],
     circuit: ['circuit'],
+    mandala: ['lotus', 'ogee', 'ruyi', 'scroll', 'petal', 'lotus', 'ring', 'window'],
 };
 
 // The share of the piece one copy of the fundamental domain covers.
@@ -89734,6 +90103,7 @@ function make_bands(rng, inner_mm, from_mm, count, types, seed) {
             lattice_seed: extra.int(0, 9999),
             open: extra.range(0.5, 1),
             cell_div: extra.int(2, 4),
+            turns: extra.range(0.9, 1.6),
         };
         r += span;
         return band;
@@ -89785,6 +90155,35 @@ function band_motif(band, n, depth, k, sym) {
                 w0_mm: r1(w1 * band.taper),
                 w1_mm: r1(w1),
                 ...common,
+            };
+        }
+        case 'lotus':
+        case 'ogee':
+        case 'ruyi': {
+            // Symmetric about their axis, so they sit on mirror lines like petals.
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            const slim = band.type === 'ogee' ? 0.6 : 0.9;
+            return {
+                type: band.type,
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * (band.type === 'ogee' ? 0.8 : 0.85), length * slim) * s),
+                ...common,
+            };
+        }
+        case 'scroll': {
+            // Not symmetric: under a kaleidoscope it sits mid-way between mirror lines and
+            // shares the wedge with its mirror image, so it takes half the width.
+            const dihedral = sym.kind === 'dihedral';
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            return {
+                type: 'scroll',
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * (dihedral ? 0.36 : 0.7), length * 0.7) * s),
+                turns: r2(band.turns),
+                mult: band.mult,
+                angle_deg: r1(angle_deg + (dihedral ? 90 / copies : 0)),
             };
         }
         case 'lattice': {
@@ -89908,6 +90307,19 @@ const kPresets = [
             }),
     },
     {
+        id: 'mandala',
+        name: 'Mandala',
+        make: () =>
+            preset('Mandala', {
+                layers: 10,
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 12 },
+                palette: 'ember',
+                seed: 7, // from a rendered sweep of seeds 1 to 12: a lotus ring inside a ring of arc slots
+                style: 'mandala',
+            }),
+    },
+    {
         id: 'orb',
         name: 'Orb',
         make: () =>
@@ -89974,6 +90386,315 @@ function preset_by_id(id) {
     return p.make();
 }
 return { kPresets, preset_by_id };
+})();
+// src/geom/bezier.js
+const __m_geom_bezier_js = (function () {
+// Cubic Bezier shapes (SPEC 8.4, M4): closed outlines of nodes, each an anchor with an incoming
+// and an outgoing handle, in a motif's local frame (mm, x along the radius, origin at the motif's
+// centre). Segment i runs from node i (anchor, out handle) to node i + 1 (in handle, anchor).
+// Pure maths with no geometry library, so the Layer view's node editor can use it on the main
+// thread and the worker can flatten the same shapes.
+// A node is { x, y, ix, iy, ox, oy }: the anchor and its two handles, all absolute.
+
+const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+
+// The four control points of segment i.
+function segment(nodes, i) {
+    const a = nodes[i];
+    const b = nodes[(i + 1) % nodes.length];
+    return [
+        { x: a.x, y: a.y },
+        { x: a.ox, y: a.oy },
+        { x: b.ix, y: b.iy },
+        { x: b.x, y: b.y },
+    ];
+}
+
+function cubic_at([p0, p1, p2, p3], t) {
+    const u = 1 - t;
+    return {
+        x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+        y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+    };
+}
+
+// Steps for a segment so the chords stay within tol of the curve (Wang's bound).
+function cubic_steps([p0, p1, p2, p3], tol) {
+    const d1 = Math.hypot(p0.x - 2 * p1.x + p2.x, p0.y - 2 * p1.y + p2.y);
+    const d2 = Math.hypot(p1.x - 2 * p2.x + p3.x, p1.y - 2 * p2.y + p3.y);
+    return Math.max(1, Math.ceil(Math.sqrt((0.75 * Math.max(d1, d2)) / tol)));
+}
+
+// The closed outline as a polyline (no repeated last point), chords within tol (same unit).
+function flatten_shape(nodes, tol = 0.02) {
+    const out = [];
+    for (let i = 0; i < nodes.length; i++) {
+        const seg = segment(nodes, i);
+        const n = cubic_steps(seg, tol);
+        for (let k = 0; k < n; k++) out.push(cubic_at(seg, k / n));
+    }
+    return out;
+}
+
+// Splits segment i at t (de Casteljau): the outline is unchanged, with one more node.
+function split_segment(nodes, i, t) {
+    const [p0, p1, p2, p3] = segment(nodes, i);
+    const a = lerp(p0, p1, t);
+    const b = lerp(p1, p2, t);
+    const c = lerp(p2, p3, t);
+    const d = lerp(a, b, t);
+    const e = lerp(b, c, t);
+    const m = lerp(d, e, t);
+    const out = nodes.map(n => ({ ...n }));
+    const j = (i + 1) % nodes.length;
+    out[i].ox = a.x;
+    out[i].oy = a.y;
+    out[j].ix = c.x;
+    out[j].iy = c.y;
+    out.splice(i + 1, 0, { x: m.x, y: m.y, ix: d.x, iy: d.y, ox: e.x, oy: e.y });
+    return out;
+}
+
+// The closest point of the outline to p: { seg, t, d }, by sampling then refining.
+function nearest_on_shape(nodes, p) {
+    let best = { seg: 0, t: 0, d: Infinity };
+    for (let i = 0; i < nodes.length; i++) {
+        const seg = segment(nodes, i);
+        for (let k = 0; k <= 32; k++) {
+            const q = cubic_at(seg, k / 32);
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            if (d < best.d) best = { seg: i, t: k / 32, d };
+        }
+    }
+    let step = 1 / 64;
+    const seg = segment(nodes, best.seg);
+    for (let it = 0; it < 12; it++) {
+        for (const t of [best.t - step, best.t + step]) {
+            if (t < 0 || t > 1) continue;
+            const q = cubic_at(seg, t);
+            const d = Math.hypot(q.x - p.x, q.y - p.y);
+            if (d < best.d) best = { ...best, t, d };
+        }
+        step /= 2;
+    }
+    return best;
+}
+
+// Removes node i, keeping at least three.
+function delete_node(nodes, i) {
+    if (nodes.length <= 3) return nodes;
+    return nodes.filter((_, k) => k !== i).map(n => ({ ...n }));
+}
+
+// Moves anchor i to (x, y), its handles with it.
+function move_anchor(nodes, i, x, y) {
+    return nodes.map((n, k) => {
+        if (k !== i) return n;
+        const dx = x - n.x;
+        const dy = y - n.y;
+        return { x, y, ix: n.ix + dx, iy: n.iy + dy, ox: n.ox + dx, oy: n.oy + dy };
+    });
+}
+
+// Moves handle 'in' or 'out' of node i to (x, y). A smooth node (handles in line through the
+// anchor) stays smooth: the other handle turns to match and keeps its length.
+function move_handle(nodes, i, which, x, y) {
+    return nodes.map((n, k) => {
+        if (k !== i) return n;
+        const mine = which === 'in' ? { x: n.ix, y: n.iy } : { x: n.ox, y: n.oy };
+        const other = which === 'in' ? { x: n.ox, y: n.oy } : { x: n.ix, y: n.iy };
+        const a = { x: mine.x - n.x, y: mine.y - n.y };
+        const b = { x: other.x - n.x, y: other.y - n.y };
+        const la = Math.hypot(a.x, a.y);
+        const lb = Math.hypot(b.x, b.y);
+        const smooth = la > 1e-9 && lb > 1e-9 && (a.x * b.x + a.y * b.y) / (la * lb) < -0.999;
+        let o = other;
+        if (smooth) {
+            const nx = x - n.x;
+            const ny = y - n.y;
+            const ln = Math.hypot(nx, ny) || 1;
+            o = { x: n.x - (nx / ln) * lb, y: n.y - (ny / ln) * lb };
+        }
+        return which === 'in' ? { ...n, ix: x, iy: y, ox: o.x, oy: o.y } : { ...n, ox: x, oy: y, ix: o.x, iy: o.y };
+    });
+}
+
+// Smooth closed nodes through points (Catmull-Rom); points flagged corner get no handles.
+function nodes_through(points, corners = new Set()) {
+    const n = points.length;
+    return points.map((p, i) => {
+        if (corners.has(i)) return { x: p.x, y: p.y, ix: p.x, iy: p.y, ox: p.x, oy: p.y };
+        const a = points[(i - 1 + n) % n];
+        const b = points[(i + 1) % n];
+        const tx = (b.x - a.x) / 6;
+        const ty = (b.y - a.y) / 6;
+        return { x: p.x, y: p.y, ix: p.x - tx, iy: p.y - ty, ox: p.x + tx, oy: p.y + ty };
+    });
+}
+
+// Signed area of the flattened outline (positive counter-clockwise).
+function shape_area(nodes) {
+    const pts = flatten_shape(nodes, 0.01);
+    let a = 0;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += (pts[j].x - pts[i].x) * (pts[j].y + pts[i].y);
+    return a / 2;
+}
+return { segment, cubic_at, cubic_steps, flatten_shape, split_segment, nearest_on_shape, delete_node, move_anchor, move_handle, nodes_through, shape_area };
+})();
+// src/sources/curves.js
+const __m_sources_curves_js = (function () {
+const { nodes_through } = __m_geom_bezier_js;
+// Curve motifs (SPEC 8.4, M4) as cubic Bezier nodes in the motif's local frame: mm, x along the
+// radius (outwards), origin at the motif's centre, length along x and width across. The worker
+// flattens them; the UI converts any of them (and a petal) into an editable shape with the same
+// nodes. No geometry library here, so the main thread can use it.
+// Scroll: a spiral curl on a stem. Ruyi: a three-lobed cloud head on a stem. Ogee: a pointed
+// onion arch with S-curved flanks. Lotus: a centre petal with two side petals.
+
+
+const kCurveTypes = ['scroll', 'ruyi', 'ogee', 'lotus'];
+
+const node = (x, y, ix = x, iy = y, ox = x, oy = y) => ({ x, y, ix, iy, ox, oy });
+
+// The closed outline from its lower half (base corner first, the tip left out) and the tip:
+// the upper half mirrors the lower across the x axis, in reverse, handles swapped.
+function mirrored(lower, tip) {
+    const flip = n => ({ x: n.x, y: -n.y, ix: n.ox, iy: -n.oy, ox: n.ix, oy: -n.iy });
+    return [...lower, { ...tip, ox: tip.ix, oy: -tip.iy }, ...[...lower].reverse().map(flip)];
+}
+
+// A lens of two circular arcs (the petal motif exactly), each arc as two cubics.
+function petal_nodes(L, W) {
+    const hl = L / 2;
+    const hw = Math.min(W / 2, hl * 0.98);
+    const R = (hl * hl + hw * hw) / (2 * hw);
+    const beta = Math.asin(hl / R);
+    const k = (4 / 3) * Math.tan(beta / 4) * R;
+    const T = th => ({ x: -Math.sin(th), y: Math.cos(th) });
+    const tu0 = T(Math.PI / 2 - beta);
+    const tu1 = T(Math.PI / 2 + beta);
+    const tl0 = T(-Math.PI / 2 - beta);
+    const tl1 = T(-Math.PI / 2 + beta);
+    return [
+        node(hl, 0, hl - k * tl1.x, -k * tl1.y, hl + k * tu0.x, k * tu0.y),
+        node(0, hw, k, hw, -k, hw),
+        node(-hl, 0, -hl - k * tu1.x, -k * tu1.y, -hl + k * tl0.x, k * tl0.y),
+        node(0, -hw, -k, -hw, k, -hw),
+    ];
+}
+
+function ogee_nodes(L, W) {
+    const X = f => -L / 2 + f * L;
+    const Y = f => f * W;
+    return mirrored(
+        [
+            node(X(0), Y(-0.3), X(0), Y(-0.3), X(0.08), Y(-0.46)),
+            node(X(0.33), Y(-0.5), X(0.17), Y(-0.5), X(0.5), Y(-0.5)),
+            node(X(0.72), Y(-0.17), X(0.62), Y(-0.27), X(0.82), Y(-0.07)),
+        ],
+        node(X(1), 0, X(0.9), Y(-0.02)),
+    );
+}
+
+function lotus_nodes(L, W) {
+    const X = f => -L / 2 + f * L;
+    const Y = f => f * W;
+    return mirrored(
+        [
+            node(X(0), Y(-0.1), X(0), Y(-0.1), X(0.12), Y(-0.32)),
+            node(X(0.56), Y(-0.5), X(0.34), Y(-0.52), X(0.5), Y(-0.38)),
+            // The notch: the side petal comes in from below and the centre petal leaves almost
+            // along the axis, so the material point between them is about 84 degrees wide, not a
+            // hairline (a 16 degree point measured G-02).
+            node(X(0.44), Y(-0.2), X(0.44), Y(-0.3), X(0.6), Y(-0.22)),
+        ],
+        node(X(1), 0, X(0.86), Y(-0.18)),
+    );
+}
+
+// A three-lobed cloud head, rho = R (0.7 + 0.3 cos 3 phi) round its centre, on a narrow stem
+// from the inner end. The two back lobes point towards the stem, so they read as curling in.
+function ruyi_nodes(L, W) {
+    const R = 0.55 * W;
+    const c = { x: L / 2 - R, y: 0 };
+    const s = 0.1 * W; // stem half-width
+    const rho = phi => R * (0.7 + 0.3 * Math.cos(3 * phi));
+    // Where the head meets the stem: the angle (round from the back) at which the head is s wide.
+    let back = Math.PI - 0.05;
+    while (back > Math.PI / 2 && Math.abs(rho(back) * Math.sin(back)) < s) back -= 0.01;
+    const pts = [{ x: -L / 2, y: -s }];
+    const steps = 36;
+    for (let k = 0; k <= steps; k++) {
+        const phi = -back + (2 * back * k) / steps;
+        pts.push({ x: c.x + rho(phi) * Math.cos(phi), y: c.y + rho(phi) * Math.sin(phi) });
+    }
+    pts.push({ x: -L / 2, y: s });
+    return nodes_through(pts, new Set([0, 1, steps + 1, steps + 2]));
+}
+
+// A band along a stem and a spiral of `turns` turns that tightens to 45% of its radius. The band
+// is at most half the spacing between arms, so arms never touch and nothing is enclosed.
+function scroll_nodes(L, W, turns) {
+    const R0 = W / 2;
+    const xc = L / 2 - R0;
+    const band = Math.min(W * 0.16, (0.5 * 0.55 * R0) / turns);
+    const line = [];
+    const stem = Math.max(0, xc + L / 2);
+    const n_stem = Math.max(1, Math.round(stem / (R0 * 0.8)));
+    for (let k = 0; k < n_stem; k++) line.push({ x: -L / 2 + (stem * k) / n_stem, y: -R0 });
+    const n_spiral = Math.max(6, Math.round(10 * turns));
+    for (let k = 0; k <= n_spiral; k++) {
+        const t = k / n_spiral;
+        const th = -Math.PI / 2 + t * turns * 2 * Math.PI;
+        const r = R0 * (1 - 0.55 * t);
+        line.push({ x: xc + r * Math.cos(th), y: r * Math.sin(th) });
+    }
+    // Offset each side along the normal; the right side forwards and the left back keeps the
+    // outline counter-clockwise.
+    const side = s =>
+        line.map((p, i) => {
+            const a = line[Math.max(0, i - 1)];
+            const b = line[Math.min(line.length - 1, i + 1)];
+            const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+            return { x: p.x + (s * (b.y - a.y) * band) / (2 * l), y: p.y - (s * (b.x - a.x) * band) / (2 * l) };
+        });
+    const pts = [...side(1), ...side(-1).reverse()];
+    const m = line.length;
+    return nodes_through(pts, new Set([0, m - 1, m, 2 * m - 1]));
+}
+
+// The nodes of a curve motif (or a petal), in its local frame.
+function curve_nodes(m) {
+    const L = Math.max(1, m.length_mm);
+    const W = Math.max(0.5, m.width_mm);
+    switch (m.type) {
+        case 'petal':
+            return petal_nodes(L, W);
+        case 'ogee':
+            return ogee_nodes(L, W);
+        case 'lotus':
+            return lotus_nodes(L, W);
+        case 'ruyi':
+            return ruyi_nodes(L, W);
+        case 'scroll':
+            return scroll_nodes(L, W, Math.max(0.25, Math.min(3, m.turns ?? 1.25)));
+        default:
+            throw new Error(`not a curve motif: "${m.type}"`);
+    }
+}
+
+// An editable shape motif from a curve motif or petal: the same outline, placement and copies.
+function to_shape(m) {
+    const r2 = v => Math.round(v * 100) / 100;
+    return {
+        type: 'shape',
+        r_mm: m.r_mm,
+        mult: m.mult ?? 1,
+        angle_deg: m.angle_deg ?? 0,
+        nodes: curve_nodes(m).map(n => ({ x: r2(n.x), y: r2(n.y), ix: r2(n.ix), iy: r2(n.iy), ox: r2(n.ox), oy: r2(n.oy) })),
+    };
+}
+return { kCurveTypes, curve_nodes, to_shape };
 })();
 // src/core/actions.js
 const __m_core_actions_js = (function () {
@@ -90109,13 +90830,21 @@ return { check_level };
 // src/preview/layer_view.js
 const __m_preview_layer_view_js = (function () {
 const { kUmPerMm } = __m_core_units_js;
+const { flatten_shape, move_anchor, move_handle, nearest_on_shape, split_segment, delete_node } = __m_geom_bezier_js;
 // Layer view (SPEC 10): one layer, flat, for inspecting and editing. Material is drawn in the
 // layer's colour; bridges, islands (by policy), locators for glue-on islands from the layer in
 // front, and check boxes (red fatal, amber warning) are drawn over it. Click an island to cycle
-// its policy, or a lattice cell to paint it; drag a bridge to move it (Alt-click resets it); the
-// wheel zooms at the cursor; drag pans; double-click refits.
-// Assumptions: paths in micrometres, y up; the canvas works in mm.
+// its policy, or a lattice cell to paint it; drag a bridge to move it (Alt-click resets it); drag
+// a shape's nodes and handles on its first copy (every copy follows through the rebuild), and
+// double-click its outline to add a node or a node to delete it; the wheel zooms at the cursor;
+// drag pans; double-click elsewhere refits.
+// Assumptions: paths in micrometres, y up; the canvas works in mm; shape nodes in local mm.
 
+
+
+const kNodePx = 7; // pick radius for nodes and handles
+const r2 = v => Math.round(v * 100) / 100;
+const rounded = nodes => nodes.map(n => ({ x: r2(n.x), y: r2(n.y), ix: r2(n.ix), iy: r2(n.iy), ox: r2(n.ox), oy: r2(n.oy) }));
 
 const kPolicyColour = { bridge: '#b4f03c', glue: '#46b4ff', drop: '#8f849f' };
 
@@ -90144,7 +90873,9 @@ class LayerView {
     //   on_cell_click(point)             a click anywhere else (cell paint)
     //   on_bridge_drag(bridge, angle_deg) a bridge dropped at a new angle around its island
     //   on_bridge_reset(bridge)          an Alt-click on a bridge
-    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset }) {
+    //   on_shape_edit(motif, nodes, drag) new nodes for the shape motif at index motif; drag is
+    //                                    an ID shared by every move of one drag (one undo step)
+    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset, on_shape_edit }) {
         this.container_ = container;
         this.canvas_ = document.createElement('canvas');
         this.canvas_.className = 'layer-canvas';
@@ -90157,6 +90888,7 @@ class LayerView {
             '<span class="key drop"></span>dropped <span class="key dowel"></span>dowel ' +
             '<span class="key id"></span>engraved number. Click an island to change it, or a lattice ' +
             'cell to make it solid (again to clear). Drag a bridge to move it, Alt-click to reset it. ' +
+            "Drag a shape's nodes and handles; double-click its outline to add a node, a node to delete it. " +
             'Wheel zooms, drag pans, double-click refits. Boxes mark check findings.';
         container.append(this.canvas_, this.legend_);
         this.ctx_ = this.canvas_.getContext('2d');
@@ -90166,12 +90898,15 @@ class LayerView {
         this.on_cell_click_ = on_cell_click;
         this.on_bridge_drag_ = on_bridge_drag;
         this.on_bridge_reset_ = on_bridge_reset;
+        this.on_shape_edit_ = on_shape_edit;
         this.guide_ = null; // { from, to } in micrometres while a bridge is dragged
+        this.drags_ = 0;
 
         let drag = null;
         this.canvas_.addEventListener('pointerdown', e => {
-            const bridge = this.bridge_at_(e.offsetX, e.offsetY);
-            drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, bridge, alt: e.altKey };
+            const node = this.node_at_(e.offsetX, e.offsetY);
+            const bridge = node ? null : this.bridge_at_(e.offsetX, e.offsetY);
+            drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, node, bridge, alt: e.altKey, id: ++this.drags_ };
             this.canvas_.setPointerCapture(e.pointerId);
         });
         this.canvas_.addEventListener('pointermove', e => {
@@ -90179,7 +90914,16 @@ class LayerView {
             const dx = e.offsetX - drag.x;
             const dy = e.offsetY - drag.y;
             if (Math.abs(e.offsetX - drag.x0) + Math.abs(e.offsetY - drag.y0) > 3) drag.moved = true;
-            if (drag.moved && drag.bridge) {
+            if (drag.moved && drag.node) {
+                // The node follows the pointer at once; the material follows the rebuild.
+                const { shape, index, which } = drag.node;
+                const sh = this.data_.shapes[shape];
+                const p = this.shape_local_(sh, this.to_world_(e.offsetX, e.offsetY));
+                const nodes = rounded(which === 'anchor' ? move_anchor(sh.nodes, index, p.x, p.y) : move_handle(sh.nodes, index, which, p.x, p.y));
+                sh.nodes = nodes;
+                this.draw_();
+                this.on_shape_edit_?.(sh.motif, nodes, `drag${drag.id}`);
+            } else if (drag.moved && drag.bridge) {
                 // A guide from the island's centre to the pointer: the new bridge angle.
                 const island = this.data_.built.islands.find(i => i.id === drag.bridge.island);
                 if (island) this.guide_ = { from: island.centre, to: this.to_world_(e.offsetX, e.offsetY) };
@@ -90198,7 +90942,7 @@ class LayerView {
                 this.on_bridge_drag_?.(drag.bridge, (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
             } else if (drag?.bridge && drag.alt && !drag.moved) {
                 this.on_bridge_reset_?.(drag.bridge);
-            } else if (drag && !drag.moved) {
+            } else if (drag && !drag.moved && !drag.node && !this.segment_at_(e.offsetX, e.offsetY)) {
                 this.click_(e.offsetX, e.offsetY);
             }
             this.guide_ = null;
@@ -90217,7 +90961,20 @@ class LayerView {
             },
             { passive: false },
         );
-        this.canvas_.addEventListener('dblclick', () => {
+        this.canvas_.addEventListener('dblclick', e => {
+            // On a node: delete it. On a shape's outline: add a node there. Elsewhere: refit.
+            const node = this.node_at_(e.offsetX, e.offsetY);
+            if (node?.which === 'anchor') {
+                const sh = this.data_.shapes[node.shape];
+                this.on_shape_edit_?.(sh.motif, delete_node(sh.nodes, node.index), null);
+                return;
+            }
+            const seg = this.segment_at_(e.offsetX, e.offsetY);
+            if (seg) {
+                const sh = this.data_.shapes[seg.shape];
+                this.on_shape_edit_?.(sh.motif, rounded(split_segment(sh.nodes, seg.seg, seg.t)), null);
+                return;
+            }
             this.view_ = null;
             this.draw_();
         });
@@ -90279,6 +91036,65 @@ class LayerView {
             path.closePath();
         }
         return path;
+    }
+
+    // A shape's first copy: local mm to world micrometres, and back. The copy is the motif placed
+    // at its radius, turned by its offset plus the symmetry's phase (sh.rot, radians).
+    shape_world_(sh, p) {
+        const x = sh.r_mm + p.x;
+        const c = Math.cos(sh.rot);
+        const s = Math.sin(sh.rot);
+        return { x: (c * x - s * p.y) * kUmPerMm, y: (s * x + c * p.y) * kUmPerMm };
+    }
+
+    shape_local_(sh, w) {
+        const c = Math.cos(sh.rot);
+        const s = Math.sin(sh.rot);
+        const x = (c * w.x + s * w.y) / kUmPerMm;
+        const y = (-s * w.x + c * w.y) / kUmPerMm;
+        return { x: x - sh.r_mm, y };
+    }
+
+    to_screen_(w) {
+        const v = this.view_;
+        return { x: v.ox + (w.x / kUmPerMm) * v.scale, y: v.oy - (w.y / kUmPerMm) * v.scale };
+    }
+
+    // The node or handle under a screen point: { shape, index, which: 'anchor' | 'in' | 'out' }.
+    // Handles win a close call over anchors, so a short handle can still be pulled out.
+    node_at_(sx, sy) {
+        if (!this.data_?.shapes?.length || !this.view_) return null;
+        let best = null;
+        let best_d = kNodePx;
+        this.data_.shapes.forEach((sh, shape) => {
+            sh.nodes.forEach((n, index) => {
+                for (const [which, x, y, bias] of [
+                    ['in', n.ix, n.iy, 0.5],
+                    ['out', n.ox, n.oy, 0.5],
+                    ['anchor', n.x, n.y, 0],
+                ]) {
+                    if (which !== 'anchor' && Math.hypot(x - n.x, y - n.y) < 1e-6) continue;
+                    const q = this.to_screen_(this.shape_world_(sh, { x, y }));
+                    const d = Math.hypot(q.x - sx, q.y - sy) - bias;
+                    if (d < best_d) {
+                        best_d = d;
+                        best = { shape, index, which };
+                    }
+                }
+            });
+        });
+        return best;
+    }
+
+    // The point of a shape's outline under a screen point (within the pick radius).
+    segment_at_(sx, sy) {
+        if (!this.data_?.shapes?.length || !this.view_) return null;
+        const w = this.to_world_(sx, sy);
+        for (const [shape, sh] of this.data_.shapes.entries()) {
+            const near = nearest_on_shape(sh.nodes, this.shape_local_(sh, w));
+            if (near.d * this.view_.scale <= kNodePx) return { shape, seg: near.seg, t: near.t };
+        }
+        return null;
     }
 
     click_(sx, sy) {
@@ -90369,6 +91185,46 @@ class LayerView {
             ctx.lineTo(v.ox + (to.x / kUmPerMm) * v.scale, v.oy - (to.y / kUmPerMm) * v.scale);
             ctx.stroke();
             ctx.setLineDash([]);
+        }
+
+        // Shapes: the outline of the first copy, handles and nodes.
+        const cyan = css.getPropertyValue('--cyan').trim() || '#46b4ff';
+        for (const sh of this.data_.shapes ?? []) {
+            const tol = Math.max(0.5 / v.scale, 0.005); // half a pixel, in mm
+            const outline = flatten_shape(sh.nodes, tol).map(p => this.to_screen_(this.shape_world_(sh, p)));
+            ctx.strokeStyle = cyan;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 3]);
+            ctx.beginPath();
+            outline.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            for (const n of sh.nodes) {
+                const a = this.to_screen_(this.shape_world_(sh, { x: n.x, y: n.y }));
+                ctx.strokeStyle = cyan;
+                ctx.lineWidth = 1;
+                for (const [hx, hy] of [
+                    [n.ix, n.iy],
+                    [n.ox, n.oy],
+                ]) {
+                    if (Math.hypot(hx - n.x, hy - n.y) < 1e-6) continue;
+                    const h = this.to_screen_(this.shape_world_(sh, { x: hx, y: hy }));
+                    ctx.beginPath();
+                    ctx.moveTo(a.x, a.y);
+                    ctx.lineTo(h.x, h.y);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(h.x, h.y, 3.5, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#14101c';
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                ctx.fillStyle = '#ffffff';
+                ctx.strokeStyle = '#14101c';
+                ctx.fillRect(a.x - 4, a.y - 4, 8, 8);
+                ctx.strokeRect(a.x - 4, a.y - 4, 8, 8);
+            }
         }
 
         for (const c of checks) {
@@ -90733,6 +91589,7 @@ return { make_control };
 // src/ui/panels.js
 const __m_ui_panels_js = (function () {
 const { SCHEMA, kMotifTypes, kMotifParams } = __m_core_schema_js;
+const { kCurveTypes } = __m_sources_curves_js;
 const { options_for, read_param } = __m_core_actions_js;
 const { make_control } = __m_ui_controls_js;
 const { el } = __m_ui_dom_js;
@@ -90740,6 +91597,7 @@ const { step_body } = __m_ui_shell_js;
 // Sidebar step panels, generated from the registry (SPEC 11). Each step rebuilds only when its
 // structure changes (layer count, selected layer, motif list, Basic or Advanced); otherwise its
 // controls refresh in place, so a slider keeps focus while it is dragged.
+
 
 
 
@@ -90886,7 +91744,14 @@ class Panels {
             const card = el('div', { class: 'motif' });
             const remove = el('button', { type: 'button', class: 'icon-btn small', 'aria-label': 'Remove', text: '×' });
             remove.addEventListener('click', () => app.remove_motif(i));
-            card.append(el('div', { class: 'motif-head' }, [el('span', { text: kMotifTypes[motif.type].label }), remove]));
+            const head = [el('span', { text: kMotifTypes[motif.type].label })];
+            if (motif.type === 'petal' || kCurveTypes.includes(motif.type)) {
+                const convert = el('button', { type: 'button', class: 'btn ghost small', text: 'Edit nodes', title: 'Turn into a shape whose nodes you drag in the Layer view' });
+                convert.addEventListener('click', () => app.convert_motif(i));
+                head.push(convert);
+            }
+            card.append(el('div', { class: 'motif-head' }, [...head, remove]));
+            if (motif.type === 'shape') card.append(el('p', { class: 'step-note', text: 'Drag its nodes and handles in the Layer view. Double-click the outline to add a node, a node to delete it.' }));
             for (const key of kMotifTypes[motif.type].params) {
                 const p = kMotifParams[key];
                 if (p.tier === 'advanced' && tier !== 'advanced') continue;
@@ -91283,6 +92148,7 @@ const { Store } = __m_core_store_js;
 const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
+const { to_shape } = __m_sources_curves_js;
 const { write_param } = __m_core_actions_js;
 const { unpack_paths } = __m_geom_pack_js;
 const { check_level } = __m_core_check_level_js;
@@ -91299,6 +92165,7 @@ const { save_bytes, el } = __m_ui_dom_js;
 // App controller: the design store, UI state, header and panels, the geometry worker and the
 // views. Every edit goes through the store (one undo step per action or slider drag). Every new
 // design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
+
 
 
 
@@ -91378,6 +92245,20 @@ function new_motif(type, design, layer) {
             return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
         case 'fret':
             return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
+        case 'scroll': {
+            // Not symmetric: off the mirror lines under a kaleidoscope.
+            const sym = design.piece.symmetry;
+            const angle_deg = sym.kind === 'dihedral' ? Math.round(900 / Math.max(1, sym.n)) / 10 : 0;
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.08), turns: 1.25, mult: 1, angle_deg };
+        }
+        case 'ruyi':
+            return { type, r_mm: v(0.6), length_mm: v(0.2), width_mm: v(0.16), mult: 1, angle_deg: 0 };
+        case 'ogee':
+            return { type, r_mm: v(0.6), length_mm: v(0.24), width_mm: v(0.12), mult: 1, angle_deg: 0 };
+        case 'lotus':
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.16), mult: 1, angle_deg: 0 };
+        case 'shape':
+            return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
         case 'circuit':
             return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
         default:
@@ -91468,7 +92349,18 @@ function start_app({ worker, preview, stage }) {
             dowels: state.built.registration.dowels_mm,
             hole_d_mm: state.built.registration.hole_d_mm,
             drilled: k > 0 || d.registration.through_front,
+            shapes: shapes_of(store.design, k),
         });
+    }
+
+    // The shape motifs of layer k for node editing, from the current design (not the last
+    // build), so nodes follow the pointer while the geometry catches up. rot turns the first copy:
+    // the motif's offset plus the symmetry's phase.
+    function shapes_of(design, k) {
+        const phase = ((design.piece.symmetry.phase_deg ?? 0) * Math.PI) / 180;
+        return (design.layers[k]?.source.motifs ?? [])
+            .map((m, i) => (m.type === 'shape' ? { motif: i, nodes: m.nodes, r_mm: m.r_mm, rot: phase + ((m.angle_deg ?? 0) * Math.PI) / 180 } : null))
+            .filter(Boolean);
     }
 
     function render_status() {
@@ -91508,6 +92400,23 @@ function start_app({ worker, preview, stage }) {
         },
         add_motif(type) {
             edit(d => current(d).source.motifs.push(new_motif(type, d, current(d))));
+        },
+        // A petal or curve motif becomes a shape with the same outline, whose nodes can be
+        // dragged in the Layer view (SPEC 8.4).
+        convert_motif(i) {
+            edit(d => {
+                const motifs = current(d).source.motifs;
+                motifs[i] = to_shape(motifs[i]);
+            });
+            app.set_view('layer');
+            set_status('busy', 'Now a shape: drag its nodes and handles in the Layer view.');
+        },
+        // New nodes for a shape motif; every move of one drag is one undo step.
+        edit_shape(i, nodes, drag) {
+            const k = ui.layer;
+            edit(d => {
+                d.layers[k].source.motifs[i].nodes = nodes;
+            }, drag ? `shape@${k}.${i}.${drag}` : null);
         },
         remove_motif(i) {
             edit(d => current(d).source.motifs.splice(i, 1));
@@ -91688,6 +92597,7 @@ function start_app({ worker, preview, stage }) {
         on_cell_click: p => app.paint_cell(p),
         on_bridge_drag: (bridge, angle_deg) => app.drag_bridge(bridge, angle_deg),
         on_bridge_reset: bridge => app.reset_bridges(bridge),
+        on_shape_edit: (i, nodes, drag) => app.edit_shape(i, nodes, drag),
     });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);

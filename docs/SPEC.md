@@ -154,7 +154,10 @@ The design is one JSON document, the single source of truth. Every output is a p
       "locked": false,
       "source": { "kind": "primitive|svg|lattice|circuit|radial|image",
                   "motifs": [ { "type": "window", "r_mm": 80, "size_mm": 20, "sides": 4,
-                                "rot_deg": 0, "mult": 1, "angle_deg": 0 } ] },
+                                "rot_deg": 0, "mult": 1, "angle_deg": 0 },
+                              { "type": "shape", "r_mm": 70, "mult": 1, "angle_deg": 0,
+                                "nodes": [ { "x": 20, "y": 0, "ix": 20, "iy": -6,
+                                             "ox": 20, "oy": 6 } ] } ] },
       "island_policy": "bridge", "bridge": { "w_mm": null, "max": 4 },
       "overrides": { "islands": {}, "bridge_angles": {}, "locks": [], "edits": [] } }
   ],
@@ -736,10 +739,46 @@ Design decisions (2026-11-07):
   - Double-click a segment to add a node; double-click a node to delete it.
   - Each drag is one undo step.
 
+As built (2026-11-07):
+- **Bezier maths** (`src/geom/bezier.js`): no geometry library, so the Layer view uses it on the main thread and the worker flattens the same nodes.
+  - A node is an anchor with absolute in and out handles, in the motif's local mm.
+  - Flattening uses Wang's bound for the step count, so chords stay within 0.02 mm.
+  - Splitting is de Casteljau, so adding a node keeps the outline exactly.
+  - A smooth node stays smooth when one handle is dragged: the other turns to match and keeps its length.
+- **Curves** (`src/sources/curves.js`):
+  - The petal is exact: each arc is two cubics.
+  - Ogee and lotus are mirrored halves.
+  - Ruyi is a three-lobed cloud head (rho = 0.7 + 0.3 cos 3 phi) on a stem, so the back lobes curl towards it.
+  - The scroll is a band along a stem and a spiral that tightens to 45% of its radius. The band is at most half the spacing between arms, so the arms never touch.
+  - The scroll is the only curve not symmetric about its axis. Under a kaleidoscope it sits mid-way between mirror lines and takes half the width; on a mirror line, its mirrored copy would cross it and cut islands (12 on a test layer).
+  - The lotus notch meets at about 84 degrees. A 16-degree notch measured G-02.
+- **Mandala style:** bands of lotus, ogee, ruyi, scroll, petal, arc slots and windows, through the M1 band generator. Lotus, ogee and ruyi sit on the mirror lines like petals.
+- **Editing:** "Edit nodes" on a petal or curve card turns it into a shape and opens the Layer view. Nodes are shown on the first copy, at the motif's offset plus the symmetry's phase. A drag moves the node at once, and the rebuild moves every copy.
+
 Done when:
-- [ ] A "Mandala" preset in the mandala style builds with no fatal finding.
-- [ ] Converting a petal to a shape and editing its nodes changes every symmetric copy.
-- [ ] Tests cover the Bezier flattening, the node edits and the conversion.
+- [x] A "Mandala" preset in the mandala style builds with no fatal finding.
+- [x] Converting a petal to a shape and editing its nodes changes every symmetric copy.
+- [x] Tests cover the Bezier flattening, the node edits and the conversion.
+
+**Progress:**
+- 2026-11-07, M4 done.
+  - **Mandala preset:** 290 mm, 10 layers, kaleidoscope 12, ember palette. The seed is 7, chosen from a rendered sweep of seeds 1 to 12, all with no islands and no fatal finding.
+    - Measured in Node: cold build 65 ms, slow checks 79 ms, slider change 20 ms (median of 5).
+  - **Node editing in headless Edge:**
+    - "Edit nodes" turned a lotus into a 7-node shape and opened the Layer view.
+    - Dragging its outer node moved it 5.06 mm, and every copy rebuilt.
+    - One undo reverted the whole drag, and redo restored it.
+    - Double-clicking the outline added a node; double-clicking that node deleted it.
+  - **Found and fixed:** the long "Shape" label widened the add-openings select, and with it the whole sidebar. The label is now "Editable shape", with the instructions in a note on the card, and the select may shrink.
+  - **Tests:** `curves.test.js`:
+    - chords within the tolerance at three tolerances;
+    - splitting keeps the outline;
+    - anchor and handle moves;
+    - every curve counter-clockwise and island-free under a kaleidoscope;
+    - petal conversion within 0.2% of the petal's area;
+    - a node edit cutting every copy under kaleidoscope 6 with a 12-degree phase;
+    - the preset and four mandala-style seeds.
+    130 tests pass. The Mandala joined the goldens; every existing golden is unchanged.
 
 ### M5: image and text
 Tone bands, depth map import, depth AI, the dithered engrave back plate with its ramp strip, stencil text, and logo import. Done when an Angel-style shadow box can be rebuilt from a photo, end to end.
@@ -823,6 +862,9 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Island IDs include the box size | Concentric rings shared IDs, so their bridges and policies mixed |
 | 2026-11-07 | Lattice orb seed 6 | The densest of a rendered sweep and the closest to the orb reference, still inside the 400 ms slider target |
 | 2026-11-07 | The 3D preview keeps extruded geometry per layer, keyed by its material | Browser slider latency on the Lattice orb: 460 ms median down to 223 ms |
+| 2026-11-07 | Bezier maths in a module with no geometry library | The Layer view edits nodes on the main thread, which must not load Clipper2 (a test enforces it) |
+| 2026-11-07 | Scrolls sit mid-way between mirror lines under a kaleidoscope | The only asymmetric curve: on a mirror line its mirrored copy crosses it and cuts islands |
+| 2026-11-07 | Mandala preset seed 7 | From a rendered sweep of 12 seeds: a lotus ring inside a ring of arc slots |
 | 2026-11-07 | Circuit lanes: pitch = bundle + gap, traces two cells apart, half a pitch from domain edges | Gives at least one strand gap between bundles, including a trace and its own copies, with no geometric search |
 | 2026-11-07 | Circuit keep-out is solid in slots and open in bars | An open keep-out in slots is fine, but a solid one in bars would be an island holding nothing |
 | 2026-11-07 | Circuit panel frame ring 12 mm | With a bars front, the ring is the only material all layers share; 10 mm fitted only 2 of 3 dowels |
