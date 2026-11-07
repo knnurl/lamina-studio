@@ -596,6 +596,34 @@ button { font: inherit; color: inherit; }
 .assistant-toggle[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); }
 .describe-row { display: flex; gap: 10px; align-items: stretch; }
 .describe-row .describe-input { flex: 1; }
+
+/* Sketch bar (SPEC M4.5) */
+.sketch-bar {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    right: 12px;
+    z-index: 4;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+}
+.sketch-bar[hidden] { display: none; }
+.sketch-bar .tool[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); border-color: var(--acid); }
+.sketch-sep { width: 1px; align-self: stretch; background: var(--rule); margin: 0 2px; }
+.sketch-field { display: inline-flex; align-items: center; gap: 5px; }
+.sketch-field .ctl-num { width: 56px; }
+.btn.small { padding: 4px 10px; font-size: 12.5px; }
+.layer-canvas[data-tool="pen"], .layer-canvas[data-tool="line"], .layer-canvas[data-tool="circle"], .layer-canvas[data-tool="rect"] { cursor: crosshair; }
+.layer-canvas[data-tool="erase"] { cursor: not-allowed; }
+.layer-canvas[data-tool="select"] { cursor: default; }
 </style>
 </head>
 <body>
@@ -1284,6 +1312,7 @@ const kMotifTypes = {
     lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
     art: { label: 'Artwork', params: ['x_mm', 'y_mm', 'width_mm', 'angle_deg', 'repeat'], replicated: false },
+    sketch: { label: 'Sketch', params: [], replicated: true },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
@@ -2800,7 +2829,7 @@ return { kCurveTypes, curve_nodes, to_shape };
 })();
 // src/sources/motifs.js
 const __m_sources_motifs_js = (function () {
-const { circle_path, regular_polygon_path, circle_segments, union_all, union_fill } = __m_geom_clip_js;
+const { circle_path, regular_polygon_path, circle_segments, union_all, union_fill, stroke } = __m_geom_clip_js;
 const { from_flat } = __m_geom_pack_js;
 const { rotate_path, replicate, rotation_order } = __m_geom_symmetry_js;
 const { kMotifTypes } = __m_core_schema_js;
@@ -2933,11 +2962,26 @@ function art_openings(m, sym) {
     return m.repeat === 'around' ? replicate(art, sym) : art;
 }
 
+// Sketch strokes (SPEC M4.5), in the fundamental domain in mm: open strokes cut as round-ended
+// slots of their width; closed strokes cut filled, or as a slot along their outline.
+function sketch_openings(m, sym) {
+    const cuts = [];
+    for (const s of m.strokes ?? []) {
+        const pts = (s.points ?? []).map(([x, y]) => ({ x: Math.round(mm_to_um(x)), y: Math.round(mm_to_um(y)) }));
+        if (pts.length < 2) continue;
+        const w = mm_to_um(Math.max(0.5, s.width_mm ?? 2));
+        if (s.closed && s.fill && pts.length >= 3) cuts.push(...union_fill([pts], false));
+        else cuts.push(...stroke([s.closed ? [...pts, pts[0]] : pts], w, 'round', 'round'));
+    }
+    return cuts.length ? replicate(union_all(cuts), sym) : [];
+}
+
 // All openings of one motif under the piece's symmetry.
 function motif_openings(m, sym) {
     if (!(m.type in kMotifTypes)) throw new Error(`unknown motif "${m.type}"`);
     if (m.type === 'disc') return m.d_mm > 0 ? [circle_path(0, 0, mm_to_um(m.d_mm) / 2)] : [];
     if (m.type === 'art') return art_openings(m, sym);
+    if (m.type === 'sketch') return sketch_openings(m, sym);
     // Lattices and frets are built in the fundamental domain, then replicated.
     if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
     if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);
@@ -6554,7 +6598,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 45 modules.
+<script>// Lamina Studio bundle: src/main.js and 47 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -89052,6 +89096,7 @@ const kMotifTypes = {
     lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
     art: { label: 'Artwork', params: ['x_mm', 'y_mm', 'width_mm', 'angle_deg', 'repeat'], replicated: false },
+    sketch: { label: 'Sketch', params: [], replicated: true },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
@@ -91090,6 +91135,9 @@ function new_motif(type, design, layer) {
             return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
         case 'circuit':
             return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
+        case 'sketch':
+            // Strokes come from the sketch tools in the Layer view.
+            return { type, strokes: [] };
         case 'art':
             // Artwork comes from SVG (the assistant's draw_artwork, or a logo); empty until then.
             return { type, x_mm: 0, y_mm: 0, width_mm: v(0.5), angle_deg: 0, repeat: 'once', paths: [], src_w_mm: 0 };
@@ -91230,10 +91278,93 @@ function check_level(results) {
 }
 return { check_level };
 })();
+// src/geom/sketch.js
+const __m_geom_sketch_js = (function () {
+const { symmetry_matrices, fundamental_domain } = __m_geom_symmetry_js;
+// Sketch strokes (SPEC M4.5): drawn in the Layer view on any symmetric copy, and kept in the
+// fundamental domain so the symmetry repeats them. A whole stroke goes back by the copy its first
+// point lies on, so a stroke never splits where it crosses a mirror line. No geometry library.
+
+
+// The symmetry matrix of the copy holding p: the one whose inverse takes p into the domain.
+// Matrices are orthonormal, so the inverse is the transpose.
+function copy_of(p, sym) {
+    const dom = fundamental_domain(sym);
+    const all = symmetry_matrices(sym);
+    for (const m of all) if (dom.contains({ x: m[0] * p.x + m[2] * p.y, y: m[1] * p.x + m[3] * p.y })) return m;
+    return all[0];
+}
+
+// Points (any unit) taken back into the domain by the copy of the first point.
+function to_domain(points, sym) {
+    if (!points.length) return [];
+    const m = copy_of(points[0], sym);
+    return points.map(p => ({ x: m[0] * p.x + m[2] * p.y, y: m[1] * p.x + m[3] * p.y }));
+}
+
+// Every copy of domain points, for previews: one list per symmetry matrix.
+function all_copies(points, sym) {
+    return symmetry_matrices(sym).map(m => points.map(p => ({ x: m[0] * p.x + m[1] * p.y, y: m[2] * p.x + m[3] * p.y })));
+}
+
+const seg_dist = (p, a, b) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+};
+
+// Douglas-Peucker: drops points closer than tol to the line through their neighbours.
+function simplify_line(points, tol) {
+    if (points.length < 3) return points.slice();
+    let worst = 0;
+    let at = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+        const d = seg_dist(points[i], points[0], points[points.length - 1]);
+        if (d > worst) {
+            worst = d;
+            at = i;
+        }
+    }
+    if (worst <= tol) return [points[0], points[points.length - 1]];
+    const left = simplify_line(points.slice(0, at + 1), tol);
+    return [...left.slice(0, -1), ...simplify_line(points.slice(at), tol)];
+}
+
+// Chaikin corner cutting: each round replaces every edge with points at 1/4 and 3/4. Open lines
+// keep their ends.
+function chaikin(points, closed, rounds = 2) {
+    let pts = points;
+    for (let r = 0; r < rounds; r++) {
+        const out = closed ? [] : [pts[0]];
+        const n = pts.length;
+        const edges = closed ? n : n - 1;
+        for (let i = 0; i < edges; i++) {
+            const a = pts[i];
+            const b = pts[(i + 1) % n];
+            out.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y }, { x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
+        }
+        if (!closed) out.push(pts[n - 1]);
+        pts = out;
+    }
+    return pts;
+}
+
+// The distance from p to a stroke's line (closed strokes include the closing edge).
+function stroke_distance(p, points, closed) {
+    let best = Infinity;
+    const n = points.length;
+    for (let i = 0; i < (closed ? n : n - 1); i++) best = Math.min(best, seg_dist(p, points[i], points[(i + 1) % n]));
+    return n === 1 ? Math.hypot(points[0].x - p.x, points[0].y - p.y) : best;
+}
+return { copy_of, to_domain, all_copies, simplify_line, chaikin, stroke_distance };
+})();
 // src/preview/layer_view.js
 const __m_preview_layer_view_js = (function () {
 const { kUmPerMm } = __m_core_units_js;
 const { flatten_shape, move_anchor, move_handle, nearest_on_shape, split_segment, delete_node } = __m_geom_bezier_js;
+const { to_domain, all_copies } = __m_geom_sketch_js;
 // Layer view (SPEC 10): one layer, flat, for inspecting and editing. Material is drawn in the
 // layer's colour; bridges, islands (by policy), locators for glue-on islands from the layer in
 // front, and check boxes (red fatal, amber warning) are drawn over it. Click an island to cycle
@@ -91244,6 +91375,9 @@ const { flatten_shape, move_anchor, move_handle, nearest_on_shape, split_segment
 // Assumptions: paths in micrometres, y up; the canvas works in mm; shape nodes in local mm.
 
 
+
+
+const kCloseLoopPx = 10; // a pen stroke ending this near its start closes
 
 const kNodePx = 7; // pick radius for nodes and handles
 const r2 = v => Math.round(v * 100) / 100;
@@ -91278,7 +91412,9 @@ class LayerView {
     //   on_bridge_reset(bridge)          an Alt-click on a bridge
     //   on_shape_edit(motif, nodes, drag) new nodes for the shape motif at index motif; drag is
     //                                    an ID shared by every move of one drag (one undo step)
-    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset, on_shape_edit }) {
+    //   on_sketch({ points, closed })    a finished stroke, in world micrometres
+    //   on_erase(point, tol)             an eraser click, with the pick radius in micrometres
+    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset, on_shape_edit, on_sketch, on_erase }) {
         this.container_ = container;
         this.canvas_ = document.createElement('canvas');
         this.canvas_.className = 'layer-canvas';
@@ -91302,17 +91438,35 @@ class LayerView {
         this.on_bridge_drag_ = on_bridge_drag;
         this.on_bridge_reset_ = on_bridge_reset;
         this.on_shape_edit_ = on_shape_edit;
+        this.on_sketch_ = on_sketch;
+        this.on_erase_ = on_erase;
         this.guide_ = null; // { from, to } in micrometres while a bridge is dragged
         this.drags_ = 0;
+        this.tool_ = 'select'; // or pen, line, circle, rect, erase
+        this.draft_ = null; // the stroke being drawn, in world micrometres
+        window.addEventListener('keydown', e => {
+            if (!this.draft_) return;
+            if (e.key === 'Escape') this.draft_ = null;
+            if (e.key === 'Enter' && this.draft_?.tool === 'line') this.finish_line_(false);
+            this.draw_();
+        });
 
         let drag = null;
         this.canvas_.addEventListener('pointerdown', e => {
+            if (this.tool_ !== 'select') {
+                if (this.view_) this.sketch_down_(e);
+                return;
+            }
             const node = this.node_at_(e.offsetX, e.offsetY);
             const bridge = node ? null : this.bridge_at_(e.offsetX, e.offsetY);
             drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, node, bridge, alt: e.altKey, id: ++this.drags_ };
             this.canvas_.setPointerCapture(e.pointerId);
         });
         this.canvas_.addEventListener('pointermove', e => {
+            if (this.draft_ && this.view_) {
+                this.sketch_move_(e);
+                return;
+            }
             if (!drag || !this.view_) return;
             const dx = e.offsetX - drag.x;
             const dy = e.offsetY - drag.y;
@@ -91340,6 +91494,10 @@ class LayerView {
             }
         });
         this.canvas_.addEventListener('pointerup', e => {
+            if (this.tool_ !== 'select') {
+                this.sketch_up_(e);
+                return;
+            }
             if (drag?.bridge && drag.moved && this.guide_) {
                 const { from, to } = this.guide_;
                 this.on_bridge_drag_?.(drag.bridge, (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
@@ -91365,6 +91523,11 @@ class LayerView {
             { passive: false },
         );
         this.canvas_.addEventListener('dblclick', e => {
+            if (this.tool_ === 'line') {
+                this.finish_line_(false);
+                return;
+            }
+            if (this.tool_ !== 'select') return;
             // On a node: delete it. On a shape's outline: add a node there. Elsewhere: refit.
             const node = this.node_at_(e.offsetX, e.offsetY);
             if (node?.which === 'anchor') {
@@ -91382,6 +91545,81 @@ class LayerView {
             this.draw_();
         });
         new ResizeObserver(() => this.draw_()).observe(container);
+    }
+
+    // The drawing tool: select (the default editing), pen, line, circle, rect or erase.
+    set_tool(tool) {
+        this.tool_ = tool;
+        this.draft_ = null;
+        this.canvas_.dataset.tool = tool;
+        this.draw_();
+    }
+
+    sketch_down_(e) {
+        const p = this.to_world_(e.offsetX, e.offsetY);
+        this.canvas_.setPointerCapture(e.pointerId);
+        if (this.tool_ === 'erase') {
+            this.on_erase_?.(p, (8 / this.view_.scale) * kUmPerMm);
+            return;
+        }
+        if (this.tool_ === 'pen') this.draft_ = { tool: 'pen', points: [p], down: true };
+        else if (this.tool_ === 'circle' || this.tool_ === 'rect') this.draft_ = { tool: this.tool_, start: p, end: p, down: true };
+        else if (this.tool_ === 'line') {
+            if (!this.draft_) this.draft_ = { tool: 'line', points: [p, p] };
+            else {
+                const first = this.to_screen_(this.draft_.points[0]);
+                // Clicking the first point again closes the shape.
+                if (this.draft_.points.length > 3 && Math.hypot(first.x - e.offsetX, first.y - e.offsetY) < kCloseLoopPx) {
+                    this.finish_line_(true);
+                    return;
+                }
+                this.draft_.points.splice(-1, 1, p, p);
+            }
+        }
+        this.draw_();
+    }
+
+    sketch_move_(e) {
+        const d = this.draft_;
+        const p = this.to_world_(e.offsetX, e.offsetY);
+        if (d.tool === 'pen' && d.down) {
+            const last = this.to_screen_(d.points[d.points.length - 1]);
+            if (Math.hypot(last.x - e.offsetX, last.y - e.offsetY) > 1.5) d.points.push(p);
+        } else if ((d.tool === 'circle' || d.tool === 'rect') && d.down) d.end = p;
+        else if (d.tool === 'line') d.points[d.points.length - 1] = p;
+        this.draw_();
+    }
+
+    sketch_up_() {
+        const d = this.draft_;
+        if (!d || !d.down) return;
+        if (d.tool === 'pen') {
+            const a = this.to_screen_(d.points[0]);
+            const b = this.to_screen_(d.points[d.points.length - 1]);
+            const closed = d.points.length > 8 && Math.hypot(a.x - b.x, a.y - b.y) < kCloseLoopPx;
+            if (d.points.length > 1) this.on_sketch_?.({ points: d.points, closed });
+        } else {
+            const r = Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y);
+            if (r * (this.view_.scale / kUmPerMm) > 3) {
+                const points =
+                    d.tool === 'circle'
+                        ? Array.from({ length: 48 }, (_, i) => ({ x: d.start.x + r * Math.cos((i / 48) * 2 * Math.PI), y: d.start.y + r * Math.sin((i / 48) * 2 * Math.PI) }))
+                        : [d.start, { x: d.end.x, y: d.start.y }, d.end, { x: d.start.x, y: d.end.y }];
+                this.on_sketch_?.({ points, closed: true });
+            }
+        }
+        this.draft_ = null;
+        this.draw_();
+    }
+
+    finish_line_(closed) {
+        const d = this.draft_;
+        this.draft_ = null;
+        if (d?.tool === 'line') {
+            const points = d.points.slice(0, -1); // the last point follows the pointer
+            if (points.length >= 2) this.on_sketch_?.({ points, closed: closed && points.length >= 3 });
+        }
+        this.draw_();
     }
 
     set_visible(on) {
@@ -91628,6 +91866,33 @@ class LayerView {
                 ctx.fillRect(a.x - 4, a.y - 4, 8, 8);
                 ctx.strokeRect(a.x - 4, a.y - 4, 8, 8);
             }
+        }
+
+        if (this.draft_) {
+            const d = this.draft_;
+            let pts = d.points;
+            let closed = false;
+            if (d.tool === 'circle' || d.tool === 'rect') {
+                const r = Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y);
+                pts = d.tool === 'circle' ? Array.from({ length: 48 }, (_, i) => ({ x: d.start.x + r * Math.cos((i / 48) * 2 * Math.PI), y: d.start.y + r * Math.sin((i / 48) * 2 * Math.PI) })) : [d.start, { x: d.end.x, y: d.start.y }, d.end, { x: d.start.x, y: d.end.y }];
+                closed = true;
+            }
+            const copies = this.data_.sym ? all_copies(to_domain(pts, this.data_.sym), this.data_.sym) : [pts];
+            ctx.lineWidth = Math.max(1.5, (this.data_.stroke_mm ?? 2) * v.scale);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            copies.forEach((copy, i) => {
+                ctx.strokeStyle = i === 0 ? 'rgba(70, 180, 255, 0.85)' : 'rgba(70, 180, 255, 0.4)';
+                ctx.beginPath();
+                copy.forEach((q, j) => {
+                    const sp = this.to_screen_(q);
+                    if (j) ctx.lineTo(sp.x, sp.y);
+                    else ctx.moveTo(sp.x, sp.y);
+                });
+                if (closed) ctx.closePath();
+                ctx.stroke();
+            });
+            ctx.lineCap = 'butt';
         }
 
         for (const c of checks) {
@@ -92178,6 +92443,20 @@ class Panels {
             }
             card.append(el('div', { class: 'motif-head' }, [...head, remove]));
             if (motif.type === 'shape') card.append(el('p', { class: 'step-note', text: 'Drag its nodes and handles in the Layer view. Double-click the outline to add a node, a node to delete it.' }));
+            if (motif.type === 'sketch') {
+                card.append(el('p', { class: 'step-note', text: `${motif.strokes.length} ${motif.strokes.length === 1 ? 'stroke' : 'strokes'}, drawn in the Layer view and mirrored round the piece.` }));
+                const row = el('div', { class: 'add-row' });
+                for (const [text, fn] of [
+                    ['Draw more', () => app.start_drawing()],
+                    ['Smooth', () => app.smooth_sketch()],
+                    ['Clean up with AI', () => app.cleanup_sketch()],
+                ]) {
+                    const b = el('button', { type: 'button', class: 'btn ghost small', text });
+                    b.addEventListener('click', fn);
+                    row.append(b);
+                }
+                card.append(row);
+            }
             const params = kMotifTypes[motif.type].params;
             const add = key => {
                 const p = kMotifParams[key];
@@ -92198,10 +92477,13 @@ class Panels {
 
         const type = el('select', { 'aria-label': 'Opening type' });
         // Artwork arrives from SVG (the assistant, or logo import in M5), not from an empty card.
-        for (const [id, t] of Object.entries(kMotifTypes)) if (id !== 'art') type.append(el('option', { value: id, text: t.label }));
+        for (const [id, t] of Object.entries(kMotifTypes)) if (id !== 'art' && id !== 'sketch') type.append(el('option', { value: id, text: t.label }));
         const add = el('button', { type: 'button', class: 'btn ghost', text: 'Add openings' });
         add.addEventListener('click', () => app.add_motif(type.value));
         body.append(el('div', { class: 'add-row' }, [type, add]));
+        const draw = el('button', { type: 'button', class: 'btn ghost', text: 'Draw on this layer' });
+        draw.addEventListener('click', () => app.start_drawing());
+        body.append(draw);
     }
 }
 return { Panels };
@@ -93404,12 +93686,17 @@ function clean_motif(input, design, layer) {
         motif.paths = input.paths;
         motif.src_w_mm = input.src_w_mm;
     }
+    if (type === 'sketch' && 'strokes' in input) {
+        const ok = Array.isArray(input.strokes) && input.strokes.every(s => Array.isArray(s?.points) && s.points.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)));
+        if (!ok) return { error: 'sketch.strokes must be a list of { points: [[x, y], ...], width_mm, closed, fill }' };
+        motif.strokes = input.strokes.map(s => ({ closed: !!s.closed, fill: !!s.fill, width_mm: Math.min(20, Math.max(0.5, Number(s.width_mm) || 2)), points: s.points.map(([x, y]) => [Number(x), Number(y)]) }));
+    }
     if (type === 'shape' && 'nodes' in input) {
         const bad = check_nodes(input.nodes);
         if (bad) return { error: `shape.${bad}` };
         motif.nodes = input.nodes.map(n => Object.fromEntries(['x', 'y', 'ix', 'iy', 'ox', 'oy'].map(k => [k, Number(n[k])])));
     }
-    const known = new Set(['type', ...kMotifTypes[type].params, 'cells', 'nodes', 'paths', 'src_w_mm']);
+    const known = new Set(['type', ...kMotifTypes[type].params, 'cells', 'nodes', 'paths', 'src_w_mm', 'strokes']);
     for (const key of Object.keys(input)) if (!known.has(key)) notes.push(`${type}: ignored unknown field ${key}`);
     return { motif, notes };
 }
@@ -93532,6 +93819,11 @@ function motif_summary(m) {
     const out = {};
     for (const [k, v] of Object.entries(m)) {
         if (k === 'cells') continue;
+        if (k === 'strokes') {
+            // The model reads the strokes to clean them up: points to 0.5 mm.
+            out.strokes = v.map(s => ({ ...s, points: s.points.map(([x, y]) => [Math.round(x * 2) / 2, Math.round(y * 2) / 2]) }));
+            continue;
+        }
         if (k === 'paths') {
             out.contours = v.length;
             continue;
@@ -94116,6 +94408,64 @@ class AssistantPanel {
 }
 return { AssistantPanel };
 })();
+// src/ui/sketch_bar.js
+const __m_ui_sketch_bar_js = (function () {
+const { el } = __m_ui_dom_js;
+// Sketch bar (SPEC M4.5): drawing tools over the Layer view. Strokes land on the chosen layer and
+// mirror round the piece by its symmetry. Smooth tidies them; Clean up hands them to the assistant.
+
+
+const kTools = [
+    ['select', 'Select', 'Edit and pan, as usual'],
+    ['pen', 'Pen', 'Draw freehand; end near the start to close the shape'],
+    ['line', 'Line', 'Click points; double-click or Enter to finish, click the first point to close'],
+    ['circle', 'Circle', 'Drag from the centre'],
+    ['rect', 'Rectangle', 'Drag corner to corner'],
+    ['erase', 'Erase', 'Click a stroke to remove it'],
+];
+
+class SketchBar {
+    // actions: { tool(t), width(mm), filled(on), smooth(), cleanup() }
+    constructor(container, actions) {
+        this.root_ = el('div', { class: 'sketch-bar', hidden: '', role: 'toolbar', 'aria-label': 'Sketch tools' });
+        this.buttons_ = kTools.map(([id, label, title]) => {
+            const b = el('button', { type: 'button', class: 'tool small', text: label, title, 'aria-pressed': String(id === 'select') });
+            b.addEventListener('click', () => {
+                this.set_tool(id);
+                actions.tool(id);
+            });
+            return [id, b];
+        });
+        const width = el('input', { type: 'number', class: 'ctl-num', min: 0.5, max: 20, step: 0.5, value: 3, 'aria-label': 'Stroke width in mm' });
+        width.addEventListener('change', () => actions.width(Math.min(20, Math.max(0.5, Number(width.value) || 3))));
+        const filled = el('input', { type: 'checkbox', checked: '' });
+        filled.addEventListener('change', () => actions.filled(filled.checked));
+        const smooth = el('button', { type: 'button', class: 'tool small', text: 'Smooth', title: 'Round off the strokes on this layer' });
+        smooth.addEventListener('click', () => actions.smooth());
+        const cleanup = el('button', { type: 'button', class: 'btn small', text: 'Clean up with AI', title: 'The assistant turns the sketch into clean shapes' });
+        cleanup.addEventListener('click', () => actions.cleanup());
+        this.root_.append(
+            ...this.buttons_.map(([, b]) => b),
+            el('span', { class: 'sketch-sep' }),
+            el('label', { class: 'sketch-field' }, [el('span', { text: 'Width' }), width, el('span', { text: 'mm' })]),
+            el('label', { class: 'sketch-field' }, [filled, el('span', { text: 'Fill closed shapes' })]),
+            el('span', { class: 'sketch-sep' }),
+            smooth,
+            cleanup,
+        );
+        container.append(this.root_);
+    }
+
+    set_tool(id) {
+        for (const [t, b] of this.buttons_) b.setAttribute('aria-pressed', String(t === id));
+    }
+
+    set_visible(on) {
+        this.root_.hidden = !on;
+    }
+}
+return { SketchBar };
+})();
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
@@ -94140,11 +94490,15 @@ const { LayerStrip } = __m_ui_layer_strip_js;
 const { StartScreen } = __m_ui_start_screen_js;
 const { Tour } = __m_ui_tour_js;
 const { AssistantPanel } = __m_ui_assistant_panel_js;
+const { SketchBar } = __m_ui_sketch_bar_js;
+const { to_domain, simplify_line, chaikin, stroke_distance } = __m_geom_sketch_js;
 const { save_bytes, el } = __m_ui_dom_js;
 // App controller: the design store, UI state, the step panel, the geometry worker and the views.
 // Every edit goes through the store (one undo step per action or slider drag). Every new design is
 // rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
 // screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
+
+
 
 
 
@@ -94264,6 +94618,7 @@ function start_app({ worker, preview, stage }) {
         view: '3d',
         locks: new Set(),
         more: new Set(Array.isArray(saved_more) ? saved_more : []),
+        draw: { tool: 'select', width_mm: 3, filled: true },
     };
     const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
@@ -94277,6 +94632,7 @@ function start_app({ worker, preview, stage }) {
     let start;
     let tour;
     let assistant;
+    let sketch_bar;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -94318,6 +94674,8 @@ function start_app({ worker, preview, stage }) {
             hole_d_mm: state.built.registration.hole_d_mm,
             drilled: k > 0 || d.registration.through_front,
             shapes: shapes_of(store.design, k),
+            sym: store.design.piece.symmetry,
+            stroke_mm: ui.draw.width_mm,
         });
     }
 
@@ -94468,6 +94826,80 @@ function start_app({ worker, preview, stage }) {
             storage_set(kMoreKey, JSON.stringify([...ui.more].filter(k => !k.startsWith('motif:'))));
             render_ui();
         },
+        // Sketching (SPEC M4.5): strokes go back into the fundamental domain by the copy they were
+        // drawn on, onto the chosen layer's sketch motif, so the symmetry mirrors them.
+        add_stroke({ points, closed }) {
+            const k = ui.layer;
+            const d = store.design;
+            if (d.piece.depth_mode === 'field') {
+                set_status('warn', 'Sketches cut in per-layer mode. In the Pattern step, set "Layers come from" to each layer its own openings.');
+                return;
+            }
+            if (d.layers[k].source.kind !== 'primitive') {
+                set_status('warn', `Layer ${k + 1} holds imported artwork; sketch on another layer.`);
+                return;
+            }
+            let mm = to_domain(points, d.piece.symmetry).map(p => ({ x: p.x / 1000, y: p.y / 1000 }));
+            if (mm.length > 4) mm = simplify_line(mm, 0.15);
+            const stroke = { closed, fill: closed && ui.draw.filled, width_mm: ui.draw.width_mm, points: mm.map(p => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100]) };
+            edit(dd => {
+                const motifs = dd.layers[k].source.motifs;
+                let sketch = motifs.find(m => m.type === 'sketch');
+                if (!sketch) {
+                    sketch = { type: 'sketch', strokes: [] };
+                    motifs.push(sketch);
+                }
+                sketch.strokes.push(stroke);
+            });
+        },
+        erase_stroke(p, tol_um) {
+            const k = ui.layer;
+            const d = store.design;
+            const motifs = d.layers[k].source.motifs ?? [];
+            const i = motifs.findIndex(m => m.type === 'sketch');
+            if (i < 0) return;
+            const q = to_domain([p], d.piece.symmetry)[0];
+            const qm = { x: q.x / 1000, y: q.y / 1000 };
+            let best = -1;
+            let best_d = Infinity;
+            motifs[i].strokes.forEach((s, j) => {
+                const dist = stroke_distance(qm, s.points.map(([x, y]) => ({ x, y })), s.closed) - s.width_mm / 2;
+                if (dist < best_d) {
+                    best_d = dist;
+                    best = j;
+                }
+            });
+            if (best < 0 || best_d > tol_um / 1000) return;
+            edit(dd => {
+                const sketch = dd.layers[k].source.motifs[i];
+                sketch.strokes.splice(best, 1);
+                if (!sketch.strokes.length) dd.layers[k].source.motifs.splice(i, 1);
+            });
+        },
+        smooth_sketch() {
+            const k = ui.layer;
+            const i = (store.design.layers[k].source.motifs ?? []).findIndex(m => m.type === 'sketch');
+            if (i < 0) return set_status('ok', `No sketch on layer ${k + 1} yet.`);
+            edit(dd => {
+                for (const s of dd.layers[k].source.motifs[i].strokes) {
+                    if (s.points.length <= 4) continue; // circles are smooth; rectangles keep their corners
+                    const pts = simplify_line(chaikin(s.points.map(([x, y]) => ({ x, y })), s.closed, 2), 0.1);
+                    s.points = pts.map(p => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100]);
+                }
+            });
+        },
+        cleanup_sketch() {
+            const k = ui.layer;
+            if (!(store.design.layers[k].source.motifs ?? []).some(m => m.type === 'sketch')) return set_status('ok', `No sketch on layer ${k + 1} yet.`);
+            assistant.set_open(true);
+            assistant.send(`Clean up my sketch on layer ${k + 1}. Look at layer ${k + 1} first. Keep what I drew, but turn the rough strokes into clean shapes: curve or shape motifs, windows, petals, or artwork with draw_artwork. Then remove the sketch motif and check the design.`);
+        },
+        start_drawing() {
+            app.set_view('layer');
+            sketch_bar.set_tool('pen');
+            ui.draw.tool = 'pen';
+            layer_view.set_tool('pen');
+        },
         get assistant_open() {
             return !!assistant?.open;
         },
@@ -94509,6 +94941,7 @@ function start_app({ worker, preview, stage }) {
             explode.hidden = view !== '3d';
             render2d.set_visible(view === '2d');
             layer_view.set_visible(view === 'layer');
+            sketch_bar.set_visible(view === 'layer');
             sheets_view.set_visible(view === 'sheets');
             if (view === 'sheets') {
                 sheets_view.show_message('Laying out the sheets...');
@@ -94625,6 +95058,23 @@ function start_app({ worker, preview, stage }) {
         on_bridge_drag: (bridge, angle_deg) => app.drag_bridge(bridge, angle_deg),
         on_bridge_reset: bridge => app.reset_bridges(bridge),
         on_shape_edit: (i, nodes, drag) => app.edit_shape(i, nodes, drag),
+        on_sketch: stroke => app.add_stroke(stroke),
+        on_erase: (p, tol) => app.erase_stroke(p, tol),
+    });
+    sketch_bar = new SketchBar(stage, {
+        tool: t => {
+            ui.draw.tool = t;
+            layer_view.set_tool(t);
+        },
+        width: mm => {
+            ui.draw.width_mm = mm;
+            render_layer_view();
+        },
+        filled: on => {
+            ui.draw.filled = on;
+        },
+        smooth: () => app.smooth_sketch(),
+        cleanup: () => app.cleanup_sketch(),
     });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);

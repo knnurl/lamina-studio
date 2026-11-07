@@ -841,7 +841,7 @@ Done when:
 - [ ] With a Claude key, "a 10-layer lotus mandala with a key-fret border" builds a piece with no fatal finding, and a follow-up edit changes it as asked. Both are driven by the owner, with real keys.
 - [ ] Claude can draw artwork onto a layer, and a Gemini picture can be traced into layers, with no fatal finding.
 - [ ] Sketch tools draw mirrored strokes that cut, and "Clean up with AI" replaces a sketch with clean shapes.
-- [ ] Tests cover edit validation and clamping, the tool loop (a stand-in client: tool results in one message, stops on refusal, `max_tokens` and the round cap), sketch geometry, and image-field slicing. No real API calls in CI.
+- [x] Tests cover edit validation and clamping, the tool loop (a stand-in client: tool results in one message, stops on refusal, `max_tokens` and the round cap), sketch geometry, and image-field slicing. No real API calls in CI.
 
 **Progress:**
 - 2026-11-07, slice 1: the assistant.
@@ -851,6 +851,22 @@ Done when:
     - Describe, then edit, check, look and draw artwork, then undo the steps one at a time.
     - A picture added by the user, traced into 8 layers (open 73% at the front to 0% at the back), then looked at.
   - **Not yet run with real keys:** the owner's first live session checks the requests against the real APIs.
+- 2026-11-07, slice 2: the sketch tools.
+  - **Tools:** select, pen, line, circle, rectangle and erase on a bar over the Layer view, plus stroke width, "Fill closed shapes", Smooth and "Clean up with AI".
+  - **Strokes:** each goes back into the fundamental domain by the copy holding its first point, so it never splits at a mirror line. They land in a `sketch` motif on the chosen layer. While drawing, every copy shows the stroke in progress.
+  - **Cutting:** open strokes cut as round-ended slots; closed ones cut filled or as an outline slot.
+  - **In the Pattern step:** a sketch card has Draw more, Smooth and Clean up with AI, and every layer has "Draw on this layer".
+  - **Driven in headless Edge:**
+    - A pen stroke drawn at about 130 degrees on the Mandala (kaleidoscope 12) was stored at 6 to 14 degrees, inside the 0 to 15 degree domain. It cut 24 mirrored slots, and the rings they cut free were bridged.
+    - A circle stored as a closed, filled stroke.
+    - Erase removed the pen stroke when a mirrored copy was clicked.
+    - "Clean up with AI" (with a stand-in) looked at the layer, removed the sketch and added petals.
+  - **Tests:** `sketch.test.js`, 5 tests:
+    - folding under five symmetries;
+    - whole strokes keep their length, and their copies include the stroke as drawn;
+    - slot, filled and outline areas, with 12 copies;
+    - simplify and smooth;
+    - a picture sliced by tone: the disc's area within 5%, the whole square at a high level, and the swapped picture and the original filling the square between them.
 Tone bands, depth map import, depth AI, the dithered engrave back plate with its ramp strip, stencil text, and logo import. Done when an Angel-style shadow box can be rebuilt from a photo, end to end.
 
 ### M6: frames, scale, launch
