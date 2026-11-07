@@ -6647,7 +6647,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 51 modules.
+<script>// Lamina Studio bundle: src/main.js and 52 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -92589,7 +92589,7 @@ function build_header(app) {
         if (file.files[0]) app.open(file.files[0]);
         file.value = '';
     });
-    const assistant = button('✦ Assistant', 'Design and edit by conversation (your own Claude key)', () => app.toggle_assistant(), 'btn ghost assistant-toggle');
+    const assistant = button('✦ Assistant', 'Design and edit by conversation (your own Gemini or Claude key)', () => app.toggle_assistant(), 'btn ghost assistant-toggle');
     right.append(
         assistant,
         undo,
@@ -93648,11 +93648,150 @@ class Assistant {
 }
 return { kModels, kEfforts, kMaxRounds, Assistant };
 })();
+// src/ai/gemini_agent.js
+const __m_ai_gemini_agent_js = (function () {
+const { invalid_input } = __m_ai_prompt_js;
+// The assistant's tool loop on Gemini (SPEC M4.5), with the user's own key: generateContent with
+// function calling, the same tools and events as the Claude loop (agent.js). One request from the
+// user may take many rounds of tool calls. A turn ends when a reply calls no tools, on a safety
+// block, at the round cap, or when the user presses Stop. The model's turns go back into the
+// history exactly as they came, so their thought signatures stay valid.
+
+
+const kGeminiModels = {
+    'gemini-pro-latest': 'Gemini Pro (best designs)',
+    'gemini-flash-latest': 'Gemini Flash (faster, cheaper)',
+};
+// Effort maps onto the thinking levels every Gemini 3 model accepts (the SDK's ThinkingLevel values).
+const kThinking = { medium: 'LOW', high: 'HIGH', xhigh: 'HIGH' };
+const kBlocked = ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY'];
+const kMaxRounds = 30;
+
+const is_gemini_model = model => String(model).startsWith('gemini-');
+
+// Anthropic-shaped content (a string, or text and base64 image blocks) as Gemini parts.
+function to_parts(content) {
+    if (typeof content === 'string') return [{ text: content }];
+    return content.map(b => (b.type === 'image' ? { inlineData: { mimeType: b.source.media_type, data: b.source.data } } : { text: b.text }));
+}
+
+// A tool's result as a function response: its text as output (or error), its pictures as parts.
+function function_response(call, r) {
+    const blocks = typeof r.content === 'string' ? [{ type: 'text', text: r.content }] : r.content;
+    const text = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n');
+    const images = blocks.filter(b => b.type === 'image').map(b => ({ inlineData: { mimeType: b.source.media_type, data: b.source.data } }));
+    return {
+        functionResponse: {
+            ...(call.id ? { id: call.id } : {}),
+            name: call.name,
+            response: r.is_error ? { error: text } : { output: text },
+            ...(images.length ? { parts: images } : {}),
+        },
+    };
+}
+
+class GeminiAssistant {
+    // client: a GoogleGenAI instance, or anything with models.generateContent(params) (tests pass a
+    //   stand-in). The rest is as for Assistant in agent.js.
+    constructor({ client, is_api_error, model, effort, system, tools, run_tool, on_event }) {
+        this.client_ = client;
+        this.is_api_error_ = is_api_error ?? (err => typeof err?.status === 'number');
+        this.model = model;
+        this.effort = effort;
+        this.system_ = system;
+        this.tools_ = tools;
+        this.declarations_ = tools.map(t => ({ name: t.name, description: t.description, parametersJsonSchema: t.input_schema }));
+        this.run_tool_ = run_tool;
+        this.on_event_ = on_event ?? (() => {});
+        this.contents = [];
+    }
+
+    params_(signal) {
+        return {
+            model: this.model,
+            contents: this.contents,
+            config: {
+                systemInstruction: this.system_,
+                tools: [{ functionDeclarations: this.declarations_ }],
+                thinkingConfig: { thinkingLevel: kThinking[this.effort] ?? 'HIGH', includeThoughts: true },
+                maxOutputTokens: 65536,
+                ...(signal ? { abortSignal: signal } : {}),
+            },
+        };
+    }
+
+    async send(content, { signal } = {}) {
+        this.contents.push({ role: 'user', parts: to_parts(content) });
+        let retries = 0;
+        for (let round = 0; round < kMaxRounds; round++) {
+            if (signal?.aborted) return { reason: 'stopped' };
+            let response;
+            try {
+                response = await this.client_.models.generateContent(this.params_(signal));
+            } catch (err) {
+                if (signal?.aborted) return { reason: 'stopped' };
+                throw err;
+            }
+            const u = response.usageMetadata;
+            if (u) {
+                const cached = u.cachedContentTokenCount ?? 0;
+                this.on_event_({ type: 'usage', usage: { input_tokens: (u.promptTokenCount ?? 0) - cached, cache_read_input_tokens: cached, output_tokens: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0) } });
+            }
+            const candidate = response.candidates?.[0];
+            const reason = candidate?.finishReason ?? '';
+            const blocked = response.promptFeedback?.blockReason;
+            if (blocked || kBlocked.includes(reason)) {
+                // Nothing of a blocked reply joins the conversation.
+                return { reason: 'refused', detail: response.promptFeedback?.blockReasonMessage ?? null };
+            }
+            // A function call the model could not form: ask again, a few times.
+            if (reason === 'MALFORMED_FUNCTION_CALL' || reason === 'UNEXPECTED_TOOL_CALL' || !candidate?.content?.parts) {
+                if (retries++ >= 2) return { reason: reason || 'empty' };
+                continue;
+            }
+            retries = 0;
+            const parts = candidate.content.parts;
+            this.contents.push({ role: 'model', parts });
+            for (const p of parts) {
+                if (!p.text) continue;
+                this.on_event_(p.thought ? { type: 'status', text: p.text } : { type: 'text', text: p.text });
+            }
+            const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
+            if (!calls.length) return { reason: reason === 'STOP' || !reason ? 'done' : reason.toLowerCase() };
+
+            const results = [];
+            for (const call of calls) {
+                const tool = this.tools_.find(t => t.name === call.name);
+                const input = call.args ?? {};
+                const bad = !tool ? `there is no tool ${call.name}` : reason === 'MAX_TOKENS' ? 'the reply was cut off before this input was complete; send a shorter one' : invalid_input(tool, input);
+                if (bad) {
+                    results.push(function_response(call, { is_error: true, content: `Not run: ${bad}.` }));
+                    continue;
+                }
+                this.on_event_({ type: 'tool', name: call.name, input });
+                try {
+                    const r = await this.run_tool_(call.name, input);
+                    results.push(function_response(call, r));
+                    this.on_event_({ type: 'tool_done', name: call.name, is_error: !!r.is_error });
+                } catch (err) {
+                    results.push(function_response(call, { is_error: true, content: `Failed: ${err.message}` }));
+                    this.on_event_({ type: 'tool_done', name: call.name, is_error: true });
+                }
+            }
+            // Every result of the round in one turn, in the order of the calls.
+            this.contents.push({ role: 'user', parts: results });
+            if (signal?.aborted) return { reason: 'stopped' };
+        }
+        return { reason: 'round_cap' };
+    }
+}
+return { kGeminiModels, kMaxRounds, is_gemini_model, to_parts, function_response, GeminiAssistant };
+})();
 // src/ai/sdk.js
 const __m_ai_sdk_js = (function () {
 // The AI SDKs (SPEC 14), loaded on first use from jsDelivr at pinned versions, so the page works
-// without them and without keys. Each user brings their own keys, so the Anthropic client runs in
-// the browser with dangerouslyAllowBrowser.
+// without them and without keys. Each user brings their own keys, so the clients run in the
+// browser (the Anthropic one with dangerouslyAllowBrowser).
 const kAnthropicUrl = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
 const kGenAiUrl = 'https://cdn.jsdelivr.net/npm/@google/genai@2.31.0/+esm';
 const kPictureModel = 'gemini-nano-banana-2.1';
@@ -93679,6 +93818,25 @@ async function claude_client(api_key) {
     };
 }
 
+// { client, is_api_error, explain } for the user's Gemini key: the assistant's other engine.
+async function gemini_client(api_key) {
+    genai_module ??= await import(kGenAiUrl);
+    const { GoogleGenAI, ApiError } = genai_module;
+    return {
+        client: new GoogleGenAI({ apiKey: api_key }),
+        is_api_error: err => err instanceof ApiError,
+        explain(err) {
+            if (!(err instanceof ApiError)) return err instanceof TypeError ? 'Could not reach Gemini. Check the internet connection.' : (err?.message ?? String(err));
+            const s = err.status;
+            if (s === 401 || s === 403 || (s === 400 && /api key/i.test(err.message))) return 'The Gemini key was not accepted. Check it in the assistant settings.';
+            if (s === 404) return 'Your Gemini key cannot use this model. Pick another in the assistant settings.';
+            if (s === 429) return 'The Gemini key has hit its limit: free keys allow a few requests a minute and a daily total. Wait a minute, pick Gemini Flash, or turn on billing in AI Studio.';
+            if (s >= 500) return 'Gemini is busy. Wait a minute and try again.';
+            return `Gemini returned an error (${s}): ${err.message}`;
+        },
+    };
+}
+
 // A picture from a description, as { data (base64), mime_type }, with the user's Gemini key.
 async function make_picture(api_key, description, aspect = '1:1') {
     genai_module ??= await import(kGenAiUrl);
@@ -93696,7 +93854,7 @@ async function make_picture(api_key, description, aspect = '1:1') {
     }
     throw new Error('the image model returned no picture');
 }
-return { kPictureModel, claude_client, make_picture };
+return { kPictureModel, claude_client, gemini_client, make_picture };
 })();
 // src/ai/ops.js
 const __m_ai_ops_js = (function () {
@@ -94314,7 +94472,7 @@ function load_settings() {
     return {
         claude_key: saved.claude_key ?? '',
         gemini_key: saved.gemini_key ?? '',
-        model: saved.model ?? 'claude-opus-5-5',
+        model: saved.model ?? 'gemini-flash-latest',
         effort: saved.effort ?? 'high',
         remember: saved.remember ?? false,
     };
@@ -94341,8 +94499,9 @@ return { load_settings, save_settings, forget_keys };
 // src/ui/assistant_panel.js
 const __m_ui_assistant_panel_js = (function () {
 const { el } = __m_ui_dom_js;
-const { Assistant, kModels, kEfforts } = __m_ai_agent_js;
-const { claude_client } = __m_ai_sdk_js;
+const { Assistant, kModels: kClaudeModels, kEfforts } = __m_ai_agent_js;
+const { GeminiAssistant, kGeminiModels, is_gemini_model } = __m_ai_gemini_agent_js;
+const { claude_client, gemini_client } = __m_ai_sdk_js;
 const { system_prompt, tools } = __m_ai_prompt_js;
 const { design_summary } = __m_ai_ops_js;
 const { make_tool_runner } = __m_ai_run_tools_js;
@@ -94350,8 +94509,10 @@ const { load_settings, save_settings, forget_keys } = __m_ai_settings_js;
 // Assistant panel (SPEC M4.5): a drawer beside the preview with the conversation, a message box,
 // Stop, and settings for the user's own keys, model and effort. Every change the assistant makes
 // is an undo step in the studio.
+// The model runs on Gemini or Claude, whichever the chosen model belongs to.
 // Testing seam: when globalThis.__lamina_ai_stand_in is set (only by test scripts) it is used in
 // place of the SDK client: { client, is_api_error, explain }.
+
 
 
 
@@ -94368,6 +94529,9 @@ const kToolWords = {
     make_picture: 'Asking Gemini for a picture',
     trace_picture: 'Tracing the picture into layers',
 };
+const kModels = { ...kGeminiModels, ...kClaudeModels };
+const key_for = s => (is_gemini_model(s.model) ? s.gemini_key : s.claude_key);
+const engine = s => (is_gemini_model(s.model) ? 'Gemini' : 'Claude');
 
 class AssistantPanel {
     // ctx: the tool context (see ai/run_tools.js) minus pictures, add_picture and gemini_key,
@@ -94420,7 +94584,7 @@ class AssistantPanel {
         this.root_.append(title, this.settings_box_, this.log_, foot);
         container.append(this.root_);
         this.refresh_chip_();
-        if (!this.settings_.claude_key) this.note_setup_();
+        if (!key_for(this.settings_)) this.note_setup_();
     }
 
     get open() {
@@ -94446,7 +94610,7 @@ class AssistantPanel {
 
     note_setup_() {
         const card = el('div', { class: 'msg setup' }, [
-            el('p', { text: 'The assistant designs and edits pieces for you, draws artwork, and traces pictures into layers. It needs your own Claude API key; a Gemini key adds pictures from a description. Keys stay in this browser.' }),
+            el('p', { text: 'The assistant designs and edits pieces for you, draws artwork, makes pictures and traces them into layers. It needs your own Gemini API key, free from aistudio.google.com (or a Claude key for the Claude models). Keys stay in this browser.' }),
         ]);
         const go = el('button', { type: 'button', class: 'btn', text: 'Add keys' });
         go.addEventListener('click', () => this.show_settings_(true));
@@ -94462,8 +94626,8 @@ class AssistantPanel {
         const box = this.settings_box_;
         box.textContent = '';
         const field = (label, input, note) => el('label', { class: 'cal-field' }, [el('span', { text: label }), input, ...(note ? [el('small', { text: note })] : [])]);
-        const claude = el('input', { type: 'password', value: s.claude_key, autocomplete: 'off', placeholder: 'sk-ant-...' });
-        const gemini = el('input', { type: 'password', value: s.gemini_key, autocomplete: 'off', placeholder: 'optional' });
+        const claude = el('input', { type: 'password', value: s.claude_key, autocomplete: 'off', placeholder: 'optional, sk-ant-...' });
+        const gemini = el('input', { type: 'password', value: s.gemini_key, autocomplete: 'off', placeholder: 'AIza...' });
         const model = el('select');
         for (const [id, label] of Object.entries(kModels)) model.append(el('option', { value: id, text: label }));
         model.value = s.model;
@@ -94479,7 +94643,8 @@ class AssistantPanel {
             this.assistant_ = null; // rebuilt with the new settings on the next message
             this.refresh_chip_();
             this.show_settings_(false);
-            this.add_('note', `Saved. ${this.settings_.claude_key ? 'Ready.' : 'Add a Claude key to start.'}${this.settings_.gemini_key ? ' Pictures from a description are on.' : ''}`);
+            const s2 = this.settings_;
+            this.add_('note', `Saved. ${key_for(s2) ? 'Ready.' : `Add a ${engine(s2)} key to start, or pick a model for the key you have.`}${s2.gemini_key ? ' Pictures from a description are on.' : ''}`);
         });
         const forget = el('button', { type: 'button', class: 'btn ghost', text: 'Forget keys' });
         forget.addEventListener('click', () => {
@@ -94489,8 +94654,8 @@ class AssistantPanel {
             this.add_('note', 'Keys forgotten in this browser.');
         });
         box.append(
-            field('Claude API key', claude, 'From console.anthropic.com. Calls go from this page straight to Anthropic, billed to your key.'),
-            field('Gemini API key', gemini, 'Optional, from aistudio.google.com: pictures from a description.'),
+            field('Gemini API key', gemini, 'From aistudio.google.com (Get API key). Runs the Gemini models and makes pictures from a description. Calls go from this page straight to Google.'),
+            field('Claude API key', claude, 'Optional, from platform.claude.com, for the Claude models. Billed to your key, separately from any Claude plan.'),
             field('Model', model),
             field('Effort', effort),
             el('label', { class: 'ctl-toggle' }, [remember, el('span', { text: ' Remember keys on this device (otherwise only until the tab closes)' })]),
@@ -94511,7 +94676,8 @@ class AssistantPanel {
 
     async assistant_for_() {
         if (this.assistant_) return this.assistant_;
-        const sdk = globalThis.__lamina_ai_stand_in ?? (await claude_client(this.settings_.claude_key));
+        const gemini = is_gemini_model(this.settings_.model);
+        const sdk = globalThis.__lamina_ai_stand_in ?? (gemini ? await gemini_client(this.settings_.gemini_key) : await claude_client(this.settings_.claude_key));
         this.explain_ = sdk.explain ?? (err => err?.message ?? String(err));
         const ctx = {
             ...this.ctx_,
@@ -94524,7 +94690,7 @@ class AssistantPanel {
                 return id;
             },
         };
-        this.assistant_ = new Assistant({
+        this.assistant_ = new (gemini ? GeminiAssistant : Assistant)({
             client: sdk.client,
             is_api_error: sdk.is_api_error,
             model: this.settings_.model,
@@ -94584,10 +94750,10 @@ class AssistantPanel {
     async send(text) {
         text = String(text ?? '').trim();
         if (!text || this.running_) return;
-        if (!this.settings_.claude_key && !globalThis.__lamina_ai_stand_in) {
+        if (!key_for(this.settings_) && !globalThis.__lamina_ai_stand_in) {
             this.set_open(true);
             this.show_settings_(true);
-            this.add_('note', 'Add your Claude API key first.');
+            this.add_('note', `Add your ${engine(this.settings_)} API key first, or pick a model for the key you have.`);
             return;
         }
         this.input_.value = '';
@@ -94607,7 +94773,7 @@ class AssistantPanel {
             content.push({ type: 'text', text: `The design as it is now: ${JSON.stringify(design_summary(this.ctx_.design()))}` });
             const r = await assistant.send(content, { signal: this.running_.signal });
             if (r.reason === 'stopped') this.add_('note', 'Stopped. Changes made so far stay; undo them in the top bar.');
-            else if (r.reason === 'refused') this.add_('note bad', `Claude declined this request${r.detail ? `: ${r.detail}` : ''}. Try wording it differently.`);
+            else if (r.reason === 'refused') this.add_('note bad', `${engine(this.settings_)} declined this request${r.detail ? `: ${r.detail}` : ''}. Try wording it differently.`);
             else if (r.reason === 'round_cap') this.add_('note', 'That took many steps, so the assistant paused. Say "carry on" to continue.');
         } catch (err) {
             this.add_('note bad', this.explain_ ? this.explain_(err) : err.message);

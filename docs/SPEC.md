@@ -553,8 +553,8 @@ Measure with a `tools/bench.js` script on synthetic designs, and record the resu
 | Transformers.js (`@huggingface/transformers`) 4.3.1 | Depth AI | Apache-2.0 | M5 | Pinned; loaded from jsDelivr on first use |
 | Depth Anything V2 Small (`onnx-community/depth-anything-v2-small`) | Depth model | Apache-2.0 | M5 | |
 | Depth Anything V2 Base and Large | Depth models, optional | CC-BY-NC-4.0 | M5 | Owner approved (2026-11-07). Downloaded on demand, never bundled; the picker labels them non-commercial |
-| Anthropic TypeScript SDK (`@anthropic-ai/sdk`) 1.3.0 | The assistant (Claude) | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr (`+esm`), pinned; with `dangerouslyAllowBrowser`, as each user brings their own key |
-| Google Gen AI SDK (`@google/genai`) 2.31.0 | Pictures (Gemini) | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr, pinned; only with a Gemini key |
+| Anthropic TypeScript SDK (`@anthropic-ai/sdk`) 1.3.0 | The assistant on Claude models (optional) | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr (`+esm`), pinned; with `dangerouslyAllowBrowser`, as each user brings their own key |
+| Google Gen AI SDK (`@google/genai`) 2.31.0 | The assistant on Gemini models (default), and pictures | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr, pinned; only with a Gemini key |
 
 The zip writer, DXF writer, SVG writer, stroke font, packer and marching squares are written in-repo.
 
@@ -810,18 +810,20 @@ Sliders alone are too slow for complex designs. An assistant designs and edits b
 
 Decisions (from the owner's answers):
 - **Each user's own keys.** No server; the page stays on GitHub Pages and works without keys.
-  - Claude for design, editing, drawing and reading pictures. Gemini (optional) for pictures from a description.
+  - Gemini by default (owner, 2026-11-07: a Gemini key is free from AI Studio, while Claude API use is billed separately from a Claude plan). One Gemini key runs the assistant and makes pictures from a description.
+  - Claude models stay available with a Claude key.
   - Keys stay in that browser, or only for the session if the user chooses; "Forget keys" clears them.
 - **Both ways of drawing:** sketch tools on the canvas, and describe-to-draw. Either way the assistant finishes the job: cuttable layers, bridges, checks.
-- **Pictures are vectorised or traced,** never cut as raster. Claude draws SVG artwork, or a Gemini picture is traced into tone layers (M5's image field, brought forward).
+- **Pictures are vectorised or traced,** never cut as raster. The assistant draws SVG artwork, or a Gemini picture is traced into tone layers (M5's image field, brought forward).
 - **AI first,** then M5 (photos, depth, text, engraving) and M6.
 
 Design:
 - **Assistant panel:** a drawer beside the preview, open from the top bar in every step, and a "Describe it" box on the start screen.
   - It shows the conversation, a line per action ("Added a lotus ring to layer 3", "Checked: no problems"), and pictures.
   - A Stop button cancels a turn. Every change the assistant makes goes through the store as one undo step.
-- **Agent:** Claude through the SDK's streaming manual tool loop in the page. The model defaults to Claude Opus 5.5, with Sonnet 5.5 as the faster, cheaper option in settings. Adaptive thinking; effort is set in settings, `high` by default.
-  - Server-side refusal fallbacks are on (`server-side-fallback-2026-07-01`, `fallbacks: "default"`).
+- **Agent:** a manual tool loop in the page, on whichever engine the chosen model belongs to. Both share the system prompt, tools, input checks, events and round cap. Effort is set in settings, `high` by default.
+  - Gemini (the default): `models.generateContent` with function calling (`parametersJsonSchema` from the same tool schemas). Models `gemini-flash-latest` (the default, faster and cheaper) and `gemini-pro-latest` (best designs); the aliases follow Google's newest models, so the studio does not rot when a version retires. Effort maps to thinking level (medium to `LOW`, high and extra high to `HIGH`), with thought summaries shown as progress. Model turns go back into the history unchanged, so thought signatures stay valid. Pictures from `look` travel inside the function response. A safety block ends the turn with nothing kept; a malformed function call is asked again up to twice.
+  - Claude: the SDK's streaming manual loop, Opus 5.5 or Sonnet 5.5, adaptive thinking. Server-side refusal fallbacks are on (`server-side-fallback-2026-07-01`, `fallbacks: "default"`).
   - A turn stops after 30 tool rounds. Token use per turn shows in the panel.
   - The system prompt is generated from the registry (motif types, parameters, ranges, symmetries, styles, materials, cutting limits), so it is deterministic and cached.
   - The current design travels with each user message; tool results carry the state after each change.
@@ -838,10 +840,10 @@ Design:
   - "Smooth" tidies strokes locally. "Clean up with AI" asks the assistant to replace the sketch with clean shapes, curves or artwork.
 
 Done when:
-- [ ] With a Claude key, "a 10-layer lotus mandala with a key-fret border" builds a piece with no fatal finding, and a follow-up edit changes it as asked. Both are driven by the owner, with real keys.
-- [ ] Claude can draw artwork onto a layer, and a Gemini picture can be traced into layers, with no fatal finding.
+- [ ] With a Gemini key, "a 10-layer lotus mandala with a key-fret border" builds a piece with no fatal finding, and a follow-up edit changes it as asked. Both are driven by the owner, with real keys.
+- [ ] The assistant can draw artwork onto a layer, and a Gemini picture can be traced into layers, with no fatal finding.
 - [ ] Sketch tools draw mirrored strokes that cut, and "Clean up with AI" replaces a sketch with clean shapes.
-- [x] Tests cover edit validation and clamping, the tool loop (a stand-in client: tool results in one message, stops on refusal, `max_tokens` and the round cap), sketch geometry, and image-field slicing. No real API calls in CI.
+- [x] Tests cover edit validation and clamping, both tool loops (stand-in clients: tool results in one turn, pictures in Gemini function responses, thought signatures kept, stops on refusal or a safety block, malformed calls asked again, `max_tokens` and the round cap), sketch geometry, and image-field slicing. No real API calls in CI.
 
 **Progress:**
 - 2026-11-07, slice 1: the assistant.
@@ -999,3 +1001,4 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Circuit keep-out is solid in slots and open in bars | An open keep-out in slots is fine, but a solid one in bars would be an island holding nothing |
 | 2026-11-07 | Circuit panel frame ring 12 mm | With a bars front, the ring is the only material all layers share; 10 mm fitted only 2 of 3 dowels |
 | 2026-11-07 | Dowel search skips the windows after one miss | Saves windows that cannot succeed on art with no shared outer band; the mandala's build time measured the same before and after |
+| 2026-11-07 | The assistant runs on Gemini by default; Claude stays as an option | Owner's call: one free Gemini key covers the assistant and pictures, where Claude API use is billed separately from a Claude plan |
