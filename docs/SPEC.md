@@ -550,7 +550,7 @@ Measure with a `tools/bench.js` script on synthetic designs, and record the resu
 | three.js 0.186.1 | 3D preview | MIT | M0 | `three.core.js` + `three.module.js` + `OrbitControls.js`, unminified, about 2.2 MB. OrbitControls' `'three'` import is patched to a relative path |
 | opentype.js | Text glyph outlines | MIT | M5 | |
 | OFL fonts | Stencil text | OFL-1.1 | M5 | Bundled with the font licence |
-| Transformers.js (`@huggingface/transformers`) | Depth AI runtime | Apache-2.0 | M5 | Loaded on demand from a CDN |
+| Transformers.js (`@huggingface/transformers`) 4.3.1 | Depth AI | Apache-2.0 | M5 | Pinned; loaded from jsDelivr on first use |
 | Depth Anything V2 Small (`onnx-community/depth-anything-v2-small`) | Depth model | Apache-2.0 | M5 | |
 | Depth Anything V2 Base and Large | Depth models, optional | CC-BY-NC-4.0 | M5 | Owner approved (2026-11-07). Downloaded on demand, never bundled; the picker labels them non-commercial |
 | Anthropic TypeScript SDK (`@anthropic-ai/sdk`) 1.3.0 | The assistant (Claude) | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr (`+esm`), pinned; with `dangerouslyAllowBrowser`, as each user brings their own key |
@@ -867,7 +867,41 @@ Done when:
     - slot, filled and outline areas, with 12 copies;
     - simplify and smooth;
     - a picture sliced by tone: the disc's area within 5%, the whole square at a high level, and the swapped picture and the original filling the square between them.
+
+### M5: image and text
 Tone bands, depth map import, depth AI, the dithered engrave back plate with its ramp strip, stencil text, and logo import. Done when an Angel-style shadow box can be rebuilt from a photo, end to end.
+
+Design decisions (2026-11-07):
+- **Photos live outside the design.** The full photo (at most 1600 px on its longest side) is kept in this browser's IndexedDB under its hash; the design holds only `piece.photo = { hash, w, h }` and the 320 px grey raster the field slices.
+  - Why: a photo good enough to engrave is megabytes, and the design is copied into every undo step, the autosave (a 5 MB browser limit) and every worker message.
+  - Saved `.lamina.json` files carry the photo inside (`assets`), and opening one stores it again, so files move between machines intact.
+- **Tone bands and depth maps** use M4.5's picture field.
+  - "Use a photo" in the Pattern step, or the start screen's "From a photo", slices by tone.
+  - A depth map image can be loaded directly, or made from the photo.
+- **Depth AI:** Transformers.js 4.3.1, loaded on first use from jsDelivr, runs Depth Anything V2 in the page (WebGPU when there is one, otherwise WebAssembly).
+  - Small (Apache-2.0, about 50 MB) is the default.
+  - Base and Large (CC-BY-NC-4.0, larger downloads) are offered and labelled non-commercial.
+  - The browser caches the model after the first download. Near parts go to the front layers.
+- **Engraved back plate** (`prep_portrait.py`'s recipe):
+  - Red-leaning grey, a local contrast stretch (CLAHE, clip 2.2 on an 8 x 8 grid), levels 8 to 240, gamma 1/1.55 for dot gain, and an unsharp mask.
+  - The photo is placed on the chosen layer exactly where the picture field puts it, and kept only where the layer in front lets it show, grown by 2 mm.
+  - Exports a greyscale PNG at 600 DPI (the Epilog driver dithers it) and an SVG with the cut lines and the picture placed in mm. An 11-step grey ramp strip, 90 x 30 mm, goes in the zip and the Make step.
+  - The Layer view, the 2D view and the 3D view show it as an error-diffused preview.
+- **Text:** a `text` motif renders glyph outlines with opentype.js 2.0.0 (MIT), bundled in the worker, from bundled OFL stencil fonts.
+  - Counters (the inside of an O) become islands, which the bridge stage ties, so any font cuts as a stencil.
+  - Text sits on a line or round an arc, once or round the symmetry.
+- **Logo import:** "Add a logo (SVG)" places the file as an `art` motif.
+- **The assistant** can do all of this through its existing tools: text and engraving are registry controls and motifs.
+
+**Progress:**
+- 2026-11-07, slices 1 and 2: layers from a photo, and depth AI.
+  - **Flow:** "From a photo" on the start screen (a new piece) and "Use a photo" in the Pattern step (the current piece, one undo step). A dialog takes a photo (chosen or dropped), slices it by light and dark, by depth found by AI, or as a depth map already, and shows the bands each layer will cut before anything is made.
+  - **Slicing:** bright parts come forward. Tones are evened out by default: each tone becomes its percentile, so layer k of n keeps (k + 1) / n of the picture. Plain histogram equalisation was tried first and missed by up to 4%, because a large dark ground piles at 0 and squeezes the other bands.
+  - **New pieces:** a rectangle fitted to the photo (300 mm on its long side) or round, no symmetry, the Mono palette (light at the front to dark at the back, as the preview shows). On a round piece, or any outline of another shape, the photo covers the outline.
+  - **Depth AI:** Small, Base and Large in a picker that shows each download size for this browser's backend and labels Base and Large non-commercial. Driven in headless Edge (WebAssembly, no GPU): "Find depth" with Small loaded the library, downloaded 27 MB and found depth in 10.8 s in all; the 8 layers built in 111 ms with every check passing.
+  - **Field mode:** the Pattern step no longer offers openings on a layer the field shapes; it says how to switch.
+  - **Tests:** `photo.test.js`, 4 tests: the raster helpers; evening out keeps order and centres the tones; the bands preview matches each layer's cut area within 3%, and the back layer is solid; evened-out tones give every layer its share within 3%.
+  - **Not yet:** the engraved back plate, text and logos, and the shadow box flow (slices 3 to 5). Photos are not yet kept with the design, so a reopened design keeps its layers but not the photo.
 
 ### M6: frames, scale, launch
 - Finger-joint box generator and printed comb frame STL (geometry from `Layered_3D/layered/spacer.dxf`: 3.6 mm slots on a 6 mm pitch for 3 mm sheets).
@@ -948,6 +982,8 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Island IDs include the box size | Concentric rings shared IDs, so their bridges and policies mixed |
 | 2026-11-07 | Lattice orb seed 6 | The densest of a rendered sweep and the closest to the orb reference, still inside the 400 ms slider target |
 | 2026-11-07 | The 3D preview keeps extruded geometry per layer, keyed by its material | Browser slider latency on the Lattice orb: 460 ms median down to 223 ms |
+| 2026-11-07 | Photos kept in IndexedDB by hash; designs hold a reference; saved files embed them | A photo good enough to engrave would otherwise be copied into every undo step, autosave and worker message |
+| 2026-11-07 | The engrave plate is exported greyscale at 600 DPI, not dithered | The Epilog driver dithers itself (as at AngelShadowBox); the preview shows an error-diffused version |
 | 2026-11-07 | M4.5 AI studio and drawing before M5 | Owner: sliders alone are too slow for complex designs |
 | 2026-11-07 | Users bring their own Claude and Gemini keys; SDKs load from jsDelivr on first use | No server to run or pay for, and the page works without AI |
 | 2026-11-07 | The assistant edits through validated operations, not by rewriting the design JSON | Each change is checked against the registry's ranges and is one undo step |

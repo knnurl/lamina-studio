@@ -194,7 +194,7 @@ button { font: inherit; color: inherit; }
 }
 .ctl-unit { width: 26px; font-size: 12px; color: var(--ink-2); }
 .ctl input[type="range"] { width: 100%; accent-color: var(--acid); margin: 0; }
-.ctl select, .add-row select {
+.ctl select, .add-row select, .photo-row select, .photo-row input {
     background: var(--field);
     color: var(--ink);
     border: 1px solid var(--rule);
@@ -624,6 +624,32 @@ button { font: inherit; color: inherit; }
 .layer-canvas[data-tool="pen"], .layer-canvas[data-tool="line"], .layer-canvas[data-tool="circle"], .layer-canvas[data-tool="rect"] { cursor: crosshair; }
 .layer-canvas[data-tool="erase"] { cursor: not-allowed; }
 .layer-canvas[data-tool="select"] { cursor: default; }
+
+/* Layers from a photo (SPEC M5) */
+.photo-flow { width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; padding: 20px 22px; background: var(--panel); color: var(--ink); border: 1px solid var(--rule); border-radius: 14px; }
+.photo-flow::backdrop { background: rgba(7, 5, 11, 0.7); }
+.photo-flow h2 { margin: 0 0 14px; font: 600 24px/1.2 "Chakra Petch", system-ui, sans-serif; }
+.photo-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
+.photo-left, .photo-right { display: grid; gap: 10px; align-content: start; }
+.photo-drop { display: grid; place-items: center; gap: 10px; min-height: 260px; padding: 20px; border: 2px dashed var(--rule); border-radius: 12px; color: var(--ink-2); text-align: center; }
+.photo-drop.over { border-color: var(--acid); color: var(--ink); }
+.photo-drop[hidden], .photo-preview[hidden], .photo-row[hidden], .photo-licence[hidden], .tool[hidden] { display: none; }
+.photo-drop p { margin: 0; }
+.photo-preview { width: 100%; height: auto; max-height: 420px; object-fit: contain; border-radius: 10px; background: var(--stage-b); image-rendering: auto; }
+.photo-caption { margin: 0; }
+.photo-modes { display: grid; gap: 8px; }
+.photo-mode { display: grid; gap: 2px; text-align: left; padding: 10px 12px; background: var(--stage-b); color: var(--ink); border: 1px solid var(--rule); border-radius: 10px; cursor: pointer; }
+.photo-mode span { color: var(--ink-2); font-size: 13px; }
+.photo-mode:hover { border-color: var(--ink-2); }
+.photo-mode[aria-checked="true"] { border-color: var(--acid); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 25%, transparent); }
+.photo-row { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 8px; }
+.photo-row select, .photo-row input { min-width: 0; }
+.photo-check { display: flex; align-items: center; gap: 8px; }
+.photo-check input { accent-color: var(--acid); }
+.photo-licence { margin: 0; font-size: 12.5px; }
+.photo-status { min-height: 1.4em; margin: 12px 0 0; }
+.photo-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+@media (max-width: 760px) { .photo-body { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -3180,6 +3206,29 @@ function piece_radius_mm(piece) {
     return o.w_mm / 2;
 }
 
+// Slices a picture raster (a photo's tones or depth) into the layers (SPEC M5): field mode, bright
+// parts near, each layer cutting an equal share of the picture's tones (levels 1/n to 1), and the
+// picture covering the whole outline.
+function apply_photo(design, image) {
+    const n = design.layers.length;
+    const o = design.piece.outline;
+    const w_mm = o.w_mm;
+    const h_mm = o.kind === 'rect' || o.kind === 'arch' ? o.h_mm : o.w_mm;
+    const fit = Math.min(w_mm / image.w, h_mm / image.h);
+    const cover = Math.max(w_mm / image.w, h_mm / image.h);
+    design.piece.depth_mode = 'field';
+    Object.assign(design.piece.field, {
+        kind: 'image',
+        image,
+        invert: true,
+        zoom: Math.min(4, Math.round((cover / fit) * 100) / 100),
+        smooth_mm: 1,
+        lo: Math.round((1 / n) * 100) / 100,
+        hi: 1,
+    });
+    return design;
+}
+
 // Applies a palette to every layer's finish colour.
 function apply_palette(design, palette_id) {
     design.palette = palette_id;
@@ -3258,7 +3307,7 @@ function scale_motifs(design, factor) {
         }
     }
 }
-return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
+return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_photo, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
 // src/pipeline/islands.js
 const __m_pipeline_islands_js = (function () {
@@ -6598,7 +6647,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 47 modules.
+<script>// Lamina Studio bundle: src/main.js and 51 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -89806,6 +89855,29 @@ function piece_radius_mm(piece) {
     return o.w_mm / 2;
 }
 
+// Slices a picture raster (a photo's tones or depth) into the layers (SPEC M5): field mode, bright
+// parts near, each layer cutting an equal share of the picture's tones (levels 1/n to 1), and the
+// picture covering the whole outline.
+function apply_photo(design, image) {
+    const n = design.layers.length;
+    const o = design.piece.outline;
+    const w_mm = o.w_mm;
+    const h_mm = o.kind === 'rect' || o.kind === 'arch' ? o.h_mm : o.w_mm;
+    const fit = Math.min(w_mm / image.w, h_mm / image.h);
+    const cover = Math.max(w_mm / image.w, h_mm / image.h);
+    design.piece.depth_mode = 'field';
+    Object.assign(design.piece.field, {
+        kind: 'image',
+        image,
+        invert: true,
+        zoom: Math.min(4, Math.round((cover / fit) * 100) / 100),
+        smooth_mm: 1,
+        lo: Math.round((1 / n) * 100) / 100,
+        hi: 1,
+    });
+    return design;
+}
+
 // Applies a palette to every layer's finish colour.
 function apply_palette(design, palette_id) {
     design.palette = palette_id;
@@ -89884,7 +89956,7 @@ function scale_motifs(design, factor) {
         }
     }
 }
-return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
+return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_photo, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
 // src/preview/three_stack.js
 const __m_preview_three_stack_js = (function () {
@@ -92310,7 +92382,7 @@ class Panels {
         const panels = kGroups[step].map(g => g.panel);
         const shown = SCHEMA.filter(e => panels.includes(e.panel) && shown_if(e, d, layer)).map(e => e.id);
         const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(',')];
-        if (step === 'pattern') parts.push(layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
+        if (step === 'pattern') parts.push(d.piece.depth_mode, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
     }
@@ -92402,6 +92474,12 @@ class Panels {
         const k = app.ui.layer;
         const layer = app.design.layers[k];
         body.append(el('h3', { class: 'sub', text: `Layer ${k + 1}` }));
+
+        // In field mode the field shapes every layer, and openings are not used (compose.js).
+        if (app.design.piece.depth_mode === 'field' && layer.source.kind !== 'svg') {
+            body.append(el('p', { class: 'step-note', text: 'The field shapes this layer: it keeps the parts below its level. For openings of your own, set "Layers come from" to each layer its own openings.' }));
+            return;
+        }
 
         if (layer.source.kind === 'svg') {
             const src = layer.source;
@@ -92966,7 +93044,7 @@ const kKinds = [
         title: 'From a photo',
         text: 'Layers from a picture or a depth map.',
         presets: [],
-        note: 'Photo to layers arrives with M5.',
+        photo: true,
         icon: '<rect x="6" y="10" width="36" height="28" rx="3"/><circle cx="17" cy="19" r="4"/><path d="M9 35l11-10 7 6 5-4 9 8"/>',
     },
 ];
@@ -93012,7 +93090,7 @@ function draw_stack(canvas, design, layers) {
 
 class StartScreen {
     // actions: { build(design) -> Promise<layers>, open_preset(id), start_blank(kind), close(),
-    //            open_file(), import_svg(), tour(), describe(text, kind) }
+    //            open_file(), import_svg(), tour(), describe(text, kind), from_photo() }
     constructor(root, actions) {
         this.root_ = root;
         this.actions_ = actions;
@@ -93099,6 +93177,15 @@ class StartScreen {
             blank.addEventListener('click', () => a.start_blank(kind));
             gallery.append(blank);
         }
+        if (kind.photo) {
+            const card = el('button', { type: 'button', class: 'preset blank photo-start' }, [
+                el('span', { class: 'blank-art', text: '+' }),
+                el('strong', { text: 'Choose a photo' }),
+                el('small', { text: 'Sliced by light and dark, or by depth found by AI on this computer' }),
+            ]);
+            card.addEventListener('click', () => a.from_photo());
+            gallery.append(card);
+        }
         const note = kind.note ? el('p', { class: 'start-note', text: kind.note }) : null;
 
         const foot = el('div', { class: 'start-foot' });
@@ -93108,7 +93195,7 @@ class StartScreen {
         svg.addEventListener('click', () => a.import_svg());
         foot.append(tour, svg, el('span', { text: 'A preset opens at the Pattern step; a blank start at the Piece step.' }));
 
-        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, ...(describe_row ? [describe_row] : []), el('h3', { class: 'sub', text: 'Or start from one of these' }), ...(note ? [note] : []), gallery, foot]);
+        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, ...(describe_row ? [describe_row] : []), el('h3', { class: 'sub', text: kind.photo ? 'Start here' : 'Or start from one of these' }), ...(note ? [note] : []), gallery, foot]);
         root.append(inner);
     }
 
@@ -93860,12 +93947,161 @@ function design_summary(design) {
 }
 return { clean_motif, apply_ops, design_summary };
 })();
+// src/image/raster.js
+const __m_image_raster_js = (function () {
+// Grey rasters (SPEC M4.5, M5): pure functions on byte arrays, shared by the picture field, photos,
+// depth maps and the engraved back plate. Rows run from the top; grey 0 is black.
+// Assumptions: rasters are small enough to hold in memory (a 600 DPI plate is at most a few tens
+// of megapixels).
+
+const kLuma = [0.2126, 0.7152, 0.0722];
+// prep_portrait.py's grey for engraving: red-leaning, which keeps skin light and lips and eyes dark.
+const kRedLean = [0.55, 0.33, 0.12];
+
+function bytes_to_base64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+}
+
+function base64_to_bytes(data) {
+    const bin = atob(data);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < out.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+// FNV-1a over the bytes: a short name for caches, so they never hold the bytes as a key.
+function fnv_hash(bytes) {
+    let h = 2166136261;
+    for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 16777619);
+    return (h >>> 0).toString(36);
+}
+
+// RGBA bytes to grey bytes with the given channel weights.
+function grey_of(rgba, weights = kLuma) {
+    const [wr, wg, wb] = weights;
+    const out = new Uint8Array(rgba.length / 4);
+    for (let i = 0; i < out.length; i++) out[i] = Math.round(wr * rgba[4 * i] + wg * rgba[4 * i + 1] + wb * rgba[4 * i + 2]);
+    return out;
+}
+
+// Area-average shrink so the longest side is at most max_px (never enlarges).
+function shrink(grey, w, h, max_px) {
+    const k = Math.min(1, max_px / Math.max(w, h));
+    if (k === 1) return { grey, w, h };
+    const nw = Math.max(1, Math.round(w * k));
+    const nh = Math.max(1, Math.round(h * k));
+    const out = new Uint8Array(nw * nh);
+    for (let j = 0; j < nh; j++) {
+        const y0 = (j * h) / nh;
+        const y1 = ((j + 1) * h) / nh;
+        for (let i = 0; i < nw; i++) {
+            const x0 = (i * w) / nw;
+            const x1 = ((i + 1) * w) / nw;
+            let sum = 0;
+            let area = 0;
+            for (let y = Math.floor(y0); y < Math.ceil(y1); y++) {
+                const fy = Math.min(y + 1, y1) - Math.max(y, y0);
+                for (let x = Math.floor(x0); x < Math.ceil(x1); x++) {
+                    const a = fy * (Math.min(x + 1, x1) - Math.max(x, x0));
+                    sum += a * grey[y * w + x];
+                    area += a;
+                }
+            }
+            out[j * nw + i] = Math.round(sum / area);
+        }
+    }
+    return { grey: out, w: nw, h: nh };
+}
+
+// Evens out the tones: each tone becomes its percentile in the picture (the middle of its rank),
+// so layers sliced at even levels cut equal areas (SPEC M5, tone bands). Plain histogram
+// equalisation maps the darkest tone to 0 however common it is, and a large dark ground then
+// squeezes every other band.
+function equalise(grey) {
+    const hist = new Float64Array(256);
+    for (const v of grey) hist[v]++;
+    const map = new Uint8Array(256);
+    let below = 0;
+    for (let v = 0; v < 256; v++) {
+        map[v] = Math.round((255 * (below + hist[v] / 2)) / grey.length);
+        below += hist[v];
+    }
+    return grey.map(v => map[v]);
+}
+
+// The bands a raster cuts into n layers, as the photo flow and the field slice them: bright is
+// near, levels evenly spaced from 1/n (front) to 1 (back). Returns grey bytes, front lightest.
+function band_preview(grey, n) {
+    const out = new Uint8Array(grey.length);
+    for (let i = 0; i < grey.length; i++) {
+        const k = Math.min(n - 1, Math.floor((1 - grey[i] / 255) * n)); // the front-most layer with material here
+        out[i] = Math.round(255 - (215 * k) / Math.max(1, n - 1));
+    }
+    return out;
+}
+
+// The picture field's raster: { w, h, data (base64 grey), hash }.
+function raster(grey, w, h) {
+    return { w, h, data: bytes_to_base64(grey), hash: `${w}x${h}-${fnv_hash(grey)}` };
+}
+return { kLuma, kRedLean, bytes_to_base64, base64_to_bytes, fnv_hash, grey_of, shrink, equalise, band_preview, raster };
+})();
+// src/image/photo.js
+const __m_image_photo_js = (function () {
+const { grey_of, shrink, equalise, raster } = __m_image_raster_js;
+// Photos and pictures in the browser (SPEC M5): decode with the camera's orientation applied, keep
+// at most kPhotoPx on the longest side, and make the grey raster the picture field slices.
+// Browser only (createImageBitmap, OffscreenCanvas).
+
+
+const kPhotoPx = 1600; // enough for a 270 mm engraved plate at about 150 px per inch of detail
+const kFieldPx = 320; // the picture field's raster: about 1 mm per pixel on a 300 mm piece
+
+// A blob decoded into RGBA at most max_px on its longest side: { rgba, w, h }.
+async function decode_image(blob, max_px = kPhotoPx) {
+    const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+    const k = Math.min(1, max_px / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * k));
+    const h = Math.max(1, Math.round(bitmap.height * k));
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    return { rgba: ctx.getImageData(0, 0, w, h).data, w, h };
+}
+
+// The photo drawn on a canvas, for the depth model.
+function photo_canvas(photo) {
+    const canvas = new OffscreenCanvas(photo.w, photo.h);
+    canvas.getContext('2d').putImageData(new ImageData(photo.rgba, photo.w, photo.h), 0, 0);
+    return canvas;
+}
+
+// Grey bytes (any size) to the field's raster, evened out if asked.
+function field_raster(grey, w, h, { even = false } = {}) {
+    const small = shrink(grey, w, h, kFieldPx);
+    return raster(even ? equalise(small.grey) : small.grey, small.w, small.h);
+}
+
+// An assistant picture ({ data, mime_type }) to the field's raster, by brightness.
+async function picture_raster(picture, max_px = kFieldPx) {
+    const blob = await (await fetch(`data:${picture.mime_type};base64,${picture.data}`)).blob();
+    const img = await decode_image(blob, max_px);
+    return raster(grey_of(img.rgba), img.w, img.h);
+}
+return { kPhotoPx, kFieldPx, decode_image, photo_canvas, field_raster, picture_raster };
+})();
 // src/ai/run_tools.js
 const __m_ai_run_tools_js = (function () {
 const { apply_ops, design_summary } = __m_ai_ops_js;
 const { make_picture } = __m_ai_sdk_js;
 const { draw_stack } = __m_ui_start_screen_js;
 const { import_into_layer, piece_radius_mm } = __m_core_design_js;
+const { bytes_to_base64 } = __m_image_raster_js;
+const { picture_raster } = __m_image_photo_js;
 // Runs the assistant's tools against the studio (SPEC M4.5). Each tool returns content for the
 // model: short text, and pictures where it needs to see. Every design change goes through the
 // store as one undo step.
@@ -93877,13 +94113,9 @@ const { import_into_layer, piece_radius_mm } = __m_core_design_js;
 
 
 
-const kLookPx = 768; // pictures for the model: enough to judge, small enough to send often
 
-function bytes_to_base64(bytes) {
-    let s = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return btoa(s);
-}
+
+const kLookPx = 768; // pictures for the model: enough to judge, small enough to send often
 
 const canvas_png = canvas => new Promise(resolve => canvas.toBlob(async blob => resolve(new Uint8Array(await blob.arrayBuffer())), 'image/png'));
 const image_block = (data, media_type = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type, data } });
@@ -93926,26 +94158,6 @@ function draw_layer(canvas, design, layer) {
     ctx.fill(trace(layer.material), 'evenodd');
     ctx.fillStyle = '#b4f03c';
     for (const b of layer.bridges) ctx.fill(trace([b.rect]));
-}
-
-// A picture, decoded and drawn into a grey raster at most max_px on its longest side.
-async function grey_raster(picture, max_px = 320) {
-    const blob = await (await fetch(`data:${picture.mime_type};base64,${picture.data}`)).blob();
-    const bitmap = await createImageBitmap(blob);
-    const k = Math.min(1, max_px / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * k));
-    const h = Math.max(1, Math.round(bitmap.height * k));
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    const rgba = ctx.getImageData(0, 0, w, h).data;
-    const grey = new Uint8Array(w * h);
-    for (let i = 0; i < grey.length; i++) grey[i] = Math.round(0.2126 * rgba[4 * i] + 0.7152 * rgba[4 * i + 1] + 0.0722 * rgba[4 * i + 2]);
-    const data = bytes_to_base64(grey);
-    // A short content hash, so caches can name the picture without its bytes.
-    let h1 = 2166136261;
-    for (let i = 0; i < grey.length; i++) h1 = Math.imul(h1 ^ grey[i], 16777619);
-    return { w, h, data, hash: `${w}x${h}-${(h1 >>> 0).toString(36)}` };
 }
 
 // A smaller copy of a picture for the model (JPEG, at most kLookPx).
@@ -94056,7 +94268,7 @@ function make_tool_runner(ctx) {
             case 'trace_picture': {
                 const picture = ctx.pictures.get(input.picture);
                 if (!picture) return { content: `There is no picture ${input.picture}. Pictures so far: ${[...ctx.pictures.keys()].join(', ') || 'none'}.`, is_error: true };
-                const image = await grey_raster(picture);
+                const image = await picture_raster(picture);
                 const next = structuredClone(ctx.design());
                 next.piece.depth_mode = 'field';
                 Object.assign(next.piece.field, {
@@ -94081,7 +94293,7 @@ function make_tool_runner(ctx) {
         }
     };
 }
-return { bytes_to_base64, make_tool_runner };
+return { make_tool_runner };
 })();
 // src/ai/settings.js
 const __m_ai_settings_js = (function () {
@@ -94466,10 +94678,293 @@ class SketchBar {
 }
 return { SketchBar };
 })();
+// src/image/depth.js
+const __m_image_depth_js = (function () {
+// Depth from a photo, in the page (SPEC M5): Depth Anything V2 through Transformers.js, loaded on
+// first use from jsDelivr (pinned) and cached by the browser. WebGPU when the browser has a GPU
+// adapter, otherwise WebAssembly. The photo never leaves the computer. The result is grey bytes at
+// the photo's size, bright where near (the model's relative inverse depth, stretched to 0..255).
+// Testing seam: globalThis.__lamina_depth_stand_in = async (canvas, model) => ({ grey, w, h }).
+
+const kTransformersUrl = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1/+esm';
+
+// Download sizes in MB by backend: fp16 on WebGPU, 8-bit on WebAssembly (measured from the
+// repositories' onnx folders, 2026-11-07).
+const kDepthModels = [
+    { id: 'small', label: 'Small', repo: 'onnx-community/depth-anything-v2-small', licence: 'Apache-2.0', commercial: true, mb: { webgpu: 50, wasm: 27 } },
+    { id: 'base', label: 'Base', repo: 'onnx-community/depth-anything-v2-base', licence: 'CC-BY-NC-4.0', commercial: false, mb: { webgpu: 195, wasm: 102 } },
+    { id: 'large', label: 'Large', repo: 'onnx-community/depth-anything-v2-large', licence: 'CC-BY-NC-4.0', commercial: false, mb: { webgpu: 669, wasm: 347 } },
+];
+
+let backend_ = null;
+let lib_ = null;
+const pipes_ = new Map();
+
+// 'webgpu' or 'wasm', decided once.
+async function depth_backend() {
+    if (!backend_) {
+        let gpu = false;
+        try {
+            gpu = !!(globalThis.navigator?.gpu && (await navigator.gpu.requestAdapter()));
+        } catch {
+            gpu = false;
+        }
+        backend_ = gpu ? 'webgpu' : 'wasm';
+    }
+    return backend_;
+}
+
+// on_progress({ phase: 'library' | 'download' | 'thinking', loaded_mb, total_mb })
+async function estimate_depth(canvas, model_id, on_progress = () => {}) {
+    const model = kDepthModels.find(m => m.id === model_id) ?? kDepthModels[0];
+    const stand_in = globalThis.__lamina_depth_stand_in;
+    if (stand_in) return stand_in(canvas, model);
+    const device = await depth_backend();
+    if (!lib_) {
+        on_progress({ phase: 'library' });
+        lib_ = await import(kTransformersUrl);
+    }
+    const key = `${model.id}|${device}`;
+    if (!pipes_.has(key)) {
+        const made = lib_
+            .pipeline('depth-estimation', model.repo, {
+                device,
+                dtype: device === 'webgpu' ? 'fp16' : 'q8',
+                progress_callback: p => {
+                    if (p.status === 'progress_total') on_progress({ phase: 'download', loaded_mb: p.loaded / 1e6, total_mb: p.total / 1e6 });
+                },
+            })
+            .catch(err => {
+                pipes_.delete(key);
+                throw err;
+            });
+        pipes_.set(key, made);
+    }
+    const pipe = await pipes_.get(key);
+    on_progress({ phase: 'thinking' });
+    const { depth } = await pipe(canvas);
+    // depth is a one-channel RawImage at the input's size.
+    const grey = depth.channels === 1 ? Uint8Array.from(depth.data) : Uint8Array.from({ length: depth.width * depth.height }, (_, i) => depth.data[i * depth.channels]);
+    return { grey, w: depth.width, h: depth.height };
+}
+return { kDepthModels, depth_backend, estimate_depth };
+})();
+// src/ui/photo_flow.js
+const __m_ui_photo_flow_js = (function () {
+const { el } = __m_ui_dom_js;
+const { decode_image, photo_canvas, field_raster } = __m_image_photo_js;
+const { grey_of, base64_to_bytes, band_preview } = __m_image_raster_js;
+const { kDepthModels, depth_backend, estimate_depth } = __m_image_depth_js;
+// "Layers from a photo" (SPEC M5): choose a photo, choose how it slices (light and dark, depth
+// found by AI, or a depth map already), see the bands it will cut, then make the layers. Used by
+// the start screen (a new piece) and the Pattern step (the current piece). Resolves with the
+// choices, or null when cancelled.
+
+
+
+
+
+const kModes = [
+    { id: 'tone', title: 'Light and dark', text: 'Bright parts come forward, dark parts sink back.' },
+    { id: 'ai', title: 'Depth, found by AI', text: 'A model running on this computer estimates what is near. The photo never leaves it.' },
+    { id: 'map', title: 'It is a depth map', text: 'Bright is near: from a phone camera, Blender or another app.' },
+];
+
+function draw_grey(canvas, grey, w, h) {
+    canvas.width = w;
+    canvas.height = h;
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < grey.length; i++) {
+        rgba[4 * i] = rgba[4 * i + 1] = rgba[4 * i + 2] = grey[i];
+        rgba[4 * i + 3] = 255;
+    }
+    canvas.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0);
+}
+
+function open_photo_flow({ fresh = false, layers = 8 } = {}) {
+    return new Promise(resolve => {
+        const s = { photo: null, name: '', mode: 'tone', model: 'small', even: true, shape: 'fit', layers, depth: new Map(), busy: false };
+        const dialog = el('dialog', { class: 'photo-flow', 'aria-label': 'Layers from a photo' });
+        const finish = result => {
+            dialog.close();
+            dialog.remove();
+            resolve(result);
+        };
+        dialog.addEventListener('cancel', e => {
+            e.preventDefault();
+            if (!s.busy) finish(null);
+        });
+
+        const file = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', hidden: '' });
+        const choose = el('button', { type: 'button', class: 'btn', text: 'Choose a photo' });
+        choose.addEventListener('click', () => file.click());
+        const drop = el('div', { class: 'photo-drop' }, [el('p', { text: 'Drop a photo here, or' }), choose, file]);
+        const picture = el('canvas', { class: 'photo-preview', 'aria-label': 'The bands the layers will cut' });
+        const caption = el('p', { class: 'step-note photo-caption' });
+        const status = el('p', { class: 'step-note photo-status', role: 'status' });
+        const modes = el('div', { class: 'photo-modes', role: 'radiogroup', 'aria-label': 'Slice by' });
+        const model = el('select', { 'aria-label': 'Depth model' });
+        const model_row = el('label', { class: 'photo-row' }, [el('span', { text: 'Model' }), model]);
+        const model_note = el('p', { class: 'step-note photo-licence' });
+        const even = el('input', { type: 'checkbox' });
+        even.checked = true;
+        const even_row = el('label', { class: 'photo-check', title: 'Spreads the tones so each layer cuts about the same area' }, [even, el('span', { text: 'Even out the tones' })]);
+        const shape = el('select', { 'aria-label': 'Shape' }, [el('option', { value: 'fit', text: 'A rectangle that fits the photo' }), el('option', { value: 'round', text: 'Round' })]);
+        const count = el('input', { type: 'number', min: 3, max: 20, step: 1, value: layers, 'aria-label': 'Layers' });
+        const piece_rows = fresh ? [el('label', { class: 'photo-row' }, [el('span', { text: 'Shape' }), shape]), el('label', { class: 'photo-row' }, [el('span', { text: 'Layers' }), count])] : [];
+        const cancel = el('button', { type: 'button', class: 'btn ghost', text: 'Cancel' });
+        const go = el('button', { type: 'button', class: 'btn' });
+        cancel.addEventListener('click', () => finish(null));
+
+        const grey_for_mode = () => {
+            if (s.mode === 'ai') return s.depth.get(s.model) ?? null;
+            return { grey: grey_of(s.photo.rgba), w: s.photo.w, h: s.photo.h };
+        };
+
+        const render = () => {
+            drop.hidden = !!s.photo;
+            picture.hidden = again.hidden = !s.photo;
+            for (const b of modes.children) b.setAttribute('aria-checked', String(b.dataset.mode === s.mode));
+            model_row.hidden = model_note.hidden = s.mode !== 'ai';
+            const m = kDepthModels.find(x => x.id === s.model);
+            model_note.textContent = m.commercial
+                ? 'Small is free for any use (Apache-2.0). Downloaded once, then kept by the browser.'
+                : `${m.label} is for non-commercial use only (CC-BY-NC-4.0): fine for your own pieces, not for pieces you sell. Downloaded once, then kept by the browser.`;
+            const ready = s.photo && (s.mode !== 'ai' || s.depth.has(s.model));
+            go.textContent = s.mode === 'ai' && s.photo && !s.depth.has(s.model) ? 'Find depth' : 'Make the layers';
+            go.disabled = !s.photo || s.busy;
+            choose.disabled = s.busy;
+            if (!s.photo) return;
+            const n = fresh ? s.layers : layers;
+            if (ready) {
+                const g = grey_for_mode();
+                const r = field_raster(g.grey, g.w, g.h, { even: s.even });
+                draw_grey(picture, band_preview(base64_to_bytes(r.data), n), r.w, r.h);
+                caption.textContent = `${s.name}: the ${n} layers, front lightest. Darker parts sit further back.`;
+            } else {
+                const g = { grey: grey_of(s.photo.rgba), w: s.photo.w, h: s.photo.h };
+                const r = field_raster(g.grey, g.w, g.h);
+                draw_grey(picture, base64_to_bytes(r.data), r.w, r.h);
+                caption.textContent = `${s.name}. Find depth to see the layers.`;
+            }
+        };
+
+        for (const m of kModes) {
+            const b = el('button', { type: 'button', class: 'photo-mode', role: 'radio', 'data-mode': m.id }, [el('strong', { text: m.title }), el('span', { text: m.text })]);
+            b.addEventListener('click', () => {
+                if (s.busy) return;
+                s.mode = m.id;
+                render();
+            });
+            modes.append(b);
+        }
+        depth_backend().then(backend => {
+            for (const m of kDepthModels) {
+                const detail = m.id === 'small' ? 'fast' : m.id === 'base' ? 'more detail' : 'most detail, slow';
+                model.append(el('option', { value: m.id, text: `${m.label}: ${detail}, ${m.mb[backend]} MB${m.commercial ? '' : ', non-commercial'}` }));
+            }
+            model.value = s.model;
+        });
+        model.addEventListener('change', () => {
+            s.model = model.value;
+            render();
+        });
+        even.addEventListener('change', () => {
+            s.even = even.checked;
+            render();
+        });
+        shape.addEventListener('change', () => {
+            s.shape = shape.value;
+        });
+        count.addEventListener('change', () => {
+            s.layers = Math.min(20, Math.max(3, Math.round(Number(count.value) || layers)));
+            count.value = s.layers;
+            render();
+        });
+
+        const load = async blob => {
+            status.textContent = 'Opening the photo...';
+            try {
+                s.photo = await decode_image(blob);
+                s.name = blob.name || 'The photo';
+                s.depth.clear();
+                status.textContent = '';
+            } catch {
+                status.textContent = 'That file could not be opened as a picture. Try a JPEG or PNG.';
+            }
+            render();
+        };
+        file.addEventListener('change', () => {
+            if (file.files[0]) load(file.files[0]);
+            file.value = '';
+        });
+        for (const target of [drop, picture]) {
+            target.addEventListener('dragover', e => {
+                e.preventDefault();
+                drop.classList.add('over');
+            });
+            target.addEventListener('dragleave', () => drop.classList.remove('over'));
+            target.addEventListener('drop', e => {
+                e.preventDefault();
+                drop.classList.remove('over');
+                const f = [...(e.dataTransfer?.files ?? [])].find(x => x.type.startsWith('image/'));
+                if (f) load(f);
+            });
+        }
+        const again = el('button', { type: 'button', class: 'tool small', text: 'Choose another photo' });
+        again.addEventListener('click', () => file.click());
+
+        go.addEventListener('click', async () => {
+            if (s.mode === 'ai' && !s.depth.has(s.model)) {
+                s.busy = true;
+                render();
+                try {
+                    const found = await estimate_depth(photo_canvas(s.photo), s.model, p => {
+                        if (p.phase === 'library') status.textContent = 'Loading the depth library...';
+                        else if (p.phase === 'download') status.textContent = `Downloading the depth model: ${Math.round(p.loaded_mb)} of ${Math.round(p.total_mb)} MB`;
+                        else status.textContent = 'Finding depth...';
+                    });
+                    s.depth.set(s.model, found);
+                    status.textContent = 'Depth found. Bright is near.';
+                } catch (err) {
+                    status.textContent = `Depth could not be found: ${err.message}. Check the connection for the first download, or try Light and dark.`;
+                }
+                s.busy = false;
+                render();
+                return;
+            }
+            const g = grey_for_mode();
+            finish({
+                raster: field_raster(g.grey, g.w, g.h, { even: s.even }),
+                mode: s.mode,
+                model: s.mode === 'ai' ? s.model : null,
+                shape: s.shape,
+                layers: s.layers,
+                photo: { ...s.photo, name: s.name },
+            });
+        });
+
+        dialog.append(
+            el('h2', { text: fresh ? 'A piece from a photo' : 'Use a photo' }),
+            el('div', { class: 'photo-body' }, [
+                el('div', { class: 'photo-left' }, [drop, picture, caption, el('div', { class: 'photo-again' }, [again])]),
+                el('div', { class: 'photo-right' }, [el('h3', { class: 'sub', text: 'Slice it by' }), modes, model_row, model_note, even_row, ...piece_rows]),
+            ]),
+            status,
+            el('div', { class: 'photo-actions' }, [cancel, go]),
+        );
+        document.body.append(dialog);
+        render();
+        dialog.showModal();
+        choose.focus();
+    });
+}
+return { open_photo_flow };
+})();
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
-const { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design } = __m_core_design_js;
+const { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design, apply_palette, apply_photo } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { to_shape } = __m_sources_curves_js;
@@ -94493,10 +94988,12 @@ const { AssistantPanel } = __m_ui_assistant_panel_js;
 const { SketchBar } = __m_ui_sketch_bar_js;
 const { to_domain, simplify_line, chaikin, stroke_distance } = __m_geom_sketch_js;
 const { save_bytes, el } = __m_ui_dom_js;
+const { open_photo_flow } = __m_ui_photo_flow_js;
 // App controller: the design store, UI state, the step panel, the geometry worker and the views.
 // Every edit goes through the store (one undo step per action or slider drag). Every new design is
 // rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
 // screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
+
 
 
 
@@ -94915,6 +95412,35 @@ function start_app({ worker, preview, stage }) {
             assistant.set_open(true);
             assistant.send(text);
         },
+        // A new piece from a photo (the start screen's "From a photo").
+        async from_photo() {
+            const r = await open_photo_flow({ fresh: true, layers: 8 });
+            if (!r) return;
+            const long_mm = 300;
+            const aspect = r.raster.w / r.raster.h;
+            const outline =
+                r.shape === 'round'
+                    ? { kind: 'circle', w_mm: long_mm, h_mm: long_mm }
+                    : { kind: 'rect', w_mm: aspect >= 1 ? long_mm : Math.round(long_mm * aspect), h_mm: aspect >= 1 ? Math.round(long_mm / aspect) : long_mm };
+            const d = blank_design({ id: 'photo', title: 'piece from a photo', blank: { outline, symmetry: { kind: 'none', n: 1, phase_deg: 0 }, layers: r.layers } });
+            d.name = r.photo.name.replace(/\.[a-z0-9]+$/i, '') || 'From a photo';
+            // Light at the front to dark at the back, as the bands preview showed it.
+            apply_palette(d, 'mono');
+            state.photo = r.photo;
+            ui.layer = 0;
+            store.replace(with_library(apply_photo(d, r.raster)));
+            start.hide();
+            app.set_step('pattern');
+            offer_tour();
+        },
+        // The current piece's layers sliced from a photo (the Pattern step), as one undo step.
+        async use_photo() {
+            const r = await open_photo_flow({ fresh: false, layers: store.design.layers.length });
+            if (!r) return;
+            state.photo = r.photo;
+            edit(d => apply_photo(d, r.raster));
+            set_status('ok', `Layers sliced from ${r.photo.name}. Smoothing, zoom and the front layer's fill are in this step; "Swap light and dark" turns it inside out.`);
+        },
         show_start() {
             start.show({ continue_name: store.design.name });
         },
@@ -95103,7 +95629,12 @@ function start_app({ worker, preview, stage }) {
         });
         const button = el('button', { type: 'button', class: 'btn ghost', text: 'Import SVG layers' });
         button.addEventListener('click', () => input.click());
+        const photo = el('button', { type: 'button', class: 'btn ghost', text: 'Use a photo' });
+        photo.addEventListener('click', () => app.use_photo());
         container.append(
+            el('h3', { class: 'sub', text: 'From a photo' }),
+            el('p', { class: 'step-note', text: 'Slices a photo into these layers by light and dark, or by depth found by AI.' }),
+            photo,
             el('h3', { class: 'sub', text: 'Import' }),
             el('p', {
                 class: 'step-note',
@@ -95162,6 +95693,7 @@ function start_app({ worker, preview, stage }) {
             tour.start();
         },
         describe: (text, kind) => app.describe(text, kind),
+        from_photo: () => app.from_photo(),
     });
     // The assistant's tools work on the studio through this context (SPEC M4.5).
     assistant = new AssistantPanel(
