@@ -1,7 +1,7 @@
 // Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
 // on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
 // engine fills the circle. Returns paths in micrometres, counter-clockwise.
-import { circle_path, regular_polygon_path, circle_segments, union_all, union_fill } from '../geom/clip.js';
+import { circle_path, regular_polygon_path, circle_segments, union_all, union_fill, stroke } from '../geom/clip.js';
 import { from_flat } from '../geom/pack.js';
 import { rotate_path, replicate, rotation_order } from '../geom/symmetry.js';
 import { kMotifTypes } from '../core/schema.js';
@@ -122,11 +122,26 @@ function art_openings(m, sym) {
     return m.repeat === 'around' ? replicate(art, sym) : art;
 }
 
+// Sketch strokes (SPEC M4.5), in the fundamental domain in mm: open strokes cut as round-ended
+// slots of their width; closed strokes cut filled, or as a slot along their outline.
+function sketch_openings(m, sym) {
+    const cuts = [];
+    for (const s of m.strokes ?? []) {
+        const pts = (s.points ?? []).map(([x, y]) => ({ x: Math.round(mm_to_um(x)), y: Math.round(mm_to_um(y)) }));
+        if (pts.length < 2) continue;
+        const w = mm_to_um(Math.max(0.5, s.width_mm ?? 2));
+        if (s.closed && s.fill && pts.length >= 3) cuts.push(...union_fill([pts], false));
+        else cuts.push(...stroke([s.closed ? [...pts, pts[0]] : pts], w, 'round', 'round'));
+    }
+    return cuts.length ? replicate(union_all(cuts), sym) : [];
+}
+
 // All openings of one motif under the piece's symmetry.
 export function motif_openings(m, sym) {
     if (!(m.type in kMotifTypes)) throw new Error(`unknown motif "${m.type}"`);
     if (m.type === 'disc') return m.d_mm > 0 ? [circle_path(0, 0, mm_to_um(m.d_mm) / 2)] : [];
     if (m.type === 'art') return art_openings(m, sym);
+    if (m.type === 'sketch') return sketch_openings(m, sym);
     // Lattices and frets are built in the fundamental domain, then replicated.
     if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
     if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);

@@ -67,12 +67,17 @@ export function clean_motif(input, design, layer) {
         motif.paths = input.paths;
         motif.src_w_mm = input.src_w_mm;
     }
+    if (type === 'sketch' && 'strokes' in input) {
+        const ok = Array.isArray(input.strokes) && input.strokes.every(s => Array.isArray(s?.points) && s.points.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)));
+        if (!ok) return { error: 'sketch.strokes must be a list of { points: [[x, y], ...], width_mm, closed, fill }' };
+        motif.strokes = input.strokes.map(s => ({ closed: !!s.closed, fill: !!s.fill, width_mm: Math.min(20, Math.max(0.5, Number(s.width_mm) || 2)), points: s.points.map(([x, y]) => [Number(x), Number(y)]) }));
+    }
     if (type === 'shape' && 'nodes' in input) {
         const bad = check_nodes(input.nodes);
         if (bad) return { error: `shape.${bad}` };
         motif.nodes = input.nodes.map(n => Object.fromEntries(['x', 'y', 'ix', 'iy', 'ox', 'oy'].map(k => [k, Number(n[k])])));
     }
-    const known = new Set(['type', ...kMotifTypes[type].params, 'cells', 'nodes', 'paths', 'src_w_mm']);
+    const known = new Set(['type', ...kMotifTypes[type].params, 'cells', 'nodes', 'paths', 'src_w_mm', 'strokes']);
     for (const key of Object.keys(input)) if (!known.has(key)) notes.push(`${type}: ignored unknown field ${key}`);
     return { motif, notes };
 }
@@ -195,6 +200,11 @@ function motif_summary(m) {
     const out = {};
     for (const [k, v] of Object.entries(m)) {
         if (k === 'cells') continue;
+        if (k === 'strokes') {
+            // The model reads the strokes to clean them up: points to 0.5 mm.
+            out.strokes = v.map(s => ({ ...s, points: s.points.map(([x, y]) => [Math.round(x * 2) / 2, Math.round(y * 2) / 2]) }));
+            continue;
+        }
         if (k === 'paths') {
             out.contours = v.length;
             continue;

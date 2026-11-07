@@ -37,6 +37,9 @@ export function new_motif(type, design, layer) {
             return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
         case 'circuit':
             return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
+        case 'sketch':
+            // Strokes come from the sketch tools in the Layer view.
+            return { type, strokes: [] };
         case 'art':
             // Artwork comes from SVG (the assistant's draw_artwork, or a logo); empty until then.
             return { type, x_mm: 0, y_mm: 0, width_mm: v(0.5), angle_deg: 0, repeat: 'once', paths: [], src_w_mm: 0 };

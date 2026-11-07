@@ -25,6 +25,7 @@ export const kMotifTypes = {
     lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
     art: { label: 'Artwork', params: ['x_mm', 'y_mm', 'width_mm', 'angle_deg', 'repeat'], replicated: false },
+    sketch: { label: 'Sketch', params: [], replicated: true },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
