@@ -7,6 +7,7 @@ import {
     difference,
     intersect,
     rectClip,
+    simplifyPaths,
     inflatePaths,
     area,
     areaPaths,
@@ -110,6 +111,20 @@ const kJoin = { round: JoinType.Round, miter: JoinType.Miter, square: JoinType.S
 export function offset(paths, delta_um, join = 'round', tol_um = kChordTolUm, miter_limit = 2.0) {
     if (!(join in kJoin)) throw new Error(`offset: unknown join "${join}"`);
     return inflatePaths(paths, delta_um, kJoin[join], EndType.Polygon, miter_limit, tol_um);
+}
+
+const kEnd = { square: EndType.Square, round: EndType.Round, butt: EndType.Butt };
+
+// Thickens open polylines into closed outlines width_um wide. Square caps and mitre joins keep
+// orthogonal lattice corners crisp; round caps suit traces.
+export function stroke(polylines, width_um, cap = 'square', join = 'miter', tol_um = kChordTolUm) {
+    if (!polylines.length) return [];
+    return inflatePaths(polylines, width_um / 2, kJoin[join], kEnd[cap], 4.0, tol_um);
+}
+
+// Removes vertices that deviate less than epsilon_um from the path (closed paths).
+export function simplify_paths(paths, epsilon_um) {
+    return simplifyPaths(paths, epsilon_um, true);
 }
 
 export function area_mm2(paths) {

@@ -61,3 +61,57 @@ export function replicate(paths, sym) {
     for (const m of symmetry_matrices(sym)) for (const path of paths) out.push(transform_path(path, m));
     return out;
 }
+
+const TAU = 2 * Math.PI;
+
+// The fundamental domain as an angular range [a0, a1) (radians) plus a point test.
+export function fundamental_domain(sym) {
+    const n = rotation_order(sym);
+    const norm = a => ((a % TAU) + TAU) % TAU;
+    switch (sym.kind) {
+        case 'rot':
+            return { a0: 0, a1: TAU / n, contains: p => norm(Math.atan2(p.y, p.x)) < TAU / n - 1e-12 };
+        case 'dihedral':
+            return { a0: 0, a1: Math.PI / n, contains: p => norm(Math.atan2(p.y, p.x)) < Math.PI / n - 1e-12 };
+        case 'mirror_x':
+            return { a0: -Math.PI / 2, a1: Math.PI / 2, contains: p => p.x >= 0 };
+        case 'mirror_xy':
+            return { a0: 0, a1: Math.PI / 2, contains: p => p.x >= 0 && p.y >= 0 };
+        default:
+            return { a0: -Math.PI, a1: Math.PI, contains: () => true };
+    }
+}
+
+// Maps a point (any unit) into the fundamental domain: the inverse of the copy that holds it, phase
+// removed first. Edits on any copy land on the domain copy, and fields fold the same way.
+export function fold_point(p, sym) {
+    const ph = (-(sym.phase_deg ?? 0) * Math.PI) / 180;
+    const x = p.x * Math.cos(ph) - p.y * Math.sin(ph);
+    const y = p.x * Math.sin(ph) + p.y * Math.cos(ph);
+    switch (sym.kind) {
+        case 'mirror_x':
+            return { x: Math.abs(x), y };
+        case 'mirror_xy':
+            return { x: Math.abs(x), y: Math.abs(y) };
+        case 'rot':
+        case 'dihedral': {
+            const wedge = TAU / rotation_order(sym);
+            let a = ((Math.atan2(y, x) % wedge) + wedge) % wedge;
+            if (sym.kind === 'dihedral' && a > wedge / 2) a = wedge - a;
+            const r = Math.hypot(x, y);
+            return { x: r * Math.cos(a), y: r * Math.sin(a) };
+        }
+        default:
+            return { x, y };
+    }
+}
+
+// How many angular sectors a polar ring needs so the domain's edges fall on cell edges.
+export function sector_multiple(sym) {
+    const n = rotation_order(sym);
+    if (sym.kind === 'dihedral') return 2 * n;
+    if (sym.kind === 'rot') return n;
+    if (sym.kind === 'mirror_xy') return 4;
+    if (sym.kind === 'mirror_x') return 2;
+    return 1;
+}
