@@ -29,6 +29,7 @@ export const kStyles = {
     classic: kTypes,
     lattice: ['lattice', 'fret', 'lattice', 'window'],
     circuit: ['circuit'],
+    mandala: ['lotus', 'ogee', 'ruyi', 'scroll', 'petal', 'lotus', 'ring', 'window'],
 };
 
 // The share of the piece one copy of the fundamental domain covers.
@@ -131,6 +132,7 @@ function make_bands(rng, inner_mm, from_mm, count, types, seed) {
             lattice_seed: extra.int(0, 9999),
             open: extra.range(0.5, 1),
             cell_div: extra.int(2, 4),
+            turns: extra.range(0.9, 1.6),
         };
         r += span;
         return band;
@@ -182,6 +184,35 @@ function band_motif(band, n, depth, k, sym) {
                 w0_mm: r1(w1 * band.taper),
                 w1_mm: r1(w1),
                 ...common,
+            };
+        }
+        case 'lotus':
+        case 'ogee':
+        case 'ruyi': {
+            // Symmetric about their axis, so they sit on mirror lines like petals.
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            const slim = band.type === 'ogee' ? 0.6 : 0.9;
+            return {
+                type: band.type,
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * (band.type === 'ogee' ? 0.8 : 0.85), length * slim) * s),
+                ...common,
+            };
+        }
+        case 'scroll': {
+            // Not symmetric: under a kaleidoscope it sits mid-way between mirror lines and
+            // shares the wedge with its mirror image, so it takes half the width.
+            const dihedral = sym.kind === 'dihedral';
+            const length = span * 0.85 * (0.6 + 0.4 * s);
+            return {
+                type: 'scroll',
+                r_mm: r1(rc),
+                length_mm: r1(length),
+                width_mm: r1(Math.min(arc * (dihedral ? 0.36 : 0.7), length * 0.7) * s),
+                turns: r2(band.turns),
+                mult: band.mult,
+                angle_deg: r1(angle_deg + (dihedral ? 90 / copies : 0)),
             };
         }
         case 'lattice': {

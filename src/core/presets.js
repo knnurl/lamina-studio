@@ -47,6 +47,19 @@ export const kPresets = [
             }),
     },
     {
+        id: 'mandala',
+        name: 'Mandala',
+        make: () =>
+            preset('Mandala', {
+                layers: 10,
+                outline: { kind: 'circle', w_mm: 290 },
+                symmetry: { kind: 'dihedral', n: 12 },
+                palette: 'ember',
+                seed: 7, // from a rendered sweep of seeds 1 to 12: a lotus ring inside a ring of arc slots
+                style: 'mandala',
+            }),
+    },
+    {
         id: 'orb',
         name: 'Orb',
         make: () =>
