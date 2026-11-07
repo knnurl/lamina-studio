@@ -71,27 +71,55 @@ export function hole_d_mm(design) {
 function place_dowels(design, built) {
     const reg = design.registration;
     const r_hole = mm_to_um(hole_d_mm(design) / 2);
-    // Sparsest layer first keeps every intersection small. (Windowed intersections were tried and
-    // measured slower: the overlapping windows process about twice the area.)
+    const inset = r_hole + mm_to_um(kDowelEdgeMm);
+    // Sparsest layer first keeps every intersection small.
     const order = [...built].sort((a, b) => area_mm2(a.material) - area_mm2(b.material));
-    let shared = order[0].material;
-    for (const l of order.slice(1)) {
-        if (!shared.length) break;
-        shared = intersect_paths(shared, l.material);
-    }
-    const region = shared.length ? offset(shared, -(r_hole + mm_to_um(kDowelEdgeMm)), 'round') : [];
-    const dowels = [];
-    for (const angle_deg of dowel_angles(reg.count)) {
-        // Search outwards from the target angle until the ray meets usable material.
+    const shared_in = rect => {
+        let shared = rect ? clip_to_rect(order[0].material, ...rect) : order[0].material;
+        for (const l of order.slice(1)) {
+            if (!shared.length) break;
+            shared = intersect_paths(shared, rect ? clip_to_rect(l.material, ...rect) : l.material);
+        }
+        return shared.length ? offset(shared, -inset, 'round') : [];
+    };
+    // Search outwards from the target angle (up to 15 degrees each way) until a ray meets usable
+    // material, taking its outermost run.
+    const search = (region, angle_deg) => {
         for (let step = 0; step <= 30; step++) {
             const a = (angle_deg + (step % 2 ? 1 : -1) * Math.ceil(step / 2)) * kDeg;
             const runs = ray_intervals(region, a);
             if (runs.length) {
                 const [t0, t1] = runs[runs.length - 1];
-                dowels.push(at(a, (t0 + t1) / 2));
-                break;
+                return at(a, (t0 + t1) / 2);
             }
         }
+        return null;
+    };
+    // First in a small window around each target's sector over the outer part of the piece: dense
+    // layers (lattices) make whole-layer intersections slow. Then over whole layers if that fails,
+    // and after one miss the windows are skipped: ornate art with no shared outer band (the
+    // mandala) would otherwise pay for every window and then the whole layers anyway.
+    const { x0, y0, x1, y1 } = bounds_of(design);
+    const R = Math.max(x1 - x0, y1 - y0) / 2;
+    const window_for = angle_deg => {
+        const pts = [];
+        for (const da of [-17, 0, 17]) {
+            for (const f of [0.5, 1.05]) {
+                const a = (angle_deg + da) * kDeg;
+                pts.push({ x: f * R * Math.cos(a), y: f * R * Math.sin(a) });
+            }
+        }
+        return [Math.min(...pts.map(p => p.x)), Math.min(...pts.map(p => p.y)), Math.max(...pts.map(p => p.x)), Math.max(...pts.map(p => p.y))];
+    };
+    let whole = null;
+    const dowels = [];
+    for (const angle_deg of dowel_angles(reg.count)) {
+        let p = whole ? null : search(shared_in(window_for(angle_deg)), angle_deg);
+        if (!p) {
+            whole = whole ?? shared_in(null);
+            p = search(whole, angle_deg);
+        }
+        if (p) dowels.push(p);
     }
     return { dowels, r_hole };
 }
@@ -177,6 +205,18 @@ function spacer_parts(design, dowels, r_hole, k) {
     return { kind: 'puck', gap: k, copies: copies * dowels.length, paths: puck };
 }
 
+const kLayerCacheSize = 128;
+const hole_cache = new Map();
+const id_cache = new Map();
+
+function cache_get(map, key, make) {
+    if (map.has(key)) return map.get(key);
+    const value = make();
+    map.set(key, value);
+    if (map.size > kLayerCacheSize) map.delete(map.keys().next().value);
+    return value;
+}
+
 // The geometric part of registration: dowels, each layer's material with its dowel holes, and
 // engraved IDs. A pure function of the layers' geometry and the registration settings, so the
 // caller can cache it. Does not modify built.
@@ -192,13 +232,23 @@ export function register_geometry(design, built) {
     }
     const holes = dowels.map(p => circle_path(p.x, p.y, r_hole, { tol_um: 5, fit: 'outside' }));
     const keep_out = dowels.map(p => circle_path(p.x, p.y, r_hole + mm_to_um(kDowelEdgeMm)));
-    out.materials = built.map((l, k) => (holes.length && (k > 0 || reg.through_front) ? subtract(l.material, holes) : l.material));
+    // Per layer, holes depend on that layer and the dowels, and an ID on that layer, the one in
+    // front and the dowels: cached by those keys (when the layers carry build_design keys), so
+    // editing one layer redoes only it and the layer behind.
+    const dkey = `${JSON.stringify(dowels)}|${r_hole}|${reg.through_front}`;
+    const per_layer = (cache, key, make) => (key ? cache_get(cache, key, make) : make());
+    out.materials = built.map((l, k) =>
+        per_layer(hole_cache, l.key && `${l.key}|${dkey}|${k > 0}`, () =>
+            holes.length && (k > 0 || reg.through_front) ? subtract(l.material, holes) : l.material,
+        ),
+    );
     out.ids = built.map(() => []);
     if (reg.ids) {
         const bounds = bounds_of(design);
         built.forEach((l, k) => {
             if (k === 0) return;
-            const strokes = place_id(`L${k + 1} ^`, out.materials[k], out.materials[k - 1], keep_out, bounds);
+            const key = l.key && built[k - 1].key && `${k}|${l.key}|${built[k - 1].key}|${dkey}|${JSON.stringify(design.piece.outline)}`;
+            const strokes = per_layer(id_cache, key, () => place_id(`L${k + 1} ^`, out.materials[k], out.materials[k - 1], keep_out, bounds));
             if (strokes) out.ids[k] = strokes;
             else out.warnings.push({ id: 'W-05', layer: k, message: `Layer ${k + 1}: no hidden spot large enough for its engraved ID.` });
         });
