@@ -1,8 +1,9 @@
-// App controller: the design store, UI state, header and panels, the geometry worker and the
-// views. Every edit goes through the store (one undo step per action or slider drag). Every new
-// design is rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced.
+// App controller: the design store, UI state, the step panel, the geometry worker and the views.
+// Every edit goes through the store (one undo step per action or slider drag). Every new design is
+// rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
+// screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
 import { Store } from '../core/store.js';
-import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of } from '../core/design.js';
+import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of, base_design } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { to_shape } from '../sources/curves.js';
@@ -17,11 +18,15 @@ import { build_header } from './header.js';
 import { build_make_extras } from './make_panel.js';
 import { make_checks_view } from './checks_view.js';
 import { build_calibrate_panel } from './calibrate_panel.js';
-import { set_status } from './shell.js';
+import { set_status, kSteps, show_step, panel_parts } from './shell.js';
+import { LayerStrip } from './layer_strip.js';
+import { StartScreen } from './start_screen.js';
+import { Tour } from './tour.js';
 import { save_bytes, el } from './dom.js';
 
 const kDesignKey = 'lamina-design';
-const kTierKey = 'lamina-tier';
+const kMoreKey = 'lamina-more'; // which steps have "More options" open
+const kTourKey = 'lamina-tour-seen';
 const kMaterialsKey = 'lamina-materials';
 
 // Measured materials kept in this browser, so new designs start measured.
@@ -102,6 +107,16 @@ function new_motif(type, design, layer) {
     }
 }
 
+// A blank piece of a start-screen kind: plain layers in its outline and symmetry.
+function blank_design(kind) {
+    const d = base_design(kind.blank.layers);
+    d.name = `New ${kind.title.toLowerCase()}`;
+    Object.assign(d.piece.outline, kind.blank.outline);
+    d.piece.symmetry = { ...kind.blank.symmetry };
+    d.generator.style = { round: 'mandala', panel: 'circuit' }[kind.id] ?? 'classic';
+    return d;
+}
+
 const slug = name => (name || 'design').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'design';
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -130,12 +145,20 @@ function status_line(design, built, checks, pending) {
 }
 
 export function start_app({ worker, preview, stage }) {
-    const store = new Store(restore_design() ?? with_library(preset_by_id('orb')));
+    const restored = restore_design();
+    const store = new Store(restored ?? with_library(preset_by_id('orb')));
+    let saved_more = [];
+    try {
+        saved_more = JSON.parse(storage_get(kMoreKey) ?? '[]');
+    } catch {
+        saved_more = [];
+    }
     const ui = {
         layer: 0,
+        step: 'pattern',
         view: '3d',
-        tier: storage_get(kTierKey) === 'advanced' ? 'advanced' : 'basic',
         locks: new Set(),
+        more: new Set(Array.isArray(saved_more) ? saved_more : []),
     };
     const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
@@ -145,6 +168,9 @@ export function start_app({ worker, preview, stage }) {
     let sheets_view;
     let checks_view;
     let unmeasured;
+    let strip;
+    let start;
+    let tour;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -212,12 +238,29 @@ export function start_app({ worker, preview, stage }) {
 
     function render_ui() {
         ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
+        show_step(ui.step);
         panels.render();
         header.refresh();
         for (const tab of document.querySelectorAll('#tabs .tab')) {
             tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
         }
         render_layer_view();
+        strip.show(store.design, state.built?.layers, ui.layer);
+    }
+
+    // After the first piece opens, the tour is offered once, in a card over the preview.
+    function offer_tour() {
+        if (storage_get(kTourKey)) return;
+        storage_set(kTourKey, '1');
+        const take = el('button', { type: 'button', class: 'btn', text: 'Take the one-minute tour' });
+        const later = el('button', { type: 'button', class: 'btn ghost', text: 'Not now' });
+        const card = el('div', { class: 'tour-offer', role: 'dialog', 'aria-label': 'Tour' }, [el('p', { text: 'New to Lamina? A one-minute tour shows where everything is.' }), el('div', { class: 'tour-buttons' }, [later, take])]);
+        take.addEventListener('click', () => {
+            card.remove();
+            tour.start();
+        });
+        later.addEventListener('click', () => card.remove());
+        document.querySelector('.view').append(card);
     }
 
     const app = {
@@ -302,6 +345,38 @@ export function start_app({ worker, preview, stage }) {
         select_layer(k) {
             ui.layer = k;
             render_ui();
+        },
+        // A step opens the view it needs; the view tabs still switch by hand.
+        set_step(step) {
+            ui.step = step;
+            panel_parts().body.scrollTop = 0;
+            app.set_view(kSteps.find(s => s.id === step).view);
+        },
+        go_step(delta) {
+            const i = kSteps.findIndex(s => s.id === ui.step) + delta;
+            if (i >= 0 && i < kSteps.length) app.set_step(kSteps[i].id);
+        },
+        toggle_more(key) {
+            if (ui.more.has(key)) ui.more.delete(key);
+            else ui.more.add(key);
+            storage_set(kMoreKey, JSON.stringify([...ui.more].filter(k => !k.startsWith('motif:'))));
+            render_ui();
+        },
+        show_start() {
+            start.show({ continue_name: store.design.name });
+        },
+        open_preset(id) {
+            app.load_preset(id);
+            start.hide();
+            app.set_step('pattern');
+            offer_tour();
+        },
+        start_blank(kind) {
+            ui.layer = 0;
+            store.replace(with_library(blank_design(kind)));
+            start.hide();
+            app.set_step('piece');
+            offer_tour();
         },
         show_layer(k) {
             ui.layer = k;
@@ -389,11 +464,6 @@ export function start_app({ worker, preview, stage }) {
             if (ui.locks.has(id)) ui.locks.delete(id);
             else ui.locks.add(id);
         },
-        set_tier(tier) {
-            ui.tier = tier;
-            storage_set(kTierKey, tier);
-            render_ui();
-        },
         set_seed(seed) {
             edit(d => generate_stack(d, seed, { lock_n: ui.locks.has('symmetry.n') }));
         },
@@ -480,8 +550,8 @@ export function start_app({ worker, preview, stage }) {
         container.append(button);
     };
     panels = new Panels(app, {
-        piece: import_extras,
-        layers: layer_extras,
+        pattern: import_extras,
+        look: layer_extras,
         make: build_make_extras(worker, checks_view, () => app.export_zip(), container => build_calibrate_panel(container, app)),
     });
     header = build_header(app);
@@ -490,6 +560,37 @@ export function start_app({ worker, preview, stage }) {
             if (!tab.disabled) app.set_view(tab.dataset.view);
         });
     }
+    for (const b of document.querySelectorAll('[data-step-go]')) b.addEventListener('click', () => app.set_step(b.dataset.stepGo));
+    panel_parts().back.addEventListener('click', () => app.go_step(-1));
+    panel_parts().next.addEventListener('click', () => app.go_step(1));
+    strip = new LayerStrip(document.getElementById('layer-strip'), { on_select: k => app.select_layer(k) });
+    tour = new Tour(document.getElementById('tour'));
+    const svg_input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
+    svg_input.addEventListener('change', () => {
+        if (svg_input.files.length) app.import_svg(svg_input.files);
+        svg_input.value = '';
+    });
+    document.body.append(svg_input);
+    start = new StartScreen(document.getElementById('start'), {
+        build: async design => (await worker.call('build', design)).layers.map(unpack_layer),
+        open_preset: id => app.open_preset(id),
+        start_blank: kind => app.start_blank(kind),
+        close: () => start.hide(),
+        open_file: () => {
+            start.hide();
+            header.open_file();
+        },
+        import_svg: () => {
+            start.hide();
+            app.set_step('pattern');
+            svg_input.click();
+        },
+        tour: () => {
+            start.hide();
+            storage_set(kTourKey, '1');
+            tour.start();
+        },
+    });
 
     // Builds run latest-wins; the slow checks follow once edits pause.
     let busy = false;
@@ -508,6 +609,7 @@ export function start_app({ worker, preview, stage }) {
             preview.show(design, state.built.layers);
             render2d.show(design, state.built.layers);
             render_layer_view();
+            strip.show(store.design, state.built.layers, ui.layer);
             schedule_sheets();
             render_status();
             clearTimeout(check_timer);
@@ -554,7 +656,9 @@ export function start_app({ worker, preview, stage }) {
         event.preventDefault();
     });
 
-    render_ui();
+    app.set_step(ui.step);
     build(store.design);
+    // A first visit starts on the start screen; a returning visitor opens their last design.
+    if (!restored) start.show({ first_visit: true });
     return app;
 }

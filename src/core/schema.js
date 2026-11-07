@@ -272,7 +272,7 @@ export const SCHEMA = [
     {
         id: 'symmetry.kind',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Symmetry',
         type: 'select',
         options: [
@@ -287,7 +287,7 @@ export const SCHEMA = [
     {
         id: 'symmetry.n',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Repeats',
         type: 'range',
         min: 2,
@@ -302,7 +302,7 @@ export const SCHEMA = [
     {
         id: 'symmetry.phase_deg',
         scope: 'piece',
-        panel: 'pattern',
+        panel: 'piece',
         label: 'Turn the pattern',
         type: 'range',
         min: 0,

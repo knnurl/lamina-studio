@@ -15,25 +15,38 @@
 <body>
 <div class="app">
   <header class="top">
-    <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
-    <span class="chip" title="Current milestone">M4 done</span>
-    <div class="tools" id="tools-left"></div>
+    <h1 class="mark">Lamina</h1>
+    <nav class="steps" id="steps" aria-label="Steps"></nav>
     <div class="spacer"></div>
     <div class="tools" id="tools-right"></div>
     <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
     </button>
   </header>
-  <aside class="side" id="side" aria-label="Design steps"></aside>
+  <aside class="side" id="panel" aria-labelledby="panel-title">
+    <div class="panel-head">
+      <span class="panel-kicker" id="panel-kicker"></span>
+      <h2 class="panel-title" id="panel-title"></h2>
+      <p class="panel-guide" id="panel-guide"></p>
+    </div>
+    <div class="panel-body" id="panel-body"></div>
+    <div class="panel-foot">
+      <button class="btn ghost" id="panel-back" type="button">‹ Back</button>
+      <button class="btn" id="panel-next" type="button">Next</button>
+    </div>
+  </aside>
   <main class="view">
     <nav class="tabs" id="tabs" role="tablist" aria-label="Views"></nav>
     <div class="stage" id="stage"></div>
+    <div class="layer-strip" id="layer-strip" role="listbox" aria-label="Layers, front first"></div>
   </main>
   <footer class="status" role="status">
     <span class="light" id="status-light" data-level="busy"></span>
     <span id="status-text">Starting</span>
   </footer>
 </div>
+<div class="start" id="start" hidden></div>
+<div class="tour" id="tour" hidden></div>
 <script type="text/plain" id="lamina-worker-src">/*WORKER*/</script>
 <script>/*APP*/</script>
 </body>

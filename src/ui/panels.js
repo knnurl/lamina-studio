@@ -1,116 +1,143 @@
-// Sidebar step panels, generated from the registry (SPEC 11). Each step rebuilds only when its
-// structure changes (layer count, selected layer, motif list, Basic or Advanced); otherwise its
-// controls refresh in place, so a slider keeps focus while it is dragged.
+// The step panel (SPEC 11): one step at a time, generated from the registry. Each step shows its
+// essential controls; entries marked advanced sit in a "More options" fold at the end, and motif
+// cards fold their own advanced parameters. The panel rebuilds only when its structure changes
+// (step, layer, motif list, folds); otherwise controls refresh in place, so a slider keeps focus
+// while it is dragged.
 import { SCHEMA, kMotifTypes, kMotifParams } from '../core/schema.js';
 import { kCurveTypes } from '../sources/curves.js';
 import { options_for, read_param } from '../core/actions.js';
 import { make_control } from './controls.js';
 import { el } from './dom.js';
-import { step_body } from './shell.js';
+import { panel_parts } from './shell.js';
 
-const kSteps = ['piece', 'material', 'layers', 'pattern', 'structure', 'light', 'make'];
+// Registry panels shown in each step, with the sub-heading over each group.
+const kGroups = {
+    piece: [{ panel: 'piece' }],
+    pattern: [{ panel: 'pattern' }],
+    look: [
+        { panel: 'material', heading: () => 'Every layer' },
+        { panel: 'layers', heading: k => `Layer ${k + 1}` },
+        { panel: 'light', heading: () => 'Light' },
+    ],
+    structure: [
+        { panel: 'structure', scope: 'layer', heading: k => `Layer ${k + 1}` },
+        { panel: 'structure', scope: 'design', heading: () => 'Dowels and spacers' },
+    ],
+    make: [{ panel: 'make' }],
+};
 
-function visible(entry, design, layer, tier) {
-    if (entry.tier === 'advanced' && tier !== 'advanced') return false;
-    return !entry.show_if || entry.show_if(design, layer);
-}
+const shown_if = (entry, design, layer) => !entry.show_if || entry.show_if(design, layer);
 
 export class Panels {
-    // app: { design, ui: { layer, tier, locks }, set_param, set_motif_param, add_motif,
-    //        remove_motif, set_layer_locked, select_layer }
-    // extras: { make: (container) => void } fills fixed content after a step's controls.
+    // app: { design, ui: { step, layer, locks, more }, set_param, set_motif_param, add_motif,
+    //        remove_motif, convert_motif, set_layer_locked, set_seed, randomise, toggle_more }
+    // extras: { [step]: (container) => void } fills fixed content after a step's controls.
     constructor(app, extras = {}) {
         this.app_ = app;
         this.extras_ = extras;
-        this.sig_ = {};
-        this.refreshers_ = {};
+        this.sig_ = null;
+        this.refreshers_ = [];
     }
 
-    render() {
-        for (const step of kSteps) this.render_step_(step);
-    }
-
-    signature_(step) {
+    signature_() {
         const d = this.app_.design;
-        const { layer: k, tier } = this.app_.ui;
+        const { step, layer: k, more } = this.app_.ui;
         const layer = d.layers[k];
-        const shown = SCHEMA.filter(e => e.panel === step && visible(e, d, layer, tier)).map(e => e.id);
-        const parts = [tier, shown.join(',')];
-        if (step === 'piece') parts.push(d.piece.outline.custom ? 'custom' : '');
-        if (step === 'layers') parts.push(d.layers.length, k);
-        if (step === 'pattern') parts.push(k, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
-        if (step === 'structure') parts.push(k);
+        const panels = kGroups[step].map(g => g.panel);
+        const shown = SCHEMA.filter(e => panels.includes(e.panel) && shown_if(e, d, layer)).map(e => e.id);
+        const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(',')];
+        if (step === 'pattern') parts.push(layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
     }
 
-    render_step_(step) {
-        const sig = this.signature_(step);
-        if (sig === this.sig_[step]) {
-            for (const refresh of this.refreshers_[step]) refresh();
+    render() {
+        const sig = this.signature_();
+        if (sig === this.sig_) {
+            for (const refresh of this.refreshers_) refresh();
             return;
         }
-        this.sig_[step] = sig;
-        const body = step_body(step);
+        this.sig_ = sig;
+        const body = panel_parts().body;
+        const keep_scroll = body.scrollTop;
         body.textContent = '';
-        const refreshers = (this.refreshers_[step] = []);
-        const d = this.app_.design;
-        const { layer: k, tier } = this.app_.ui;
+        this.refreshers_ = [];
+        const app = this.app_;
+        const d = app.design;
+        const { step, layer: k } = app.ui;
+        const advanced = [];
 
-        if (step === 'layers') {
-            const strip = this.layer_strip_();
-            body.append(strip.el);
-            refreshers.push(strip.refresh);
+        if (step === 'pattern') this.seed_row_(body);
+        for (const group of kGroups[step]) {
+            const entries = SCHEMA.filter(e => e.panel === group.panel && (!group.scope || e.scope === group.scope) && shown_if(e, d, d.layers[k]));
+            const basic = entries.filter(e => e.tier !== 'advanced');
+            advanced.push(...entries.filter(e => e.tier === 'advanced'));
+            if (!basic.length) continue;
+            if (group.heading) body.append(el('h3', { class: 'sub', text: group.heading(k) }));
+            for (const entry of basic) body.append(this.control_(entry));
         }
-        const heading = { layers: `Layer ${k + 1}`, pattern: 'Symmetry', structure: `Islands on layer ${k + 1}` }[step];
-        if (heading) body.append(el('h3', { class: 'sub', text: heading }));
-
-        for (const entry of SCHEMA.filter(e => e.panel === step && visible(e, d, d.layers[k], tier))) {
-            const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, d) } : entry;
-            const state = entry.lockable
-                ? { locked: () => this.app_.ui.locks.has(entry.id), toggle_lock: () => this.app_.toggle_lock(entry.id) }
-                : {};
-            const control = make_control(spec, (value, { coalesce }) => this.app_.set_param(entry, value, coalesce), state);
-            body.append(control.el);
-            const refresh = () => control.refresh(read_param(entry, this.app_.design, this.app_.ui.layer));
-            refresh();
-            refreshers.push(refresh);
-        }
-
-        if (step === 'pattern') this.motif_editor_(body, refreshers);
+        if (step === 'pattern') this.motif_editor_(body);
         if (this.extras_[step]) this.extras_[step](body);
+        if (advanced.length) {
+            const box = this.fold_(body, step, 'More options', 'Fewer options');
+            for (const entry of advanced) box?.append(this.control_(entry));
+        }
+        body.scrollTop = keep_scroll;
     }
 
-    layer_strip_() {
-        const d = this.app_.design;
-        const strip = el('div', { class: 'layer-strip', role: 'listbox', 'aria-label': 'Layers, front first' });
-        d.layers.forEach((layer, k) => {
-            const chip = el('button', {
-                type: 'button',
-                class: 'layer-chip',
-                role: 'option',
-                'aria-selected': String(k === this.app_.ui.layer),
-                title: `Layer ${k + 1}${k === 0 ? ' (front)' : k === d.layers.length - 1 ? ' (back)' : ''}`,
-            });
-            chip.append(el('span', { class: 'swatch' }), el('span', { text: String(k + 1) }));
-            chip.firstChild.style.background = layer.finish.colour;
-            chip.addEventListener('click', () => this.app_.select_layer(k));
-            strip.append(chip);
-        });
-        const refresh = () => {
-            [...strip.children].forEach((chip, k) => {
-                chip.firstChild.style.background = this.app_.design.layers[k].finish.colour;
-            });
+    control_(entry) {
+        const app = this.app_;
+        const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, app.design) } : entry;
+        const state = entry.lockable ? { locked: () => app.ui.locks.has(entry.id), toggle_lock: () => app.toggle_lock(entry.id) } : {};
+        const control = make_control(spec, (value, { coalesce }) => app.set_param(entry, value, coalesce), state);
+        const refresh = () => control.refresh(read_param(entry, app.design, app.ui.layer));
+        refresh();
+        this.refreshers_.push(refresh);
+        return control.el;
+    }
+
+    // A fold toggled by key (kept in ui.more); returns its content box when open, else null.
+    fold_(parent, key, open_text, close_text) {
+        const open = this.app_.ui.more.has(key);
+        const toggle = el('button', { type: 'button', class: 'more-toggle', 'aria-expanded': String(open), text: open ? close_text : open_text });
+        toggle.addEventListener('click', () => this.app_.toggle_more(key));
+        parent.append(toggle);
+        if (!open) return null;
+        const box = el('div', { class: 'more' });
+        parent.append(box);
+        return box;
+    }
+
+    // Randomise and the seed, at the top of the Pattern step.
+    seed_row_(body) {
+        const app = this.app_;
+        const seed = el('input', { type: 'number', class: 'seed', min: 0, step: 1, 'aria-label': 'Seed' });
+        seed.addEventListener('change', () => app.set_seed(Math.max(0, Math.round(Number(seed.value) || 0))));
+        const step_button = (text, title, delta) => {
+            const b = el('button', { type: 'button', class: 'tool', title, 'aria-label': title, text });
+            b.addEventListener('click', () => app.set_seed(Math.max(0, app.design.seed + delta)));
+            return b;
         };
-        return { el: strip, refresh };
+        const randomise = el('button', {
+            type: 'button',
+            class: 'btn',
+            text: 'Randomise',
+            title: 'A new pattern from a random seed. Tries up to 10 and keeps the first with no fatal problem. Locked values and kept layers stay.',
+        });
+        randomise.addEventListener('click', () => app.randomise());
+        body.append(el('div', { class: 'seed-row' }, [randomise, el('div', { class: 'seed-group' }, [step_button('‹', 'Previous seed', -1), seed, step_button('›', 'Next seed', 1)])]));
+        const refresh = () => {
+            if (document.activeElement !== seed) seed.value = app.design.seed;
+        };
+        refresh();
+        this.refreshers_.push(refresh);
     }
 
-    motif_editor_(body, refreshers) {
+    motif_editor_(body) {
         const app = this.app_;
         const k = app.ui.layer;
-        const tier = app.ui.tier;
         const layer = app.design.layers[k];
-        body.append(el('h3', { class: 'sub', text: `Pattern of layer ${k + 1}` }));
+        body.append(el('h3', { class: 'sub', text: `Layer ${k + 1}` }));
 
         if (layer.source.kind === 'svg') {
             const src = layer.source;
@@ -127,23 +154,19 @@ export class Panels {
                 value => app.set_layer_fill_rule(value),
             );
             rule.refresh(src.fill_rule ?? 'evenodd');
-            refreshers.push(() => rule.refresh(app.design.layers[app.ui.layer].source.fill_rule ?? 'evenodd'));
+            this.refreshers_.push(() => rule.refresh(app.design.layers[app.ui.layer].source.fill_rule ?? 'evenodd'));
             const remove = el('button', { type: 'button', class: 'btn ghost', text: 'Remove artwork' });
             remove.addEventListener('click', () => app.remove_artwork());
             body.append(rule.el, remove);
             return;
         }
 
-        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value =>
-            app.set_layer_locked(value),
-        );
+        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value => app.set_layer_locked(value));
         body.append(keep.el);
-        refreshers.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
+        this.refreshers_.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
         keep.refresh(layer.locked);
 
-        if (!layer.source.motifs.length) {
-            body.append(el('p', { class: 'step-note', text: 'No openings: this layer is solid.' }));
-        }
+        if (!layer.source.motifs.length) body.append(el('p', { class: 'step-note', text: 'No openings: this layer is solid.' }));
         layer.source.motifs.forEach((motif, i) => {
             const card = el('div', { class: 'motif' });
             const remove = el('button', { type: 'button', class: 'icon-btn small', 'aria-label': 'Remove', text: '×' });
@@ -156,16 +179,20 @@ export class Panels {
             }
             card.append(el('div', { class: 'motif-head' }, [...head, remove]));
             if (motif.type === 'shape') card.append(el('p', { class: 'step-note', text: 'Drag its nodes and handles in the Layer view. Double-click the outline to add a node, a node to delete it.' }));
-            for (const key of kMotifTypes[motif.type].params) {
+            const params = kMotifTypes[motif.type].params;
+            const add = key => {
                 const p = kMotifParams[key];
-                if (p.tier === 'advanced' && tier !== 'advanced') continue;
-                const control = make_control({ ...p, type: p.type ?? 'range' }, (value, { coalesce }) =>
-                    app.set_motif_param(i, key, value, coalesce),
-                );
-                card.append(control.el);
+                const control = make_control({ ...p, type: p.type ?? 'range' }, (value, { coalesce }) => app.set_motif_param(i, key, value, coalesce));
                 const refresh = () => control.refresh(app.design.layers[app.ui.layer].source.motifs[i]?.[key] ?? 0);
                 refresh();
-                refreshers.push(refresh);
+                this.refreshers_.push(refresh);
+                return control.el;
+            };
+            for (const key of params.filter(key => kMotifParams[key].tier !== 'advanced')) card.append(add(key));
+            const extra = params.filter(key => kMotifParams[key].tier === 'advanced');
+            if (extra.length) {
+                const box = this.fold_(card, `motif:${i}`, 'More', 'Less');
+                for (const key of extra) box?.append(add(key));
             }
             body.append(card);
         });

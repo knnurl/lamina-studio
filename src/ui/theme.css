@@ -80,12 +80,34 @@ button { font: inherit; color: inherit; }
     align-items: baseline;
     gap: 10px;
 }
-.mark span {
-    font: 400 14px/1 "IBM Plex Sans", system-ui, sans-serif;
-    letter-spacing: 0;
+.steps { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
+.step-chev { color: var(--rule); }
+.step-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
     color: var(--ink-2);
-    text-shadow: none;
+    font-weight: 500;
+    white-space: nowrap;
 }
+.step-btn:hover { color: var(--ink); }
+.step-dot {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    font: 600 12px/1 "Chakra Petch", system-ui, sans-serif;
+}
+.step-btn.done .step-dot { border-color: var(--acid); color: var(--acid); background: color-mix(in srgb, var(--acid) 16%, transparent); }
+.step-btn[aria-current="step"] { background: var(--panel-2); color: var(--ink); }
+.step-btn[aria-current="step"] .step-dot { background: var(--acid); border-color: var(--acid); color: var(--on-acid); }
 .chip {
     font-size: 12px;
     padding: 2px 8px;
@@ -108,44 +130,41 @@ button { font: inherit; color: inherit; }
 .icon-btn:hover { color: var(--ink); border-color: var(--ink-2); }
 
 .side {
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     background: var(--panel);
     border-right: 1px solid var(--rule);
-    padding: 8px 0 16px;
 }
-.step { border-bottom: 1px solid var(--rule); }
-.step > summary {
-    list-style: none;
-    cursor: pointer;
+.panel-head { display: grid; gap: 6px; padding: 16px 18px 6px; }
+.panel-kicker { font: 600 11px/1 "Chakra Petch", system-ui, sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--violet); }
+.panel-title { margin: 0; font: 600 22px/1.15 "Chakra Petch", system-ui, sans-serif; }
+.panel-guide { margin: 0; font-size: 13px; color: var(--ink-2); }
+.panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: grid;
-    grid-template-columns: 28px 1fr;
-    gap: 2px 8px;
-    padding: 12px 16px;
-}
-.step > summary::-webkit-details-marker { display: none; }
-.step-num {
-    grid-row: span 2;
-    font: 600 15px/1.35 "Chakra Petch", system-ui, sans-serif;
-    color: var(--violet);
-}
-.step-title { font-weight: 600; }
-.step-hint { font-size: 13px; color: var(--ink-2); }
-.step[open] .step-num { color: var(--acid); }
-.step-body {
-    padding: 0 16px 14px 52px;
+    align-content: start;
+    gap: 10px;
+    padding: 10px 18px 18px;
     font-size: 13px;
     color: var(--ink-2);
 }
-
+.panel-foot { display: flex; justify-content: space-between; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--rule); }
+.panel-foot .btn:disabled { cursor: default; }
 .step-note { margin: 0 0 10px; }
-.step-body { display: grid; gap: 10px; }
-.step-body .sub {
+.panel-body .sub, .start .sub {
     margin: 6px 0 0;
     font: 600 12px/1.2 "Chakra Petch", system-ui, sans-serif;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--violet);
 }
+.seed-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.more-toggle { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--cyan); font-weight: 500; cursor: pointer; }
+.more-toggle:hover { text-decoration: underline; }
+.more { display: grid; gap: 10px; padding-top: 10px; border-top: 1px dashed var(--rule); }
 
 /* Controls generated from the registry */
 .ctl { display: grid; gap: 4px; color: var(--ink); }
@@ -164,7 +183,7 @@ button { font: inherit; color: inherit; }
 }
 .ctl-unit { width: 26px; font-size: 12px; color: var(--ink-2); }
 .ctl input[type="range"] { width: 100%; accent-color: var(--acid); margin: 0; }
-.ctl select, .add-row select, .tool-select {
+.ctl select, .add-row select {
     background: var(--field);
     color: var(--ink);
     border: 1px solid var(--rule);
@@ -187,21 +206,32 @@ button { font: inherit; color: inherit; }
 }
 .lock[aria-pressed="true"] { filter: none; opacity: 1; }
 
-.layer-strip { display: flex; flex-wrap: wrap; gap: 6px; }
-.layer-chip {
-    display: inline-flex;
+.layer-strip {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 8px 3px 4px;
-    background: var(--field);
-    border: 1px solid var(--rule);
-    border-radius: 999px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--ink-2);
+    gap: 8px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    border-top: 1px solid var(--rule);
+    background: var(--panel);
 }
-.layer-chip .swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--rule); }
-.layer-chip[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
+.strip-label { font: 600 11px/1 "Chakra Petch", system-ui, sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); margin-right: 4px; }
+.strip-item {
+    flex: none;
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    padding: 3px 3px 2px;
+    background: var(--stage-b);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--ink-2);
+    font-size: 11px;
+}
+.strip-item:hover { border-color: var(--ink-2); }
+.strip-item[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
+.strip-thumb { width: 44px; height: 44px; display: block; }
 
 .motif {
     display: grid;
@@ -286,10 +316,6 @@ button { font: inherit; color: inherit; }
     font: inherit;
     font-size: 14px;
 }
-.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
-.seg-btn { background: none; border: 0; padding: 5px 12px; cursor: pointer; color: var(--ink-2); font-size: 14px; }
-.seg-btn + .seg-btn { border-left: 1px solid var(--rule); }
-.seg-btn[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); }
 .btn {
     background: var(--acid);
     color: var(--on-acid);
@@ -304,8 +330,9 @@ button { font: inherit; color: inherit; }
 .btn:disabled { opacity: 0.5; cursor: progress; }
 
 .view {
+    position: relative;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     min-width: 0;
 }
 .tabs {
@@ -428,3 +455,84 @@ button { font: inherit; color: inherit; }
 /* Status bar chip */
 .status-chip { margin-left: auto; color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .status-chip[hidden] { display: none; }
+
+/* Start screen (SPEC 11) */
+.start { position: fixed; inset: 0; z-index: 50; overflow-y: auto; background: radial-gradient(ellipse at 30% 0%, var(--stage-a), var(--bg) 60%); }
+.start[hidden] { display: none; }
+.start-inner { max-width: 1120px; margin: 0 auto; padding: 22px 24px 40px; display: grid; gap: 18px; }
+.start-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.start-tag { color: var(--ink-2); }
+.start h2 { margin: 6px 0 0; font: 600 32px/1.15 "Chakra Petch", system-ui, sans-serif; }
+.kinds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kind {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    text-align: left;
+    padding: 14px;
+    background: var(--panel);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    cursor: pointer;
+}
+.kind svg { width: 44px; height: 44px; fill: none; stroke: var(--violet); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.kind strong { font: 600 17px/1.2 "Chakra Petch", system-ui, sans-serif; }
+.kind span { color: var(--ink-2); font-size: 13px; }
+.kind:hover { border-color: var(--ink-2); }
+.kind[aria-pressed="true"] { border-color: var(--acid); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 25%, transparent); }
+.kind[aria-pressed="true"] svg { stroke: var(--acid); }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.preset {
+    display: grid;
+    gap: 4px;
+    text-align: left;
+    padding: 10px;
+    background: var(--stage-b);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    cursor: pointer;
+}
+.preset:hover { border-color: var(--acid); }
+.preset small { color: var(--ink-2); }
+.preset-thumb { width: 100%; aspect-ratio: 1; height: auto; display: block; max-width: 100%; }
+.blank-art { display: grid; place-items: center; aspect-ratio: 1; border: 2px dashed var(--rule); border-radius: 10px; font: 600 40px/1 "Chakra Petch", system-ui, sans-serif; color: var(--ink-2); }
+.start-note { margin: 0; color: var(--warn); }
+.start-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--ink-2); font-size: 13px; }
+@media (max-width: 860px) {
+    .kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Tour */
+.tour { position: fixed; inset: 0; z-index: 60; }
+.tour[hidden] { display: none; }
+.tour-spot {
+    position: fixed;
+    border-radius: 12px;
+    outline: 2px solid var(--acid);
+    box-shadow: 0 0 0 9999px rgba(5, 3, 9, 0.72);
+    pointer-events: none;
+    transition: all 0.2s ease;
+}
+.tour-bubble, .tour-offer {
+    position: fixed;
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--panel);
+    color: var(--ink);
+    border: 1px solid var(--acid);
+    border-radius: 12px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+.tour-bubble p, .tour-offer p { margin: 0; }
+.tour-buttons { display: flex; align-items: center; gap: 8px; }
+.tour-offer { position: absolute; right: 16px; bottom: 76px; z-index: 5; width: min(380px, calc(100% - 32px)); }
+.tour-buttons .btn { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
+
+/* Narrow windows: the step bar keeps numbers and the current step's name. */
+@media (max-width: 1180px) {
+    .step-btn:not([aria-current="step"]) .step-name { display: none; }
+}
