@@ -551,7 +551,10 @@ Measure with a `tools/bench.js` script on synthetic designs, and record the resu
 | opentype.js | Text glyph outlines | MIT | M5 | |
 | OFL fonts | Stencil text | OFL-1.1 | M5 | Bundled with the font licence |
 | Transformers.js (`@huggingface/transformers`) | Depth AI runtime | Apache-2.0 | M5 | Loaded on demand from a CDN |
-| Depth Anything V2 Small (`onnx-community/depth-anything-v2-small`) | Depth model | Apache-2.0 | M5 | Base, Large and Giant are CC-BY-NC: never use them |
+| Depth Anything V2 Small (`onnx-community/depth-anything-v2-small`) | Depth model | Apache-2.0 | M5 | |
+| Depth Anything V2 Base and Large | Depth models, optional | CC-BY-NC-4.0 | M5 | Owner approved (2026-11-07). Downloaded on demand, never bundled; the picker labels them non-commercial |
+| Anthropic TypeScript SDK (`@anthropic-ai/sdk`) 1.3.0 | The assistant (Claude) | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr (`+esm`), pinned; with `dangerouslyAllowBrowser`, as each user brings their own key |
+| Google Gen AI SDK (`@google/genai`) 2.31.0 | Pictures (Gemini) | Apache-2.0 | M4.5 | Loaded on first use from jsDelivr, pinned; only with a Gemini key |
 
 The zip writer, DXF writer, SVG writer, stroke font, packer and marching squares are written in-repo.
 
@@ -802,7 +805,52 @@ Done when:
     - the preset and four mandala-style seeds.
     130 tests pass. The Mandala joined the goldens; every existing golden is unchanged.
 
-### M5: image and text
+### M4.5: AI studio and drawing (owner, 2026-11-07)
+Sliders alone are too slow for complex designs. An assistant designs and edits by conversation, draws artwork, and turns pictures and sketches into cuttable layers, all inside the studio.
+
+Decisions (from the owner's answers):
+- **Each user's own keys.** No server; the page stays on GitHub Pages and works without keys.
+  - Claude for design, editing, drawing and reading pictures. Gemini (optional) for pictures from a description.
+  - Keys stay in that browser, or only for the session if the user chooses; "Forget keys" clears them.
+- **Both ways of drawing:** sketch tools on the canvas, and describe-to-draw. Either way the assistant finishes the job: cuttable layers, bridges, checks.
+- **Pictures are vectorised or traced,** never cut as raster. Claude draws SVG artwork, or a Gemini picture is traced into tone layers (M5's image field, brought forward).
+- **AI first,** then M5 (photos, depth, text, engraving) and M6.
+
+Design:
+- **Assistant panel:** a drawer beside the preview, open from the top bar in every step, and a "Describe it" box on the start screen.
+  - It shows the conversation, a line per action ("Added a lotus ring to layer 3", "Checked: no problems"), and pictures.
+  - A Stop button cancels a turn. Every change the assistant makes goes through the store as one undo step.
+- **Agent:** Claude through the SDK's streaming manual tool loop in the page. The model defaults to Claude Opus 5.5, with Sonnet 5.5 as the faster, cheaper option in settings. Adaptive thinking; effort is set in settings, `high` by default.
+  - Server-side refusal fallbacks are on (`server-side-fallback-2026-07-01`, `fallbacks: "default"`).
+  - A turn stops after 30 tool rounds. Token use per turn shows in the panel.
+  - The system prompt is generated from the registry (motif types, parameters, ranges, symmetries, styles, materials, cutting limits), so it is deterministic and cached.
+  - The current design travels with each user message; tool results carry the state after each change.
+- **Tools:**
+  - `edit_design`: a list of operations (set a piece or design value, set layer count, set a layer's fields, set, add, update or remove motifs, generate from a style and seed). Validated against the registry and clamped to its ranges, then applied as one undo step. Errors come back to the model.
+  - `check_design`: every check, with per-layer open fraction, islands and cut length.
+  - `look`: a picture of the design (front composite, 3D, or one layer), so the model can judge it.
+  - `draw_artwork`: SVG the model writes, placed on a layer as material or cut as openings, then through bridges and checks.
+  - `make_picture` (Gemini key only): a picture from a description, worded for layering (flat tones, bold shapes). It appears in the conversation and as a reference over the Layer view.
+  - `trace_picture`: slices a picture into the stack as an image field (tone or depth), with levels, inversion, smoothing and framing.
+- **Sketch tools** in the Layer view: select, pen, line, circle, polygon and eraser.
+  - Strokes become a `sketch` motif on the chosen layer: open strokes cut as slots of a set width, closed shapes as openings.
+  - Each stroke is taken back into the symmetry's fundamental domain by the copy it was drawn on, so the drawing mirrors live.
+  - "Smooth" tidies strokes locally. "Clean up with AI" asks the assistant to replace the sketch with clean shapes, curves or artwork.
+
+Done when:
+- [ ] With a Claude key, "a 10-layer lotus mandala with a key-fret border" builds a piece with no fatal finding, and a follow-up edit changes it as asked. Both are driven by the owner, with real keys.
+- [ ] Claude can draw artwork onto a layer, and a Gemini picture can be traced into layers, with no fatal finding.
+- [ ] Sketch tools draw mirrored strokes that cut, and "Clean up with AI" replaces a sketch with clean shapes.
+- [ ] Tests cover edit validation and clamping, the tool loop (a stand-in client: tool results in one message, stops on refusal, `max_tokens` and the round cap), sketch geometry, and image-field slicing. No real API calls in CI.
+
+**Progress:**
+- 2026-11-07, slice 1: the assistant.
+  - **Built:** validated operations, the generated prompt and tools, the streaming tool loop, the panel and settings, "Describe it" on the start screen, artwork as openings (a new `art` motif) or as material, the picture field with tracing, and "Add a picture" for the user's own pictures.
+  - **Tests:** `ai.test.js`, 8 tests, no network: operations and clamping, motif cleaning, the summary, the prompt's determinism, input checks, and the loop with a stand-in client (one message for all results; refusal, `max_tokens`, round cap, API errors, Stop).
+  - **Driven in headless Edge with a scripted stand-in client** (no keys here):
+    - Describe, then edit, check, look and draw artwork, then undo the steps one at a time.
+    - A picture added by the user, traced into 8 layers (open 73% at the front to 0% at the back), then looked at.
+  - **Not yet run with real keys:** the owner's first live session checks the requests against the real APIs.
 Tone bands, depth map import, depth AI, the dithered engrave back plate with its ramp strip, stencil text, and logo import. Done when an Angel-style shadow box can be rebuilt from a photo, end to end.
 
 ### M6: frames, scale, launch
@@ -884,6 +932,10 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Island IDs include the box size | Concentric rings shared IDs, so their bridges and policies mixed |
 | 2026-11-07 | Lattice orb seed 6 | The densest of a rendered sweep and the closest to the orb reference, still inside the 400 ms slider target |
 | 2026-11-07 | The 3D preview keeps extruded geometry per layer, keyed by its material | Browser slider latency on the Lattice orb: 460 ms median down to 223 ms |
+| 2026-11-07 | M4.5 AI studio and drawing before M5 | Owner: sliders alone are too slow for complex designs |
+| 2026-11-07 | Users bring their own Claude and Gemini keys; SDKs load from jsDelivr on first use | No server to run or pay for, and the page works without AI |
+| 2026-11-07 | The assistant edits through validated operations, not by rewriting the design JSON | Each change is checked against the registry's ranges and is one undo step |
+| 2026-11-07 | Gemini pictures are traced (image field) or redrawn as SVG by Claude, never cut as raster | Cuttable output with bridges and checks, from the same pipeline as everything else |
 | 2026-11-07 | Guided layout: one step on screen at a time (Piece, Pattern, Look, Structure, Make), each opening its view, with a layer strip under the preview | Owner: the long scrolling sidebar was hard to use. Chosen from three clickable mockups drawn with real presets |
 | 2026-11-07 | Start screen on the first visit and from New; a returning visitor opens their last design | Owner chose the start screen; resuming saves returning users a click every visit |
 | 2026-11-07 | "More options" folds per step replace the Basic and Advanced switch | Owner: nothing hidden by a global mode |

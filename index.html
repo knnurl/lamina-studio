@@ -547,6 +547,55 @@ button { font: inherit; color: inherit; }
 @media (max-width: 1180px) {
     .step-btn:not([aria-current="step"]) .step-name { display: none; }
 }
+
+/* Assistant (SPEC M4.5) */
+.assistant-drawer {
+    position: absolute;
+    top: 42px;
+    right: 0;
+    bottom: 69px;
+    width: min(420px, 48%);
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-left: 1px solid var(--acid);
+    box-shadow: -14px 0 32px rgba(0, 0, 0, 0.4);
+}
+.assistant-drawer[hidden] { display: none; }
+.assistant-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+.assistant-settings { display: grid; gap: 10px; padding: 12px; border-bottom: 1px solid var(--rule); background: var(--panel-2); font-size: 13px; }
+.assistant-settings[hidden] { display: none; }
+.assistant-settings small { color: var(--ink-2); }
+.assistant-log { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 8px; padding: 12px; font-size: 13.5px; }
+.msg { margin: 0; padding: 8px 10px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user { justify-self: end; max-width: 88%; background: color-mix(in srgb, var(--acid) 16%, var(--panel-2)); color: var(--ink); }
+.msg.assistant { background: var(--panel-2); color: var(--ink); }
+.msg.status { padding: 2px 4px; color: var(--ink-2); font-style: italic; }
+.msg.tool { padding: 2px 4px; color: var(--cyan); font-size: 12.5px; }
+.msg.tool.bad, .msg.bad { color: var(--warn); }
+.msg.note { padding: 2px 4px; color: var(--ink-2); font-size: 12.5px; }
+.msg.setup { display: grid; gap: 8px; background: var(--panel-2); border: 1px solid var(--rule); }
+.msg.setup p { margin: 0; }
+.msg.picture { padding: 0; }
+.msg-picture { width: 100%; border-radius: 8px; display: block; }
+.msg.picture figcaption { font-size: 12px; color: var(--ink-2); padding: 4px 2px; }
+.assistant-foot { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--rule); }
+.assistant-input, .describe-input {
+    width: 100%;
+    resize: vertical;
+    background: var(--field);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font: inherit;
+}
+.assistant-actions { display: flex; align-items: center; gap: 8px; }
+.assistant-usage { font-size: 11.5px; color: var(--ink-2); }
+.assistant-toggle[aria-pressed="true"] { background: var(--acid); color: var(--on-acid); }
+.describe-row { display: flex; gap: 10px; align-items: stretch; }
+.describe-row .describe-input { flex: 1; }
 </style>
 </head>
 <body>
@@ -933,6 +982,71 @@ const kKeyScale = 2 ** 24;
 
 const kFieldKinds = ['rings', 'chladni', 'interference', 'rose'];
 
+// A picture source (SPEC M4.5, M5's image field): field.image is { w, h, data, hash }, data being
+// base64 grey bytes, row by row from the top. Values are grey / 255 (dark is 0), swapped by
+// field.invert. The picture fits inside the piece at zoom 1 and is never folded by the symmetry.
+const raster_cache = new Map();
+
+function grey_values(image, blur_px) {
+    const key = `${image.hash}|${blur_px}`;
+    if (raster_cache.has(key)) return raster_cache.get(key);
+    const bin = atob(image.data);
+    let v = new Float32Array(image.w * image.h);
+    for (let i = 0; i < v.length; i++) v[i] = bin.charCodeAt(i) / 255;
+    // Two box passes each way, close to a Gaussian.
+    const box = (src, horizontal) => {
+        const out = new Float32Array(src.length);
+        const n = horizontal ? image.w : image.h;
+        const lines = horizontal ? image.h : image.w;
+        for (let line = 0; line < lines; line++) {
+            const at = i => (horizontal ? line * image.w + i : i * image.w + line);
+            let sum = 0;
+            for (let i = -blur_px; i <= blur_px; i++) sum += src[at(Math.min(n - 1, Math.max(0, i)))];
+            for (let i = 0; i < n; i++) {
+                out[at(i)] = sum / (2 * blur_px + 1);
+                sum += src[at(Math.min(n - 1, i + blur_px + 1))] - src[at(Math.max(0, i - blur_px))];
+            }
+        }
+        return out;
+    };
+    if (blur_px > 0) for (let pass = 0; pass < 2; pass++) v = box(box(v, true), false);
+    raster_cache.set(key, v);
+    if (raster_cache.size > 6) raster_cache.delete(raster_cache.keys().next().value);
+    return v;
+}
+
+// Samples the picture over the bounds at kResMm (outside the picture reads as 1, far and light).
+function sample_image(f, b) {
+    const img = f.image;
+    const step = kResMm * kUmPerMm;
+    const nx = Math.ceil((b.x1 - b.x0) / step) + 1;
+    const ny = Math.ceil((b.y1 - b.y0) / step) + 1;
+    const out = new Float32Array(nx * ny).fill(1);
+    if (!img?.data) return { v: out, nx, ny, step, x0: b.x0, y0: b.y0 };
+    const cx = (b.x0 + b.x1) / 2 / kUmPerMm;
+    const cy = (b.y0 + b.y1) / 2 / kUmPerMm;
+    const mm_per_px = Math.min((b.x1 - b.x0) / kUmPerMm / img.w, (b.y1 - b.y0) / kUmPerMm / img.h) / Math.max(0.1, f.zoom ?? 1);
+    const g = grey_values(img, Math.max(0, Math.round((f.smooth_mm ?? 0) / mm_per_px)));
+    const at = (i, j) => g[Math.min(img.h - 1, Math.max(0, j)) * img.w + Math.min(img.w - 1, Math.max(0, i))];
+    for (let j = 0; j < ny; j++) {
+        const y = (b.y0 + j * step) / kUmPerMm;
+        const py = (cy - y) / mm_per_px + img.h / 2 - 0.5;
+        if (py < -0.5 || py > img.h - 0.5) continue;
+        for (let i = 0; i < nx; i++) {
+            const x = (b.x0 + i * step) / kUmPerMm;
+            const px = (x - cx) / mm_per_px + img.w / 2 - 0.5;
+            if (px < -0.5 || px > img.w - 0.5) continue;
+            const i0 = Math.floor(px);
+            const j0 = Math.floor(py);
+            const fx = px - i0;
+            const fy = py - j0;
+            const val = at(i0, j0) * (1 - fx) * (1 - fy) + at(i0 + 1, j0) * fx * (1 - fy) + at(i0, j0 + 1) * (1 - fx) * fy + at(i0 + 1, j0 + 1) * fx * fy;
+            out[j * nx + i] = f.invert ? 1 - val : val;
+        }
+    }
+    return { v: out, nx, ny, step, x0: b.x0, y0: b.y0 };
+}
+
 // The raw field at (x, y) in mm, in [0, 1].
 function value(f, x, y) {
     const lambda = Math.max(1, f.scale_mm);
@@ -964,8 +1078,14 @@ const sample_cache = new Map();
 
 // Samples the field over the bounds (micrometres) at kResMm, cached by field, symmetry and bounds.
 function sample(f, sym, b) {
-    const key = JSON.stringify([f.kind, f.scale_mm, f.k, f.a, sym, b]);
+    const key = f.kind === 'image' ? JSON.stringify(['image', f.image?.hash, f.zoom, f.smooth_mm, !!f.invert, b]) : JSON.stringify([f.kind, f.scale_mm, f.k, f.a, sym, b]);
     if (sample_cache.has(key)) return sample_cache.get(key);
+    if (f.kind === 'image') {
+        const grid = sample_image(f, b);
+        sample_cache.set(key, grid);
+        if (sample_cache.size > 8) sample_cache.delete(sample_cache.keys().next().value);
+        return grid;
+    }
     const step = kResMm * kUmPerMm;
     const nx = Math.ceil((b.x1 - b.x0) / step) + 1;
     const ny = Math.ceil((b.y1 - b.y0) / step) + 1;
@@ -1163,6 +1283,7 @@ const kMotifTypes = {
     ogee: { label: 'Ogee arches', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
+    art: { label: 'Artwork', params: ['x_mm', 'y_mm', 'width_mm', 'angle_deg', 'repeat'], replicated: false },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
@@ -1195,6 +1316,9 @@ const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    x_mm: { label: 'Across', min: -600, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    y_mm: { label: 'Up', min: -600, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    repeat: { label: 'Cut', type: 'select', options: [['once', 'Once'], ['around', 'Round the symmetry']], scales: false, tier: 'basic' },
     turns: { label: 'Turns', min: 0.25, max: 3, step: 0.05, unit: '', scales: false, tier: 'basic' },
     polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
     area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
@@ -1333,11 +1457,13 @@ const SCHEMA = [
         panel: 'pattern',
         label: 'Field',
         type: 'select',
-        options: [
+        // The picture is offered once the design holds one (traced by the assistant, or M5's import).
+        options: d => [
             ['rings', 'Rings'],
             ['chladni', 'Chladni plate'],
             ['interference', 'Interference'],
             ['rose', 'Rose'],
+            ...(d.piece.field.image ? [['image', 'The picture']] : []),
         ],
         tier: 'basic',
         show_if: d => d.piece.depth_mode === 'field',
@@ -1353,7 +1479,7 @@ const SCHEMA = [
         step: 0.5,
         unit: 'mm',
         tier: 'basic',
-        show_if: d => d.piece.depth_mode === 'field',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind !== 'image',
     },
     {
         id: 'field.k',
@@ -1366,7 +1492,7 @@ const SCHEMA = [
         step: 1,
         unit: '',
         tier: 'basic',
-        show_if: d => d.piece.depth_mode === 'field',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind !== 'image',
     },
     {
         id: 'field.a',
@@ -1379,7 +1505,44 @@ const SCHEMA = [
         step: 0.05,
         unit: '',
         tier: 'basic',
-        show_if: d => d.piece.depth_mode === 'field',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind !== 'image',
+    },
+    {
+        id: 'field.zoom',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Picture zoom',
+        type: 'range',
+        min: 0.5,
+        max: 4,
+        step: 0.05,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind === 'image',
+        desc: '1 fits the whole picture inside the piece; larger crops in.',
+    },
+    {
+        id: 'field.smooth_mm',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Smoothing',
+        type: 'range',
+        min: 0,
+        max: 6,
+        step: 0.25,
+        unit: 'mm',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind === 'image',
+        desc: 'Blurs the picture before slicing, so edges cut smoothly.',
+    },
+    {
+        id: 'field.invert',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Swap light and dark',
+        type: 'toggle',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind === 'image',
     },
     {
         id: 'field.lo',
@@ -2637,7 +2800,8 @@ return { kCurveTypes, curve_nodes, to_shape };
 })();
 // src/sources/motifs.js
 const __m_sources_motifs_js = (function () {
-const { circle_path, regular_polygon_path, circle_segments, union_all } = __m_geom_clip_js;
+const { circle_path, regular_polygon_path, circle_segments, union_all, union_fill } = __m_geom_clip_js;
+const { from_flat } = __m_geom_pack_js;
 const { rotate_path, replicate, rotation_order } = __m_geom_symmetry_js;
 const { kMotifTypes } = __m_core_schema_js;
 const { lattice_openings, fret_openings } = __m_sources_lattice_js;
@@ -2648,6 +2812,7 @@ const { mm_to_um } = __m_core_units_js;
 // Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
 // on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
 // engine fills the circle. Returns paths in micrometres, counter-clockwise.
+
 
 
 
@@ -2751,10 +2916,28 @@ function base_paths(m, wedge_rad) {
     }
 }
 
+// Artwork (SPEC M4.5): imported paths, centred on their own box, scaled to width_mm, turned by
+// angle_deg and placed at (x_mm, y_mm); holes follow the even-odd rule. Cut once, or repeated
+// round the piece by its symmetry.
+function art_openings(m, sym) {
+    const paths = from_flat(m.paths ?? []);
+    if (!paths.length || !(m.src_w_mm > 0)) return [];
+    const k = (m.width_mm ?? m.src_w_mm) / m.src_w_mm;
+    const a = (m.angle_deg ?? 0) * kDeg;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const dx = mm_to_um(m.x_mm ?? 0);
+    const dy = mm_to_um(m.y_mm ?? 0);
+    const placed = paths.map(p => p.map(q => ({ x: Math.round(dx + k * (c * q.x - s * q.y)), y: Math.round(dy + k * (s * q.x + c * q.y)) })));
+    const art = union_fill(placed, true);
+    return m.repeat === 'around' ? replicate(art, sym) : art;
+}
+
 // All openings of one motif under the piece's symmetry.
 function motif_openings(m, sym) {
     if (!(m.type in kMotifTypes)) throw new Error(`unknown motif "${m.type}"`);
     if (m.type === 'disc') return m.d_mm > 0 ? [circle_path(0, 0, mm_to_um(m.d_mm) / 2)] : [];
+    if (m.type === 'art') return art_openings(m, sym);
     // Lattices and frets are built in the fundamental domain, then replicated.
     if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
     if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);
@@ -2900,7 +3083,7 @@ function base_design(layer_count = 8) {
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
             lighting: { mode: 'unlit', colour: '#ff5b2e' },
             depth_mode: 'per_layer',
-            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1 },
+            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1, zoom: 1, smooth_mm: 1, invert: false, image: null },
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
         sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
@@ -4221,7 +4404,9 @@ function build_design(design) {
     const shape_key = JSON.stringify([design.piece.outline, design.piece.symmetry]);
     const layers = design.layers.map((layer, k) => {
         const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
-        const field = design.piece.depth_mode === 'field' ? [design.piece.field, k, design.layers.length] : null;
+        // The picture enters the key by its hash: its bytes would cost a long stringify per layer.
+        const f = design.piece.field;
+        const field = design.piece.depth_mode === 'field' ? [{ ...f, image: f.image?.hash ?? null }, k, design.layers.length] : null;
         const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm, field]));
         const geo = cached(layer_cache, key, () => {
             const { outline, material: raw } = compose_layer(design, k);
@@ -6369,7 +6554,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 37 modules.
+<script>// Lamina Studio bundle: src/main.js and 45 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -88866,6 +89051,7 @@ const kMotifTypes = {
     ogee: { label: 'Ogee arches', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     lotus: { label: 'Lotus petals', params: ['r_mm', 'length_mm', 'width_mm', 'mult', 'angle_deg'], replicated: true },
     shape: { label: 'Editable shape', params: ['r_mm', 'mult', 'angle_deg'], replicated: true },
+    art: { label: 'Artwork', params: ['x_mm', 'y_mm', 'width_mm', 'angle_deg', 'repeat'], replicated: false },
     circuit: {
         label: 'Circuit traces',
         params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
@@ -88898,6 +89084,9 @@ const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    x_mm: { label: 'Across', min: -600, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    y_mm: { label: 'Up', min: -600, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'basic' },
+    repeat: { label: 'Cut', type: 'select', options: [['once', 'Once'], ['around', 'Round the symmetry']], scales: false, tier: 'basic' },
     turns: { label: 'Turns', min: 0.25, max: 3, step: 0.05, unit: '', scales: false, tier: 'basic' },
     polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
     area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
@@ -89036,11 +89225,13 @@ const SCHEMA = [
         panel: 'pattern',
         label: 'Field',
         type: 'select',
-        options: [
+        // The picture is offered once the design holds one (traced by the assistant, or M5's import).
+        options: d => [
             ['rings', 'Rings'],
             ['chladni', 'Chladni plate'],
             ['interference', 'Interference'],
             ['rose', 'Rose'],
+            ...(d.piece.field.image ? [['image', 'The picture']] : []),
         ],
         tier: 'basic',
         show_if: d => d.piece.depth_mode === 'field',
@@ -89056,7 +89247,7 @@ const SCHEMA = [
         step: 0.5,
         unit: 'mm',
         tier: 'basic',
-        show_if: d => d.piece.depth_mode === 'field',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind !== 'image',
     },
     {
         id: 'field.k',
@@ -89069,7 +89260,7 @@ const SCHEMA = [
         step: 1,
         unit: '',
         tier: 'basic',
-        show_if: d => d.piece.depth_mode === 'field',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind !== 'image',
     },
     {
         id: 'field.a',
@@ -89082,7 +89273,44 @@ const SCHEMA = [
         step: 0.05,
         unit: '',
         tier: 'basic',
-        show_if: d => d.piece.depth_mode === 'field',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind !== 'image',
+    },
+    {
+        id: 'field.zoom',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Picture zoom',
+        type: 'range',
+        min: 0.5,
+        max: 4,
+        step: 0.05,
+        unit: '',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind === 'image',
+        desc: '1 fits the whole picture inside the piece; larger crops in.',
+    },
+    {
+        id: 'field.smooth_mm',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Smoothing',
+        type: 'range',
+        min: 0,
+        max: 6,
+        step: 0.25,
+        unit: 'mm',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind === 'image',
+        desc: 'Blurs the picture before slicing, so edges cut smoothly.',
+    },
+    {
+        id: 'field.invert',
+        scope: 'piece',
+        panel: 'pattern',
+        label: 'Swap light and dark',
+        type: 'toggle',
+        tier: 'basic',
+        show_if: d => d.piece.depth_mode === 'field' && d.piece.field.kind === 'image',
     },
     {
         id: 'field.lo',
@@ -89480,7 +89708,7 @@ function base_design(layer_count = 8) {
             symmetry: { kind: 'dihedral', n: 8, phase_deg: 0 },
             lighting: { mode: 'unlit', colour: '#ff5b2e' },
             depth_mode: 'per_layer',
-            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1 },
+            field: { kind: 'rings', scale_mm: 24, k: 8, a: 0.6, lo: 0.3, hi: 1, zoom: 1, smooth_mm: 1, invert: false, image: null },
         },
         machine: { id: 'epilog_fusion_pro_48', bed_w_mm: 1219, bed_h_mm: 914 },
         sheet: { w_mm: 600, h_mm: 400, margin_mm: 4, spacing_mm: 3 },
@@ -90819,6 +91047,58 @@ function to_shape(m) {
 }
 return { kCurveTypes, curve_nodes, to_shape };
 })();
+// src/core/motif_defaults.js
+const __m_core_motif_defaults_js = (function () {
+const { piece_radius_mm } = __m_core_design_js;
+const { to_shape } = __m_sources_curves_js;
+// Starting values for a new motif, relative to the space inside the layer's frame ring (SPEC 8).
+// Shared by the "Add openings" menu and the assistant, which fills in any parameter it leaves out.
+
+
+
+function new_motif(type, design, layer) {
+    const r = Math.max(10, piece_radius_mm(design.piece) - layer.frame_ring_mm);
+    const v = x => Math.round(x * r * 10) / 10;
+    switch (type) {
+        case 'disc':
+            return { type, d_mm: v(0.6) };
+        case 'window':
+            return { type, r_mm: v(0.55), size_mm: v(0.14), sides: 4, rot_deg: 0, mult: 1, angle_deg: 0 };
+        case 'petal':
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 };
+        case 'ring':
+            return { type, r_mm: v(0.78), w_mm: v(0.06), tie_mm: 3, mult: 1, angle_deg: 0 };
+        case 'ray':
+            return { type, r0_mm: v(0.3), r1_mm: v(0.9), w0_mm: 0, w1_mm: v(0.08), mult: 1, angle_deg: 0 };
+        case 'lattice':
+            return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
+        case 'fret':
+            return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
+        case 'scroll': {
+            // Not symmetric: off the mirror lines under a kaleidoscope.
+            const sym = design.piece.symmetry;
+            const angle_deg = sym.kind === 'dihedral' ? Math.round(900 / Math.max(1, sym.n)) / 10 : 0;
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.08), turns: 1.25, mult: 1, angle_deg };
+        }
+        case 'ruyi':
+            return { type, r_mm: v(0.6), length_mm: v(0.2), width_mm: v(0.16), mult: 1, angle_deg: 0 };
+        case 'ogee':
+            return { type, r_mm: v(0.6), length_mm: v(0.24), width_mm: v(0.12), mult: 1, angle_deg: 0 };
+        case 'lotus':
+            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.16), mult: 1, angle_deg: 0 };
+        case 'shape':
+            return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
+        case 'circuit':
+            return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
+        case 'art':
+            // Artwork comes from SVG (the assistant's draw_artwork, or a logo); empty until then.
+            return { type, x_mm: 0, y_mm: 0, width_mm: v(0.5), angle_deg: 0, repeat: 'once', paths: [], src_w_mm: 0 };
+        default:
+            throw new Error(`unknown opening type "${type}"`);
+    }
+}
+return { new_motif };
+})();
 // src/core/actions.js
 const __m_core_actions_js = (function () {
 const { get_path, set_path } = __m_core_schema_js;
@@ -91917,7 +92197,8 @@ class Panels {
         });
 
         const type = el('select', { 'aria-label': 'Opening type' });
-        for (const [id, t] of Object.entries(kMotifTypes)) type.append(el('option', { value: id, text: t.label }));
+        // Artwork arrives from SVG (the assistant, or logo import in M5), not from an empty card.
+        for (const [id, t] of Object.entries(kMotifTypes)) if (id !== 'art') type.append(el('option', { value: id, text: t.label }));
         const add = el('button', { type: 'button', class: 'btn ghost', text: 'Add openings' });
         add.addEventListener('click', () => app.add_motif(type.value));
         body.append(el('div', { class: 'add-row' }, [type, add]));
@@ -91928,9 +92209,9 @@ return { Panels };
 // src/ui/header.js
 const __m_ui_header_js = (function () {
 const { el } = __m_ui_dom_js;
-// Top bar actions (SPEC 11): undo and redo, New (the start screen), Open and Save. Presets and
-// Randomise live on the start screen and in the Pattern step. Returns refresh() for state that
-// follows the history.
+// Top bar actions (SPEC 11): the assistant, undo and redo, New (the start screen), Open and
+// Save. Presets and Randomise live on the start screen and in the Pattern step. Returns
+// refresh() for state that follows the history.
 
 
 function button(text, title, on_click, cls = 'tool') {
@@ -91948,7 +92229,9 @@ function build_header(app) {
         if (file.files[0]) app.open(file.files[0]);
         file.value = '';
     });
+    const assistant = button('✦ Assistant', 'Design and edit by conversation (your own Claude key)', () => app.toggle_assistant(), 'btn ghost assistant-toggle');
     right.append(
+        assistant,
         undo,
         redo,
         button('New', 'Start a new piece from a preset or a blank outline', () => app.show_start()),
@@ -91958,6 +92241,7 @@ function build_header(app) {
     );
     return {
         refresh() {
+            assistant.setAttribute('aria-pressed', String(!!app.assistant_open));
             undo.disabled = !app.store.can_undo();
             redo.disabled = !app.store.can_redo();
         },
@@ -92446,7 +92730,7 @@ function draw_stack(canvas, design, layers) {
 
 class StartScreen {
     // actions: { build(design) -> Promise<layers>, open_preset(id), start_blank(kind), close(),
-    //            open_file(), import_svg(), tour() }
+    //            open_file(), import_svg(), tour(), describe(text, kind) }
     constructor(root, actions) {
         this.root_ = root;
         this.actions_ = actions;
@@ -92508,6 +92792,20 @@ class StartScreen {
         }
 
         const kind = kKinds.find(k => k.id === this.kind_);
+        // Describe it: the assistant builds the piece from words, starting from this kind's blank.
+        const words = el('textarea', { class: 'describe-input', rows: 2, placeholder: `Or describe your ${kind.title.toLowerCase()} and the assistant will design it. For example: a 10-layer lotus mandala with a key-fret border, deep blue to gold.`, 'aria-label': 'Describe the piece' });
+        const go = el('button', { type: 'button', class: 'btn', text: 'Design it' });
+        const describe = () => {
+            if (words.value.trim()) a.describe(words.value.trim(), kind);
+        };
+        go.addEventListener('click', describe);
+        words.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                describe();
+            }
+        });
+        const describe_row = kind.blank ? el('div', { class: 'describe-row' }, [words, go]) : null;
         const gallery = el('div', { class: 'gallery' });
         for (const id of kind.presets) gallery.append(this.preset_card_(id));
         if (kind.blank) {
@@ -92528,7 +92826,7 @@ class StartScreen {
         svg.addEventListener('click', () => a.import_svg());
         foot.append(tour, svg, el('span', { text: 'A preset opens at the Pattern step; a blank start at the Piece step.' }));
 
-        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, el('h3', { class: 'sub', text: 'Start from one of these' }), ...(note ? [note] : []), gallery, foot]);
+        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, ...(describe_row ? [describe_row] : []), el('h3', { class: 'sub', text: 'Or start from one of these' }), ...(note ? [note] : []), gallery, foot]);
         root.append(inner);
     }
 
@@ -92659,13 +92957,1173 @@ class Tour {
 }
 return { Tour };
 })();
+// src/ai/prompt.js
+const __m_ai_prompt_js = (function () {
+const { SCHEMA, kMotifTypes, kMotifParams } = __m_core_schema_js;
+const { kStyles } = __m_core_generate_js;
+const { kMaterials, kPalettes } = __m_core_design_js;
+// The assistant's system prompt and tools (SPEC M4.5). The prompt is generated from the registry,
+// so it always matches the controls, and it is the same text every time, so it caches.
+
+
+
+
+const kMotifNotes = {
+    disc: 'a round opening at the centre (not repeated)',
+    window: 'a polygon (sides 3 to 12) or circle (sides 0) opening at radius r_mm',
+    petal: 'a pointed lens along the radius',
+    ring: 'arc slots round the circle at radius r_mm, w_mm wide, with ties tie_mm wide between them (tie 0 cuts a full ring, which needs bridges)',
+    ray: 'a tapered spoke from r0_mm to r1_mm',
+    lattice: 'a maze lattice in the band r0_mm to r1_mm: bars are material, cells are openings; openness removes dead-end walls; seed varies it',
+    fret: 'a Greek key band at radius r_mm, w_mm wide',
+    scroll: 'a spiral curl on a stem; not symmetric, so under kaleidoscope symmetry put angle_deg at 90 / repeats',
+    ruyi: 'a three-lobed cloud head on a stem',
+    ogee: 'a pointed onion arch',
+    lotus: 'a centre petal with two side petals',
+    shape: 'a free outline of cubic Bezier nodes in local mm (x along the radius, origin at r_mm); every node is {x, y, ix, iy, ox, oy}: the anchor and its in and out handles',
+    circuit: 'circuit traces routed with 45-degree turns over a centred area; polarity slots cuts the traces, bars keeps them as material over an opened area',
+};
+
+function control_line(e) {
+    const type = e.type ?? 'range';
+    let values = '';
+    if (type === 'range') values = `${e.min} to ${e.max}${e.unit ? ` ${e.unit}` : ''}`;
+    else if (type === 'select' && Array.isArray(e.options)) values = e.options.map(o => (Array.isArray(o) ? o[0] : o)).join(' | ');
+    else if (type === 'select') values = 'see the lists below';
+    else if (type === 'colour') values = '#rrggbb';
+    else if (type === 'toggle') values = 'true | false';
+    return `- ${e.id} (${e.scope}${e.scope === 'layer' ? ', needs layer' : ''}): ${e.label}; ${values}`;
+}
+
+function param_line(key) {
+    const p = kMotifParams[key];
+    if ((p.type ?? 'range') === 'select') return `${key}: ${p.options.map(o => o[0]).join(' | ')}`;
+    return `${key}: ${p.min} to ${p.max}${p.unit ? ` ${p.unit}` : ''}`;
+}
+
+function system_prompt() {
+    const controls = SCHEMA.map(control_line).join('\n');
+    const motifs = Object.entries(kMotifTypes)
+        .map(([type, t]) => `- ${type} (${t.label}): ${kMotifNotes[type] ?? ''}. Fields: ${t.params.map(param_line).join('; ')}`)
+        .join('\n');
+    return `You are the design assistant inside Lamina Studio, a browser studio for layered laser-cut art: mandalas, orbs, shadow boxes and festival panels. You design and edit pieces by calling tools that change the user's design, then you check and look at the result before you finish.
+
+How a piece works
+- A piece is a stack of flat sheets (layers). Layer 1 is the front, nearest the viewer; the last layer is the back. Each layer is cut from 3 mm sheet. Openings are cut out; what is left is material.
+- Looking into the piece, openings in front reveal the layers behind, so depth comes from openings that close up towards the back. Good stacks usually shrink openings and widen frame rings layer by layer, leave the back layer solid or nearly solid, and turn alternate layers half a step so edges show.
+- Motifs on a layer are drawn once on the +x axis, centred at radius r_mm from the centre, and repeated round the piece by its symmetry. mult copies sit in each repeat; angle_deg turns them. The frame ring is a solid border kept round each layer.
+- Field mode slices one shared field into every layer instead of per-layer motifs.
+
+Cutting rules
+- Webs between openings must stay at least the material's minimum web (1.5 mm in ply and MDF, 2 mm in acrylic); thinner webs break or burn away. Bridges are added automatically to hold loose parts, but a part held only by long thin bridges is fragile.
+- check_design reports findings. Fatal ones (G-01 to G-05) block export: always fix them before you finish. Warnings (W-..) are allowed when they are deliberate; say so.
+
+How to work
+1. If the request is unclear in a way that changes the result, ask one short question. Otherwise decide and build.
+2. Change the design with edit_design, several related operations per call. Layers and motifs are numbered from 1.
+3. Run check_design after a round of edits. Use look when the visual result matters: after a first build, after big changes, and before you finish. Do not look after every small edit.
+4. Fix what the checks or your eyes find, then finish with two or three plain sentences: what you made and anything the user should know. British English.
+- Keep the user's work unless they ask you to replace it. Use generate for a fast starting point, then shape it by hand with motif edits.
+- For artwork the motifs cannot make (an animal, an emblem, lettering, a scene), use draw_artwork with clean SVG paths.
+
+Controls for edit_design op "set" (id, value, and layer when the control is per layer)
+${controls}
+
+Motif types for add_motif, set_motifs and update_motif
+${motifs}
+
+Lists
+- styles for generate: ${Object.keys(kStyles).join(', ')}
+- palettes: ${Object.keys(kPalettes).join(', ')}
+- materials: ${Object.keys(kMaterials).join(', ')}
+- symmetry kinds: none, rot (rotate n times), dihedral (kaleidoscope: rotate and mirror, n repeats), mirror_x, mirror_xy
+
+draw_artwork
+- Write an SVG whose viewBox is in millimetres, centred on the area it should cover. Use filled, closed paths only (strokes are ignored). Holes follow the even-odd rule, so a shape inside a shape cuts back.
+- as "openings" cuts the filled shapes out of the layer; as "material" makes the filled shapes the whole layer (everything else is cut away, so keep it joined to a frame).
+- Keep every bar and gap at least 2 mm wide at the size you place it. Fewer, bolder shapes cut better than fine detail.
+
+Pictures
+- make_picture asks an image model for a picture to trace. Describe flat, bold shapes in a few distinct tones on a plain background, as for a layered papercut; avoid gradients, fine texture and text.
+- trace_picture slices a picture into the layers by tone (or by depth, nearest at the front). Look at the result and adjust levels, smoothing or framing until it reads well.`;
+}
+
+const kOp = {
+    type: 'object',
+    properties: {
+        op: { type: 'string', enum: ['set', 'set_motifs', 'add_motif', 'update_motif', 'remove_motif', 'generate', 'keep_layer', 'rename'] },
+        id: { type: 'string', description: 'set: the control id' },
+        value: { description: 'set: the new value' },
+        layer: { type: 'integer', description: 'the layer, from 1 (front)' },
+        motif: { type: 'object', description: 'add_motif: a motif with its type and any fields; missing fields take defaults' },
+        motifs: { type: 'array', items: { type: 'object' }, description: 'set_motifs: the layer’s complete motif list' },
+        index: { type: 'integer', description: 'update_motif, remove_motif: the motif, from 1' },
+        fields: { type: 'object', description: 'update_motif: the fields to change' },
+        style: { type: 'string', description: 'generate: the style' },
+        seed: { type: 'integer', description: 'generate: the seed' },
+        keep_repeats: { type: 'boolean', description: 'generate: keep the symmetry repeat count (default true)' },
+        keep: { type: 'boolean', description: 'keep_layer: true keeps the layer when generating' },
+        name: { type: 'string', description: 'rename: the piece’s name' },
+    },
+    required: ['op'],
+};
+
+// Tool definitions. make_picture is offered only with a picture key.
+function tools({ pictures = false } = {}) {
+    const list = [
+        {
+            name: 'edit_design',
+            description: 'Change the design with a list of operations, applied in order as one undo step. Invalid operations are skipped and reported; values are clamped to each control’s range. Returns what changed, what was refused, and the design afterwards.',
+            input_schema: { type: 'object', properties: { ops: { type: 'array', items: kOp, minItems: 1 } }, required: ['ops'] },
+        },
+        {
+            name: 'check_design',
+            description: 'Run every fabrication check on the current design. Returns fatal problems and warnings with their layers, and per-layer open fraction, islands and cut length.',
+            input_schema: { type: 'object', properties: {} },
+        },
+        {
+            name: 'look',
+            description: 'See the current design as a picture: front (all layers stacked, as seen from the front), 3d (the 3D preview), or layer (one layer, with its bridges).',
+            input_schema: {
+                type: 'object',
+                properties: { view: { type: 'string', enum: ['front', '3d', 'layer'] }, layer: { type: 'integer', description: 'layer: which layer, from 1' } },
+                required: ['view'],
+            },
+        },
+        {
+            name: 'draw_artwork',
+            description: 'Place SVG artwork on a layer, either cut out as openings or as the layer’s whole material. Returns what was imported and the checks for that layer.',
+            input_schema: {
+                type: 'object',
+                properties: {
+                    layer: { type: 'integer', description: 'the layer, from 1' },
+                    svg: { type: 'string', description: 'a complete SVG document; viewBox in mm' },
+                    as: { type: 'string', enum: ['openings', 'material'] },
+                    width_mm: { type: 'number', description: 'scale the artwork to this width (openings only)' },
+                    x_mm: { type: 'number', description: 'centre of the artwork from the piece centre (openings only)' },
+                    y_mm: { type: 'number', description: 'centre of the artwork from the piece centre, up is positive (openings only)' },
+                    repeat: { type: 'boolean', description: 'openings only: repeat round the piece by its symmetry (default false)' },
+                },
+                required: ['layer', 'svg', 'as'],
+            },
+        },
+        {
+            name: 'trace_picture',
+            description: 'Slice a picture from this conversation into the layers as an image field: by tone, or by depth with the nearest parts at the front. Returns the layers’ open fractions and checks.',
+            input_schema: {
+                type: 'object',
+                properties: {
+                    picture: { type: 'string', description: 'the picture id, as given when it appeared' },
+                    mode: { type: 'string', enum: ['tone', 'depth'] },
+                    invert: { type: 'boolean', description: 'swap light and dark (or near and far)' },
+                    smooth_mm: { type: 'number', description: 'blur before slicing, 0 to 6 mm' },
+                    zoom: { type: 'number', description: '1 fits the picture inside the piece; larger crops in' },
+                    front_fill: { type: 'number', description: 'how much of the front layer stays material, 0.05 to 0.9' },
+                },
+                required: ['picture', 'mode'],
+            },
+        },
+    ];
+    if (pictures) {
+        list.push({
+            name: 'make_picture',
+            description: 'Ask an image model for a picture to trace into layers. The picture appears in the conversation with an id.',
+            input_schema: {
+                type: 'object',
+                properties: {
+                    description: { type: 'string', description: 'what to draw, worded for a layered papercut: flat, bold shapes in a few tones on a plain background' },
+                    aspect: { type: 'string', enum: ['1:1', '4:5', '5:4', '3:4', '4:3', '16:9', '9:16'] },
+                },
+                required: ['description'],
+            },
+        });
+    }
+    // Large inputs (SVG) stream as they are written; the loop validates them before running.
+    return list.map(t => ({ ...t, eager_input_streaming: true }));
+}
+
+// Checks a tool input against its schema's required fields and basic types. Returns an error
+// message, or null when it is usable.
+function invalid_input(tool, input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return 'the input must be an object';
+    for (const key of tool.input_schema.required ?? []) if (!(key in input)) return `missing ${key}`;
+    for (const [key, spec] of Object.entries(tool.input_schema.properties ?? {})) {
+        if (!(key in input) || !spec.type) continue;
+        const v = input[key];
+        const ok =
+            spec.type === 'string' ? typeof v === 'string' :
+            spec.type === 'integer' ? Number.isInteger(v) :
+            spec.type === 'number' ? typeof v === 'number' && Number.isFinite(v) :
+            spec.type === 'boolean' ? typeof v === 'boolean' :
+            spec.type === 'array' ? Array.isArray(v) :
+            spec.type === 'object' ? v && typeof v === 'object' && !Array.isArray(v) : true;
+        if (!ok) return `${key} must be ${spec.type === 'integer' ? 'a whole number' : `a ${spec.type}`}`;
+        if (spec.enum && !spec.enum.includes(v)) return `${key} must be one of ${spec.enum.join(', ')}`;
+    }
+    return null;
+}
+return { system_prompt, tools, invalid_input };
+})();
+// src/ai/agent.js
+const __m_ai_agent_js = (function () {
+const { invalid_input } = __m_ai_prompt_js;
+// The assistant's tool loop (SPEC M4.5): Claude through the Anthropic SDK's streaming manual loop,
+// run in the page with the user's own key. One request from the user may take many rounds of tool
+// calls. A turn ends at end_turn, on a refusal, at the round cap, or when the user presses Stop.
+// The conversation is append-only: earlier messages are never edited, so cached prefixes and
+// thinking blocks stay valid.
+
+
+const kModels = {
+    'claude-opus-5-5': 'Claude Opus 5.5 (best designs)',
+    'claude-sonnet-5-5': 'Claude Sonnet 5.5 (faster, cheaper)',
+};
+const kEfforts = ['medium', 'high', 'xhigh'];
+// Refusal fallbacks (the "default" form) and progress notes between tool calls.
+const kBetas = ['server-side-fallback-2026-07-01', 'thinking-display-updates-2026-08-18'];
+const kMaxRounds = 30;
+
+class Assistant {
+    // client: an Anthropic client, or anything with beta.messages.stream(params, options) that
+    //   returns { on(event, fn), finalMessage() } (tests pass a stand-in).
+    // is_api_error(err): true for the SDK's API errors, which are never retried here.
+    // run_tool(name, input): Promise<{ content: string | blocks, is_error?: boolean }>.
+    // on_event(e): { type: 'text', text } | { type: 'status', text } | { type: 'tool', name, input }
+    //   | { type: 'tool_done', name, is_error } | { type: 'usage', usage }.
+    constructor({ client, is_api_error, model, effort, system, tools, run_tool, on_event }) {
+        this.client_ = client;
+        this.is_api_error_ = is_api_error ?? (err => typeof err?.status === 'number');
+        this.model = model;
+        this.effort = effort;
+        this.system_ = system;
+        this.tools_ = tools;
+        this.run_tool_ = run_tool;
+        this.on_event_ = on_event ?? (() => {});
+        this.messages = [];
+    }
+
+    params_() {
+        return {
+            model: this.model,
+            max_tokens: 64000,
+            betas: kBetas,
+            fallbacks: 'default',
+            thinking: { type: 'adaptive', display: 'updates' },
+            output_config: { effort: this.effort },
+            // The system prompt is fixed, so it caches; the top-level breakpoint moves along the
+            // conversation, so each round re-reads the previous one from the cache.
+            system: [{ type: 'text', text: this.system_, cache_control: { type: 'ephemeral' } }],
+            cache_control: { type: 'ephemeral' },
+            tools: this.tools_,
+            messages: this.messages,
+        };
+    }
+
+    // Runs one user turn. content is the user message's content. Resolves with
+    // { reason: 'done' | 'refused' | 'stopped' | 'round_cap' | other stop reason, detail? }.
+    async send(content, { signal } = {}) {
+        this.messages.push({ role: 'user', content });
+        let json_retries = 0;
+        for (let round = 0; round < kMaxRounds; round++) {
+            if (signal?.aborted) return { reason: 'stopped' };
+            const stream = this.client_.beta.messages.stream(this.params_(), { signal });
+            stream.on('text', text => this.on_event_({ type: 'text', text }));
+            let message;
+            try {
+                message = await stream.finalMessage();
+                json_retries = 0;
+            } catch (err) {
+                if (signal?.aborted) return { reason: 'stopped' };
+                // A tool input that could not be parsed at all: re-issue the round, a few times.
+                if (this.is_api_error_(err) || json_retries++ >= 2) throw err;
+                continue;
+            }
+            if (message.usage) this.on_event_({ type: 'usage', usage: message.usage });
+            // Progress notes come back as thinking blocks with text (display "updates").
+            for (const b of message.content) if (b.type === 'thinking' && b.thinking) this.on_event_({ type: 'status', text: b.thinking });
+
+            if (message.stop_reason === 'refusal') {
+                // Discard the partial reply; the conversation stays as it was before this round.
+                return { reason: 'refused', detail: message.stop_details?.explanation ?? null };
+            }
+            this.messages.push({ role: 'assistant', content: message.content });
+            if (message.stop_reason === 'pause_turn') continue;
+            const uses = message.content.filter(b => b.type === 'tool_use');
+            if (!uses.length) return { reason: message.stop_reason === 'end_turn' ? 'done' : message.stop_reason };
+
+            const results = [];
+            for (const use of uses) {
+                const tool = this.tools_.find(t => t.name === use.name);
+                // A reply cut off at max_tokens can hold a silently truncated tool input.
+                const bad = !tool ? `there is no tool ${use.name}` : message.stop_reason === 'max_tokens' ? 'the reply was cut off before this input was complete; send a shorter one' : invalid_input(tool, use.input);
+                if (bad) {
+                    results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Not run: ${bad}.` });
+                    continue;
+                }
+                this.on_event_({ type: 'tool', name: use.name, input: use.input });
+                try {
+                    const r = await this.run_tool_(use.name, use.input);
+                    results.push({ type: 'tool_result', tool_use_id: use.id, content: r.content, ...(r.is_error ? { is_error: true } : {}) });
+                    this.on_event_({ type: 'tool_done', name: use.name, is_error: !!r.is_error });
+                } catch (err) {
+                    results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Failed: ${err.message}` });
+                    this.on_event_({ type: 'tool_done', name: use.name, is_error: true });
+                }
+            }
+            // Every result of the round in one message, so parallel calls stay parallel.
+            this.messages.push({ role: 'user', content: results });
+            if (signal?.aborted) return { reason: 'stopped' };
+        }
+        return { reason: 'round_cap' };
+    }
+}
+return { kModels, kEfforts, kMaxRounds, Assistant };
+})();
+// src/ai/sdk.js
+const __m_ai_sdk_js = (function () {
+// The AI SDKs (SPEC 14), loaded on first use from jsDelivr at pinned versions, so the page works
+// without them and without keys. Each user brings their own keys, so the Anthropic client runs in
+// the browser with dangerouslyAllowBrowser.
+const kAnthropicUrl = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
+const kGenAiUrl = 'https://cdn.jsdelivr.net/npm/@google/genai@2.31.0/+esm';
+const kPictureModel = 'gemini-nano-banana-2.1';
+
+let anthropic_module = null;
+let genai_module = null;
+
+// { client, is_api_error } for the user's Claude key.
+async function claude_client(api_key) {
+    anthropic_module ??= await import(kAnthropicUrl);
+    const Anthropic = anthropic_module.default;
+    return {
+        client: new Anthropic({ apiKey: api_key, dangerouslyAllowBrowser: true }),
+        is_api_error: err => err instanceof Anthropic.APIError,
+        // Plain words for the errors a user can act on.
+        explain(err) {
+            if (err instanceof Anthropic.AuthenticationError) return 'The Claude key was not accepted. Check it in the assistant settings.';
+            if (err instanceof Anthropic.PermissionDeniedError) return 'The Claude key cannot use this model. Pick another in the assistant settings.';
+            if (err instanceof Anthropic.RateLimitError) return 'Claude is busy or the key has hit its rate limit. Wait a minute and try again.';
+            if (err instanceof Anthropic.APIConnectionError) return 'Could not reach Claude. Check the internet connection.';
+            if (err instanceof Anthropic.APIError) return `Claude returned an error (${err.status}): ${err.message}`;
+            return err?.message ?? String(err);
+        },
+    };
+}
+
+// A picture from a description, as { data (base64), mime_type }, with the user's Gemini key.
+async function make_picture(api_key, description, aspect = '1:1') {
+    genai_module ??= await import(kGenAiUrl);
+    const ai = new genai_module.GoogleGenAI({ apiKey: api_key });
+    const interaction = await ai.interactions.create({
+        model: kPictureModel,
+        input: description,
+        response_format: { type: 'image', aspect_ratio: aspect },
+    });
+    // The image comes back as output_image, or as an image block in the model's output steps.
+    const direct = interaction.output_image;
+    if (direct?.data) return { data: direct.data, mime_type: direct.mime_type ?? 'image/png' };
+    for (const step of interaction.steps ?? []) {
+        for (const block of step.content ?? []) if (block.type === 'image' && block.data) return { data: block.data, mime_type: block.mime_type ?? 'image/png' };
+    }
+    throw new Error('the image model returned no picture');
+}
+return { kPictureModel, claude_client, make_picture };
+})();
+// src/ai/ops.js
+const __m_ai_ops_js = (function () {
+const { SCHEMA, kMotifTypes, kMotifParams } = __m_core_schema_js;
+const { write_param, options_for } = __m_core_actions_js;
+const { new_motif } = __m_core_motif_defaults_js;
+const { generate_stack, kStyles } = __m_core_generate_js;
+// Validated design edits for the assistant (SPEC M4.5). Every operation names a registry control or
+// a change to one layer's motifs. Values are checked against the registry and clamped to its
+// ranges, so the assistant can set only what the controls could. apply_ops works on a copy and
+// reports, in plain words for the model, what it changed and what it refused.
+// Layers and motifs are numbered from 1 here (layer 1 is the front), as the UI shows them.
+
+
+
+
+
+const kById = new Map(SCHEMA.map(e => [e.id, e]));
+
+// Rounds to the control's step, keeping its decimal places (0.05 stays 0.05, not 0.0500000001).
+function to_step(v, step) {
+    if (!step) return v;
+    const places = (String(step).split('.')[1] ?? '').length;
+    return Number((Math.round(v / step) * step).toFixed(places));
+}
+
+// A value for a range or select spec: { value } or { error }; note says when it was clamped.
+function check_value(spec, value, options) {
+    const type = spec.type ?? 'range';
+    if (type === 'range') {
+        const v = Number(value);
+        if (!Number.isFinite(v)) return { error: `needs a number, got ${JSON.stringify(value)}` };
+        const clamped = Math.min(spec.max ?? Infinity, Math.max(spec.min ?? -Infinity, v));
+        const out = to_step(clamped, spec.step);
+        return { value: out, note: clamped !== v ? `clamped to ${out} (range ${spec.min} to ${spec.max})` : null };
+    }
+    if (type === 'select') {
+        const ids = (options ?? spec.options ?? []).map(o => (Array.isArray(o) ? o[0] : o));
+        return ids.includes(value) ? { value } : { error: `must be one of ${ids.join(', ')}` };
+    }
+    if (type === 'toggle') return typeof value === 'boolean' ? { value } : { error: 'needs true or false' };
+    if (type === 'colour') return /^#[0-9a-f]{6}$/i.test(String(value)) ? { value: String(value).toLowerCase() } : { error: 'needs a colour like #a1b2c3' };
+    return { error: `controls of type ${type} cannot be set here` };
+}
+
+function check_nodes(nodes) {
+    if (!Array.isArray(nodes) || nodes.length < 3) return 'nodes needs at least three nodes';
+    for (const n of nodes) {
+        for (const k of ['x', 'y', 'ix', 'iy', 'ox', 'oy']) if (!Number.isFinite(Number(n?.[k]))) return `every node needs numbers x, y, ix, iy, ox, oy`;
+    }
+    return null;
+}
+
+// A complete, valid motif from the model's partial one: missing parameters take the defaults the
+// "Add openings" menu uses. Returns { motif, notes } or { error }.
+function clean_motif(input, design, layer) {
+    const type = input?.type;
+    if (!(type in kMotifTypes)) return { error: `unknown motif type ${JSON.stringify(type)}; use one of ${Object.keys(kMotifTypes).join(', ')}` };
+    const motif = new_motif(type, design, layer);
+    const notes = [];
+    for (const key of kMotifTypes[type].params) {
+        if (!(key in input)) continue;
+        const r = check_value(kMotifParams[key], input[key]);
+        if (r.error) return { error: `${type}.${key} ${r.error}` };
+        motif[key] = r.value;
+        if (r.note) notes.push(`${type}.${key} ${r.note}`);
+    }
+    if (type === 'lattice' && input.cells && typeof input.cells === 'object') {
+        motif.cells = Object.fromEntries(Object.entries(input.cells).filter(([, v]) => v === 'solid'));
+    }
+    if (type === 'art') {
+        // Artwork paths come only from draw_artwork; edits move, scale, turn or repeat them.
+        if (!Array.isArray(input.paths) || !(input.src_w_mm > 0)) return { error: 'artwork comes from draw_artwork; edit its x_mm, y_mm, width_mm, angle_deg or repeat instead' };
+        motif.paths = input.paths;
+        motif.src_w_mm = input.src_w_mm;
+    }
+    if (type === 'shape' && 'nodes' in input) {
+        const bad = check_nodes(input.nodes);
+        if (bad) return { error: `shape.${bad}` };
+        motif.nodes = input.nodes.map(n => Object.fromEntries(['x', 'y', 'ix', 'iy', 'ox', 'oy'].map(k => [k, Number(n[k])])));
+    }
+    const known = new Set(['type', ...kMotifTypes[type].params, 'cells', 'nodes', 'paths', 'src_w_mm']);
+    for (const key of Object.keys(input)) if (!known.has(key)) notes.push(`${type}: ignored unknown field ${key}`);
+    return { motif, notes };
+}
+
+function layer_of(design, n) {
+    const k = Math.round(Number(n)) - 1;
+    if (!(k >= 0 && k < design.layers.length)) return { error: `layer ${JSON.stringify(n)} does not exist; layers are 1 to ${design.layers.length}` };
+    return { k };
+}
+
+// Applies one operation to d in place; returns { done } or { error }.
+function apply_one(d, op) {
+    switch (op?.op) {
+        case 'set': {
+            const entry = kById.get(op.id);
+            if (!entry) return { error: `no control ${JSON.stringify(op.id)}` };
+            let k = 0;
+            if (entry.scope === 'layer') {
+                const l = layer_of(d, op.layer);
+                if (l.error) return l;
+                k = l.k;
+            }
+            const options = entry.type === 'select' ? options_for(entry, d) : null;
+            const r = check_value(entry, op.value, options);
+            if (r.error) return { error: `${op.id} ${r.error}` };
+            write_param(entry, d, k, r.value);
+            const where = entry.scope === 'layer' ? ` on layer ${k + 1}` : '';
+            return { done: `set ${op.id}${where} to ${JSON.stringify(r.value)}${r.note ? `, ${r.note}` : ''}` };
+        }
+        case 'set_motifs':
+        case 'add_motif': {
+            const l = layer_of(d, op.layer);
+            if (l.error) return l;
+            const layer = d.layers[l.k];
+            if (layer.source.kind !== 'primitive') return { error: `layer ${l.k + 1} holds imported artwork; remove it before adding motifs` };
+            const list = op.op === 'add_motif' ? [op.motif] : op.motifs;
+            if (!Array.isArray(list)) return { error: `${op.op} needs ${op.op === 'add_motif' ? 'a motif' : 'a motifs list'}` };
+            const cleaned = [];
+            const notes = [];
+            for (const m of list) {
+                const r = clean_motif(m, d, layer);
+                if (r.error) return { error: r.error };
+                cleaned.push(r.motif);
+                notes.push(...r.notes);
+            }
+            if (op.op === 'add_motif') layer.source.motifs.push(...cleaned);
+            else layer.source.motifs = cleaned;
+            const what = op.op === 'add_motif' ? `added ${cleaned[0].type}` : `set ${cleaned.length} motifs (${cleaned.map(m => m.type).join(', ')})`;
+            return { done: `${what} on layer ${l.k + 1}${notes.length ? `; ${notes.join('; ')}` : ''}` };
+        }
+        case 'update_motif': {
+            const l = layer_of(d, op.layer);
+            if (l.error) return l;
+            const layer = d.layers[l.k];
+            const i = Math.round(Number(op.index)) - 1;
+            const old = layer.source.motifs?.[i];
+            if (!old) return { error: `layer ${l.k + 1} has no motif ${JSON.stringify(op.index)}; it has ${layer.source.motifs?.length ?? 0}` };
+            const r = clean_motif({ ...old, ...op.fields, type: old.type }, d, layer);
+            if (r.error) return { error: r.error };
+            layer.source.motifs[i] = r.motif;
+            return { done: `updated motif ${i + 1} (${old.type}) on layer ${l.k + 1}${r.notes.length ? `; ${r.notes.join('; ')}` : ''}` };
+        }
+        case 'remove_motif': {
+            const l = layer_of(d, op.layer);
+            if (l.error) return l;
+            const motifs = d.layers[l.k].source.motifs ?? [];
+            const i = Math.round(Number(op.index)) - 1;
+            if (!motifs[i]) return { error: `layer ${l.k + 1} has no motif ${JSON.stringify(op.index)}` };
+            const [gone] = motifs.splice(i, 1);
+            return { done: `removed motif ${i + 1} (${gone.type}) from layer ${l.k + 1}` };
+        }
+        case 'generate': {
+            if (op.style !== undefined) {
+                if (!(op.style in kStyles)) return { error: `style must be one of ${Object.keys(kStyles).join(', ')}` };
+                d.generator.style = op.style;
+            }
+            const seed = Math.max(0, Math.round(Number(op.seed ?? d.seed + 1)));
+            generate_stack(d, seed, { lock_n: op.keep_repeats !== false });
+            return { done: `generated a ${d.generator.style} pattern from seed ${seed}` };
+        }
+        case 'keep_layer': {
+            const l = layer_of(d, op.layer);
+            if (l.error) return l;
+            d.layers[l.k].locked = op.keep !== false;
+            return { done: `layer ${l.k + 1} is ${d.layers[l.k].locked ? 'kept' : 'no longer kept'} when generating` };
+        }
+        case 'rename': {
+            const name = String(op.name ?? '').trim().slice(0, 80);
+            if (!name) return { error: 'rename needs a name' };
+            d.name = name;
+            return { done: `renamed the piece ${JSON.stringify(name)}` };
+        }
+        default:
+            return { error: `unknown operation ${JSON.stringify(op?.op)}` };
+    }
+}
+
+// Applies ops in order to a copy of design. An invalid operation is skipped and reported; the
+// rest still apply. Returns { design, done: [text], errors: [text] }.
+function apply_ops(design, ops) {
+    const d = structuredClone(design);
+    const done = [];
+    const errors = [];
+    if (!Array.isArray(ops) || !ops.length) return { design: d, done, errors: ['ops needs at least one operation'] };
+    ops.forEach((op, n) => {
+        try {
+            const r = apply_one(d, op);
+            if (r.error) errors.push(`operation ${n + 1}: ${r.error}`);
+            else done.push(r.done);
+        } catch (err) {
+            errors.push(`operation ${n + 1}: ${err.message}`);
+        }
+    });
+    return { design: d, done, errors };
+}
+
+const round = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
+
+function motif_summary(m) {
+    const out = {};
+    for (const [k, v] of Object.entries(m)) {
+        if (k === 'cells') continue;
+        if (k === 'paths') {
+            out.contours = v.length;
+            continue;
+        }
+        if (k === 'nodes') out.nodes = v.map(n => Object.fromEntries(Object.entries(n).map(([a, b]) => [a, round(b)])));
+        else out[k] = round(v);
+    }
+    if (m.type === 'lattice') out.painted_cells = Object.keys(m.cells ?? {}).length;
+    return out;
+}
+
+// The design as the model reads it: everything it can change, nothing bulky.
+function design_summary(design) {
+    const p = design.piece;
+    const field = p.depth_mode === 'field' ? { ...p.field, image: p.field.image ? `${p.field.image.w} x ${p.field.image.h} picture` : undefined } : undefined;
+    return {
+        name: design.name,
+        seed: design.seed,
+        style: design.generator?.style,
+        palette: design.palette,
+        piece: { outline: p.outline, symmetry: p.symmetry, depth_mode: p.depth_mode, field, lighting: p.lighting },
+        layers: design.layers.map((l, k) => ({
+            layer: k + 1,
+            colour: l.finish.colour,
+            material: l.material,
+            gap_mm: l.gap_mm,
+            frame_ring_mm: l.frame_ring_mm,
+            kept: !!l.locked,
+            ...(l.source.kind === 'svg'
+                ? { artwork: { name: l.source.name, contours: l.source.paths?.length ?? 0 } }
+                : { motifs: (l.source.motifs ?? []).map(motif_summary) }),
+        })),
+    };
+}
+return { clean_motif, apply_ops, design_summary };
+})();
+// src/ai/run_tools.js
+const __m_ai_run_tools_js = (function () {
+const { apply_ops, design_summary } = __m_ai_ops_js;
+const { make_picture } = __m_ai_sdk_js;
+const { draw_stack } = __m_ui_start_screen_js;
+const { import_into_layer, piece_radius_mm } = __m_core_design_js;
+// Runs the assistant's tools against the studio (SPEC M4.5). Each tool returns content for the
+// model: short text, and pictures where it needs to see. Every design change goes through the
+// store as one undo step.
+// ctx: { design(), replace(design), build(design) -> layers (unpacked), check(design) -> checks,
+//        import_svg(text) -> import result, capture_3d() -> PNG bytes or null,
+//        pictures: Map, add_picture({ data, mime_type, source }) -> id, gemini_key }
+
+
+
+
+
+const kLookPx = 768; // pictures for the model: enough to judge, small enough to send often
+
+function bytes_to_base64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+}
+
+const canvas_png = canvas => new Promise(resolve => canvas.toBlob(async blob => resolve(new Uint8Array(await blob.arrayBuffer())), 'image/png'));
+const image_block = (data, media_type = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type, data } });
+
+function fast_findings(checks) {
+    const fatal = checks.filter(c => c.severity === 'fatal' && !c.overridden);
+    const warn = checks.filter(c => c.severity !== 'fatal' || c.overridden);
+    return { fatal: fatal.map(c => `${c.id} layer ${c.layer + 1}: ${c.message}`), warnings: warn.map(c => `${c.id} layer ${c.layer + 1}: ${c.message}`) };
+}
+
+// One layer drawn flat, with its bridges, on a dark ground.
+function draw_layer(canvas, design, layer) {
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#07050b';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of layer.material.flat()) {
+        x0 = Math.min(x0, p.x);
+        y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x);
+        y1 = Math.max(y1, p.y);
+    }
+    const s = (canvas.width * 0.92) / (Math.max(x1 - x0, y1 - y0) || 1);
+    const tx = p => canvas.width / 2 + (p.x - (x0 + x1) / 2) * s;
+    const ty = p => canvas.height / 2 - (p.y - (y0 + y1) / 2) * s;
+    const trace = paths => {
+        const path = new Path2D();
+        for (const p of paths) {
+            if (!p.length) continue;
+            path.moveTo(tx(p[0]), ty(p[0]));
+            for (const q of p.slice(1)) path.lineTo(tx(q), ty(q));
+            path.closePath();
+        }
+        return path;
+    };
+    ctx.fillStyle = design.layers[0]?.finish.colour ?? '#d8c09a';
+    ctx.fill(trace(layer.material), 'evenodd');
+    ctx.fillStyle = '#b4f03c';
+    for (const b of layer.bridges) ctx.fill(trace([b.rect]));
+}
+
+// A picture, decoded and drawn into a grey raster at most max_px on its longest side.
+async function grey_raster(picture, max_px = 320) {
+    const blob = await (await fetch(`data:${picture.mime_type};base64,${picture.data}`)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const k = Math.min(1, max_px / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * k));
+    const h = Math.max(1, Math.round(bitmap.height * k));
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const rgba = ctx.getImageData(0, 0, w, h).data;
+    const grey = new Uint8Array(w * h);
+    for (let i = 0; i < grey.length; i++) grey[i] = Math.round(0.2126 * rgba[4 * i] + 0.7152 * rgba[4 * i + 1] + 0.0722 * rgba[4 * i + 2]);
+    const data = bytes_to_base64(grey);
+    // A short content hash, so caches can name the picture without its bytes.
+    let h1 = 2166136261;
+    for (let i = 0; i < grey.length; i++) h1 = Math.imul(h1 ^ grey[i], 16777619);
+    return { w, h, data, hash: `${w}x${h}-${(h1 >>> 0).toString(36)}` };
+}
+
+// A smaller copy of a picture for the model (JPEG, at most kLookPx).
+async function for_model(picture) {
+    const blob = await (await fetch(`data:${picture.mime_type};base64,${picture.data}`)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const k = Math.min(1, kLookPx / Math.max(bitmap.width, bitmap.height));
+    const canvas = new OffscreenCanvas(Math.round(bitmap.width * k), Math.round(bitmap.height * k));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 })).arrayBuffer());
+    return image_block(bytes_to_base64(bytes), 'image/jpeg');
+}
+
+function make_tool_runner(ctx) {
+    return async function run_tool(name, input) {
+        switch (name) {
+            case 'edit_design': {
+                const r = apply_ops(ctx.design(), input.ops);
+                if (r.done.length) ctx.replace(r.design);
+                const layers = r.done.length ? await ctx.build(r.design) : null;
+                const lines = [`Done: ${r.done.length ? r.done.join('; ') : 'nothing'}.`];
+                if (r.errors.length) lines.push(`Refused: ${r.errors.join('; ')}.`);
+                if (layers) lines.push(`Open fraction by layer: ${layers.map((l, k) => `${k + 1}: ${Math.round(l.open_fraction * 100)}%`).join(', ')}.`);
+                lines.push(`Design now: ${JSON.stringify(design_summary(ctx.design()))}`);
+                return { content: lines.join('\n'), is_error: !r.done.length };
+            }
+            case 'check_design': {
+                const design = ctx.design();
+                const [layers, checks] = await Promise.all([ctx.build(design), ctx.check(design)]);
+                const f = fast_findings(checks);
+                return {
+                    content: JSON.stringify({
+                        status: f.fatal.length ? 'fatal problems to fix' : f.warnings.length ? 'warnings only' : 'all checks pass',
+                        fatal: f.fatal,
+                        warnings: f.warnings,
+                        layers: layers.map((l, k) => ({ layer: k + 1, open: Math.round(l.open_fraction * 100) / 100, islands: l.islands.length, cut_m: Math.round(l.cut_length_mm / 100) / 10 })),
+                    }),
+                };
+            }
+            case 'look': {
+                const design = ctx.design();
+                if (input.view === '3d') {
+                    const png = await ctx.capture_3d();
+                    if (png) return { content: [image_block(bytes_to_base64(png)), { type: 'text', text: 'The 3D preview.' }] };
+                }
+                const layers = await ctx.build(design);
+                const canvas = document.createElement('canvas');
+                canvas.width = kLookPx;
+                canvas.height = kLookPx;
+                let caption = 'Every layer stacked, seen from the front: openings show the layers behind.';
+                if (input.view === 'layer') {
+                    const k = Math.min(layers.length, Math.max(1, input.layer ?? 1)) - 1;
+                    draw_layer(canvas, design, layers[k]);
+                    caption = `Layer ${k + 1} alone: material in colour, bridges in green.`;
+                } else {
+                    const ctx2 = canvas.getContext('2d');
+                    ctx2.fillStyle = '#07050b';
+                    ctx2.fillRect(0, 0, canvas.width, canvas.height);
+                    draw_stack(canvas, design, layers);
+                }
+                return { content: [image_block(bytes_to_base64(await canvas_png(canvas))), { type: 'text', text: caption }] };
+            }
+            case 'draw_artwork': {
+                const design = ctx.design();
+                const k = input.layer - 1;
+                if (!design.layers[k]) return { content: `Layer ${input.layer} does not exist.`, is_error: true };
+                const result = await ctx.import_svg(input.svg);
+                const art = result.layers[0];
+                if (!art?.paths?.length) return { content: `The SVG had no filled, closed shapes (${result.notes.join('; ') || 'open paths and strokes are ignored'}).`, is_error: true };
+                const next = structuredClone(design);
+                if (input.as === 'material') {
+                    import_into_layer(next, k, { name: 'artwork.svg', paths: art.paths });
+                } else {
+                    // Openings: centre the artwork on its own box, then place it.
+                    let x0 = Infinity;
+                    let x1 = -Infinity;
+                    let y0 = Infinity;
+                    let y1 = -Infinity;
+                    for (const flat of art.paths) {
+                        for (let i = 0; i + 1 < flat.length; i += 2) {
+                            x0 = Math.min(x0, flat[i]);
+                            x1 = Math.max(x1, flat[i]);
+                            y0 = Math.min(y0, flat[i + 1]);
+                            y1 = Math.max(y1, flat[i + 1]);
+                        }
+                    }
+                    const cx = (x0 + x1) / 2;
+                    const cy = (y0 + y1) / 2;
+                    const src_w_mm = (x1 - x0) / 1000;
+                    const paths = art.paths.map(flat => flat.map((v, i) => Math.round(v - (i % 2 ? cy : cx))));
+                    const width_mm = input.width_mm ?? Math.min(src_w_mm, piece_radius_mm(next.piece));
+                    if (next.layers[k].source.kind !== 'primitive') next.layers[k].source = { kind: 'primitive', motifs: [] };
+                    next.layers[k].source.motifs.push({ type: 'art', x_mm: input.x_mm ?? 0, y_mm: input.y_mm ?? 0, width_mm: Math.round(width_mm * 10) / 10, angle_deg: 0, repeat: input.repeat ? 'around' : 'once', paths, src_w_mm });
+                }
+                ctx.replace(next);
+                const layers = await ctx.build(next);
+                const f = fast_findings((await ctx.check(next)).filter(c => c.layer === k));
+                return {
+                    content: `Placed ${art.paths.length} contours on layer ${input.layer} as ${input.as}. Islands on the layer: ${layers[k].islands.length} (bridged automatically). Layer ${input.layer} checks: ${f.fatal.length ? `fatal: ${f.fatal.join('; ')}` : 'no fatal problems'}${f.warnings.length ? `; warnings: ${f.warnings.join('; ')}` : ''}.`,
+                };
+            }
+            case 'make_picture': {
+                if (!ctx.gemini_key) return { content: 'No Gemini key is set, so pictures cannot be made. Draw artwork instead.', is_error: true };
+                const picture = await make_picture(ctx.gemini_key, input.description, input.aspect ?? '1:1');
+                const id = ctx.add_picture({ ...picture, source: input.description });
+                return { content: [await for_model(picture), { type: 'text', text: `Picture ${id}, from the image model. Trace it with trace_picture, or redraw parts with draw_artwork.` }] };
+            }
+            case 'trace_picture': {
+                const picture = ctx.pictures.get(input.picture);
+                if (!picture) return { content: `There is no picture ${input.picture}. Pictures so far: ${[...ctx.pictures.keys()].join(', ') || 'none'}.`, is_error: true };
+                const image = await grey_raster(picture);
+                const next = structuredClone(ctx.design());
+                next.piece.depth_mode = 'field';
+                Object.assign(next.piece.field, {
+                    kind: 'image',
+                    image,
+                    // Depth pictures are bright where near; near belongs at the front, where levels are low.
+                    invert: input.mode === 'depth' ? !input.invert : !!input.invert,
+                    smooth_mm: Math.min(6, Math.max(0, input.smooth_mm ?? 1)),
+                    zoom: Math.min(4, Math.max(0.5, input.zoom ?? 1)),
+                    lo: Math.min(0.9, Math.max(0.05, input.front_fill ?? 0.3)),
+                    hi: 1,
+                });
+                ctx.replace(next);
+                const layers = await ctx.build(next);
+                const f = fast_findings(await ctx.check(next));
+                return {
+                    content: `Traced picture ${input.picture} by ${input.mode} into ${layers.length} layers. Open fraction by layer: ${layers.map((l, k) => `${k + 1}: ${Math.round(l.open_fraction * 100)}%`).join(', ')}. ${f.fatal.length ? `Fatal: ${f.fatal.join('; ')}.` : 'No fatal problems.'}${f.warnings.length ? ` Warnings: ${f.warnings.length}.` : ''} Use look to compare with the picture.`,
+                };
+            }
+            default:
+                return { content: `There is no tool ${name}.`, is_error: true };
+        }
+    };
+}
+return { bytes_to_base64, make_tool_runner };
+})();
+// src/ai/settings.js
+const __m_ai_settings_js = (function () {
+// Assistant settings (SPEC M4.5): the user's own keys, the model and the effort. Keys stay in this
+// browser: in localStorage when the user asks to remember them, otherwise only for this session.
+const kKey = 'lamina-ai';
+
+function read(storage) {
+    try {
+        return JSON.parse(storage.getItem(kKey) ?? 'null');
+    } catch {
+        return null;
+    }
+}
+
+function load_settings() {
+    const saved = read(window.localStorage) ?? read(window.sessionStorage) ?? {};
+    return {
+        claude_key: saved.claude_key ?? '',
+        gemini_key: saved.gemini_key ?? '',
+        model: saved.model ?? 'claude-opus-5-5',
+        effort: saved.effort ?? 'high',
+        remember: saved.remember ?? false,
+    };
+}
+
+function save_settings(s) {
+    try {
+        const text = JSON.stringify(s);
+        window.localStorage.removeItem(kKey);
+        window.sessionStorage.removeItem(kKey);
+        (s.remember ? window.localStorage : window.sessionStorage).setItem(kKey, text);
+    } catch {
+        // Storage blocked: the settings last until the page closes.
+    }
+}
+
+function forget_keys(s) {
+    const cleared = { ...s, claude_key: '', gemini_key: '' };
+    save_settings(cleared);
+    return cleared;
+}
+return { load_settings, save_settings, forget_keys };
+})();
+// src/ui/assistant_panel.js
+const __m_ui_assistant_panel_js = (function () {
+const { el } = __m_ui_dom_js;
+const { Assistant, kModels, kEfforts } = __m_ai_agent_js;
+const { claude_client } = __m_ai_sdk_js;
+const { system_prompt, tools } = __m_ai_prompt_js;
+const { design_summary } = __m_ai_ops_js;
+const { make_tool_runner } = __m_ai_run_tools_js;
+const { load_settings, save_settings, forget_keys } = __m_ai_settings_js;
+// Assistant panel (SPEC M4.5): a drawer beside the preview with the conversation, a message box,
+// Stop, and settings for the user's own keys, model and effort. Every change the assistant makes
+// is an undo step in the studio.
+// Testing seam: when globalThis.__lamina_ai_stand_in is set (only by test scripts) it is used in
+// place of the SDK client: { client, is_api_error, explain }.
+
+
+
+
+
+
+
+
+const kToolWords = {
+    edit_design: 'Changing the design',
+    check_design: 'Checking',
+    look: 'Looking',
+    draw_artwork: 'Drawing artwork',
+    make_picture: 'Asking Gemini for a picture',
+    trace_picture: 'Tracing the picture into layers',
+};
+
+class AssistantPanel {
+    // ctx: the tool context (see ai/run_tools.js) minus pictures, add_picture and gemini_key,
+    // which the panel owns. on_open(open) tells the app the drawer opened or closed.
+    constructor(container, ctx, { on_open } = {}) {
+        this.ctx_ = ctx;
+        this.on_open_ = on_open ?? (() => {});
+        this.settings_ = load_settings();
+        this.pictures_ = new Map();
+        this.assistant_ = null;
+        this.running_ = null; // AbortController while a turn runs
+        this.usage_ = { input: 0, output: 0, cache_read: 0 };
+
+        this.root_ = el('aside', { class: 'assistant-drawer', hidden: '', 'aria-label': 'Assistant' });
+        const title = el('div', { class: 'assistant-head' }, [el('strong', { text: 'Assistant' })]);
+        this.model_chip_ = el('span', { class: 'chip' });
+        const gear = el('button', { type: 'button', class: 'tool small', text: 'Settings', title: 'Keys, model and effort' });
+        gear.addEventListener('click', () => this.show_settings_(!this.settings_open_));
+        const fresh = el('button', { type: 'button', class: 'tool small', text: 'New chat', title: 'Start a new conversation (the design stays)' });
+        fresh.addEventListener('click', () => this.new_chat_());
+        const close = el('button', { type: 'button', class: 'icon-btn small', 'aria-label': 'Close the assistant', text: '×' });
+        close.addEventListener('click', () => this.set_open(false));
+        title.append(this.model_chip_, el('span', { class: 'spacer' }), fresh, gear, close);
+
+        this.settings_box_ = el('div', { class: 'assistant-settings', hidden: '' });
+        this.log_ = el('div', { class: 'assistant-log', role: 'log', 'aria-live': 'polite' });
+        this.input_ = el('textarea', { class: 'assistant-input', rows: 3, placeholder: 'Describe a piece, or what to change. For example: a 10-layer lotus mandala with a key-fret border, deep blue to gold.', 'aria-label': 'Message to the assistant' });
+        this.input_.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.send(this.input_.value);
+            }
+        });
+        this.send_btn_ = el('button', { type: 'button', class: 'btn', text: 'Send' });
+        this.send_btn_.addEventListener('click', () => this.send(this.input_.value));
+        this.stop_btn_ = el('button', { type: 'button', class: 'btn ghost', text: 'Stop', hidden: '' });
+        this.stop_btn_.addEventListener('click', () => this.running_?.abort());
+        this.usage_line_ = el('span', { class: 'assistant-usage' });
+        // Your own picture: shown here, sent with the next message, and traceable like any other.
+        this.pending_ = [];
+        const file = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', hidden: '', 'aria-label': 'Add a picture' });
+        file.addEventListener('change', async () => {
+            for (const f of file.files) await this.add_user_picture_(f);
+            file.value = '';
+        });
+        const add_picture = el('button', { type: 'button', class: 'tool small', text: 'Add a picture', title: 'A photo or drawing for the assistant to trace or work from' });
+        add_picture.addEventListener('click', () => file.click());
+        this.file_ = file;
+        const foot = el('div', { class: 'assistant-foot' }, [this.input_, el('div', { class: 'assistant-actions' }, [add_picture, file, this.usage_line_, el('span', { class: 'spacer' }), this.stop_btn_, this.send_btn_])]);
+        this.root_.append(title, this.settings_box_, this.log_, foot);
+        container.append(this.root_);
+        this.refresh_chip_();
+        if (!this.settings_.claude_key) this.note_setup_();
+    }
+
+    get open() {
+        return !this.root_.hidden;
+    }
+
+    set_open(open) {
+        this.root_.hidden = !open;
+        this.on_open_(open);
+        if (open) this.input_.focus();
+    }
+
+    refresh_chip_() {
+        this.model_chip_.textContent = (kModels[this.settings_.model] ?? this.settings_.model).replace(/ \(.*\)$/, '');
+    }
+
+    add_(cls, text) {
+        const line = el('div', { class: `msg ${cls}`, text });
+        this.log_.append(line);
+        this.log_.scrollTop = this.log_.scrollHeight;
+        return line;
+    }
+
+    note_setup_() {
+        const card = el('div', { class: 'msg setup' }, [
+            el('p', { text: 'The assistant designs and edits pieces for you, draws artwork, and traces pictures into layers. It needs your own Claude API key; a Gemini key adds pictures from a description. Keys stay in this browser.' }),
+        ]);
+        const go = el('button', { type: 'button', class: 'btn', text: 'Add keys' });
+        go.addEventListener('click', () => this.show_settings_(true));
+        card.append(go);
+        this.log_.append(card);
+    }
+
+    show_settings_(open) {
+        this.settings_open_ = open;
+        this.settings_box_.hidden = !open;
+        if (!open) return;
+        const s = this.settings_;
+        const box = this.settings_box_;
+        box.textContent = '';
+        const field = (label, input, note) => el('label', { class: 'cal-field' }, [el('span', { text: label }), input, ...(note ? [el('small', { text: note })] : [])]);
+        const claude = el('input', { type: 'password', value: s.claude_key, autocomplete: 'off', placeholder: 'sk-ant-...' });
+        const gemini = el('input', { type: 'password', value: s.gemini_key, autocomplete: 'off', placeholder: 'optional' });
+        const model = el('select');
+        for (const [id, label] of Object.entries(kModels)) model.append(el('option', { value: id, text: label }));
+        model.value = s.model;
+        const effort = el('select');
+        for (const e of kEfforts) effort.append(el('option', { value: e, text: { medium: 'Medium: quicker', high: 'High: careful', xhigh: 'Extra high: most careful, slowest' }[e] }));
+        effort.value = s.effort;
+        const remember = el('input', { type: 'checkbox' });
+        remember.checked = s.remember;
+        const save = el('button', { type: 'button', class: 'btn', text: 'Save' });
+        save.addEventListener('click', () => {
+            this.settings_ = { claude_key: claude.value.trim(), gemini_key: gemini.value.trim(), model: model.value, effort: effort.value, remember: remember.checked };
+            save_settings(this.settings_);
+            this.assistant_ = null; // rebuilt with the new settings on the next message
+            this.refresh_chip_();
+            this.show_settings_(false);
+            this.add_('note', `Saved. ${this.settings_.claude_key ? 'Ready.' : 'Add a Claude key to start.'}${this.settings_.gemini_key ? ' Pictures from a description are on.' : ''}`);
+        });
+        const forget = el('button', { type: 'button', class: 'btn ghost', text: 'Forget keys' });
+        forget.addEventListener('click', () => {
+            this.settings_ = forget_keys(this.settings_);
+            this.assistant_ = null;
+            this.show_settings_(false);
+            this.add_('note', 'Keys forgotten in this browser.');
+        });
+        box.append(
+            field('Claude API key', claude, 'From console.anthropic.com. Calls go from this page straight to Anthropic, billed to your key.'),
+            field('Gemini API key', gemini, 'Optional, from aistudio.google.com: pictures from a description.'),
+            field('Model', model),
+            field('Effort', effort),
+            el('label', { class: 'ctl-toggle' }, [remember, el('span', { text: ' Remember keys on this device (otherwise only until the tab closes)' })]),
+            el('div', { class: 'assistant-actions' }, [forget, el('span', { class: 'spacer' }), save]),
+        );
+    }
+
+    new_chat_() {
+        this.running_?.abort();
+        this.assistant_ = null;
+        this.pictures_.clear();
+        this.pending_ = [];
+        this.usage_ = { input: 0, output: 0, cache_read: 0 };
+        this.usage_line_.textContent = '';
+        this.log_.textContent = '';
+        this.add_('note', 'New conversation. The design is unchanged.');
+    }
+
+    async assistant_for_() {
+        if (this.assistant_) return this.assistant_;
+        const sdk = globalThis.__lamina_ai_stand_in ?? (await claude_client(this.settings_.claude_key));
+        this.explain_ = sdk.explain ?? (err => err?.message ?? String(err));
+        const ctx = {
+            ...this.ctx_,
+            pictures: this.pictures_,
+            gemini_key: this.settings_.gemini_key,
+            add_picture: picture => {
+                const id = `p${this.pictures_.size + 1}`;
+                this.pictures_.set(id, picture);
+                this.show_picture_(id, picture);
+                return id;
+            },
+        };
+        this.assistant_ = new Assistant({
+            client: sdk.client,
+            is_api_error: sdk.is_api_error,
+            model: this.settings_.model,
+            effort: this.settings_.effort,
+            system: system_prompt(),
+            tools: tools({ pictures: !!this.settings_.gemini_key }),
+            run_tool: make_tool_runner(ctx),
+            on_event: e => this.on_event_(e),
+        });
+        return this.assistant_;
+    }
+
+    async add_user_picture_(f) {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        const picture = { data: btoa(bin), mime_type: f.type || 'image/png', source: f.name };
+        const id = `p${this.pictures_.size + 1}`;
+        this.pictures_.set(id, picture);
+        this.show_picture_(id, picture);
+        this.pending_.push(id);
+        this.add_('note', `Picture ${id} goes with your next message.`);
+    }
+
+    show_picture_(id, picture) {
+        const img = el('img', { class: 'msg-picture', alt: `Picture ${id}: ${picture.source ?? ''}`, src: `data:${picture.mime_type};base64,${picture.data}` });
+        const fig = el('figure', { class: 'msg picture' }, [img, el('figcaption', { text: `Picture ${id}` })]);
+        this.log_.append(fig);
+        this.log_.scrollTop = this.log_.scrollHeight;
+    }
+
+    on_event_(e) {
+        if (e.type === 'text') {
+            this.reply_ ??= this.add_('assistant', '');
+            this.reply_.textContent += e.text;
+            this.log_.scrollTop = this.log_.scrollHeight;
+        } else if (e.type === 'status') {
+            this.reply_ = null;
+            this.add_('status', e.text);
+        } else if (e.type === 'tool') {
+            this.reply_ = null;
+            this.tool_line_ = this.add_('tool', `${kToolWords[e.name] ?? e.name}...`);
+        } else if (e.type === 'tool_done') {
+            if (this.tool_line_) this.tool_line_.textContent = `${kToolWords[e.name] ?? e.name}: ${e.is_error ? 'did not work, retrying' : 'done'}`;
+            this.tool_line_?.classList.toggle('bad', e.is_error);
+        } else if (e.type === 'usage') {
+            const u = e.usage;
+            this.usage_.input += (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+            this.usage_.cache_read += u.cache_read_input_tokens ?? 0;
+            this.usage_.output += u.output_tokens ?? 0;
+            const k = n => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+            this.usage_line_.textContent = `Tokens: ${k(this.usage_.input)} in, ${k(this.usage_.cache_read)} from cache, ${k(this.usage_.output)} out`;
+        }
+    }
+
+    // Sends a message with the current design attached. Resolves when the turn ends.
+    async send(text) {
+        text = String(text ?? '').trim();
+        if (!text || this.running_) return;
+        if (!this.settings_.claude_key && !globalThis.__lamina_ai_stand_in) {
+            this.set_open(true);
+            this.show_settings_(true);
+            this.add_('note', 'Add your Claude API key first.');
+            return;
+        }
+        this.input_.value = '';
+        this.add_('user', text);
+        this.reply_ = null;
+        this.running_ = new AbortController();
+        this.send_btn_.hidden = true;
+        this.stop_btn_.hidden = false;
+        try {
+            const assistant = await this.assistant_for_();
+            const content = [{ type: 'text', text }];
+            // Pictures the user added since the last message, with their ids for trace_picture.
+            for (const id of this.pending_.splice(0)) {
+                const p = this.pictures_.get(id);
+                content.push({ type: 'image', source: { type: 'base64', media_type: p.mime_type, data: p.data } }, { type: 'text', text: `That is picture ${id}, added by the user (${p.source}).` });
+            }
+            content.push({ type: 'text', text: `The design as it is now: ${JSON.stringify(design_summary(this.ctx_.design()))}` });
+            const r = await assistant.send(content, { signal: this.running_.signal });
+            if (r.reason === 'stopped') this.add_('note', 'Stopped. Changes made so far stay; undo them in the top bar.');
+            else if (r.reason === 'refused') this.add_('note bad', `Claude declined this request${r.detail ? `: ${r.detail}` : ''}. Try wording it differently.`);
+            else if (r.reason === 'round_cap') this.add_('note', 'That took many steps, so the assistant paused. Say "carry on" to continue.');
+        } catch (err) {
+            this.add_('note bad', this.explain_ ? this.explain_(err) : err.message);
+        } finally {
+            this.running_ = null;
+            this.send_btn_.hidden = false;
+            this.stop_btn_.hidden = true;
+        }
+    }
+}
+return { AssistantPanel };
+})();
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
-const { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of, base_design } = __m_core_design_js;
+const { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { to_shape } = __m_sources_curves_js;
+const { new_motif } = __m_core_motif_defaults_js;
 const { write_param } = __m_core_actions_js;
 const { unpack_paths } = __m_geom_pack_js;
 const { check_level } = __m_core_check_level_js;
@@ -92681,11 +94139,14 @@ const { set_status, kSteps, show_step, panel_parts } = __m_ui_shell_js;
 const { LayerStrip } = __m_ui_layer_strip_js;
 const { StartScreen } = __m_ui_start_screen_js;
 const { Tour } = __m_ui_tour_js;
+const { AssistantPanel } = __m_ui_assistant_panel_js;
 const { save_bytes, el } = __m_ui_dom_js;
 // App controller: the design store, UI state, the step panel, the geometry worker and the views.
 // Every edit goes through the store (one undo step per action or slider drag). Every new design is
 // rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
 // screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
+
+
 
 
 
@@ -92748,46 +94209,6 @@ function restore_design() {
         return raw ? migrate(JSON.parse(raw)) : null;
     } catch {
         return null;
-    }
-}
-
-// Sensible starting values for new openings, relative to the space inside the frame ring.
-function new_motif(type, design, layer) {
-    const r = Math.max(10, piece_radius_mm(design.piece) - layer.frame_ring_mm);
-    const v = x => Math.round(x * r * 10) / 10;
-    switch (type) {
-        case 'disc':
-            return { type, d_mm: v(0.6) };
-        case 'window':
-            return { type, r_mm: v(0.55), size_mm: v(0.14), sides: 4, rot_deg: 0, mult: 1, angle_deg: 0 };
-        case 'petal':
-            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 };
-        case 'ring':
-            return { type, r_mm: v(0.78), w_mm: v(0.06), tie_mm: 3, mult: 1, angle_deg: 0 };
-        case 'ray':
-            return { type, r0_mm: v(0.3), r1_mm: v(0.9), w0_mm: 0, w1_mm: v(0.08), mult: 1, angle_deg: 0 };
-        case 'lattice':
-            return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
-        case 'fret':
-            return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
-        case 'scroll': {
-            // Not symmetric: off the mirror lines under a kaleidoscope.
-            const sym = design.piece.symmetry;
-            const angle_deg = sym.kind === 'dihedral' ? Math.round(900 / Math.max(1, sym.n)) / 10 : 0;
-            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.08), turns: 1.25, mult: 1, angle_deg };
-        }
-        case 'ruyi':
-            return { type, r_mm: v(0.6), length_mm: v(0.2), width_mm: v(0.16), mult: 1, angle_deg: 0 };
-        case 'ogee':
-            return { type, r_mm: v(0.6), length_mm: v(0.24), width_mm: v(0.12), mult: 1, angle_deg: 0 };
-        case 'lotus':
-            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.16), mult: 1, angle_deg: 0 };
-        case 'shape':
-            return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
-        case 'circuit':
-            return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
-        default:
-            throw new Error(`unknown opening type "${type}"`);
     }
 }
 
@@ -92855,6 +94276,7 @@ function start_app({ worker, preview, stage }) {
     let strip;
     let start;
     let tour;
+    let assistant;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -93045,6 +94467,21 @@ function start_app({ worker, preview, stage }) {
             else ui.more.add(key);
             storage_set(kMoreKey, JSON.stringify([...ui.more].filter(k => !k.startsWith('motif:'))));
             render_ui();
+        },
+        get assistant_open() {
+            return !!assistant?.open;
+        },
+        toggle_assistant() {
+            assistant.set_open(!assistant.open);
+        },
+        // From the start screen: a blank piece of that kind, then the assistant designs it.
+        describe(text, kind) {
+            ui.layer = 0;
+            store.replace(with_library(blank_design(kind)));
+            start.hide();
+            app.set_step('pattern');
+            assistant.set_open(true);
+            assistant.send(text);
         },
         show_start() {
             start.show({ continue_name: store.design.name });
@@ -93274,7 +94711,25 @@ function start_app({ worker, preview, stage }) {
             storage_set(kTourKey, '1');
             tour.start();
         },
+        describe: (text, kind) => app.describe(text, kind),
     });
+    // The assistant's tools work on the studio through this context (SPEC M4.5).
+    assistant = new AssistantPanel(
+        document.querySelector('.view'),
+        {
+            design: () => store.design,
+            replace: design => store.replace(design),
+            build: async design => (await worker.call('build', design)).layers.map(unpack_layer),
+            check: async design => (await worker.call('check', design)).checks,
+            import_svg: text => worker.call('import_svg', { files: [{ name: 'artwork.svg', text }] }),
+            capture_3d: async () => {
+                // The 3D view shows the latest design once its build lands.
+                for (let i = 0; i < 40 && state.built_for !== store.design; i++) await new Promise(r => setTimeout(r, 100));
+                return preview.capture_png ? await preview.capture_png().catch(() => null) : null;
+            },
+        },
+        { on_open: () => header.refresh() },
+    );
 
     // Builds run latest-wins; the slow checks follow once edits pause.
     let busy = false;
