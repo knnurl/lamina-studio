@@ -418,6 +418,7 @@ The test card and the calculator share one set of ladders.
   - Orbit and tilt.
   - Backlit mode adds an emissive plane, with a glow pass through the openings.
   - An exploded slider separates the layers along Z.
+- **Glue-on parts** show in place on their own layer in the 3D and 2D views and the strip, as they hang once glued (gap 0 behind, check G-03). They are cut as separate parts.
 - **Layer visibility (3D and 2D, the view only):** an eye button on each strip thumbnail shows or hides that layer, a Peel slider hides the front layers one at a time, and "Show all" brings everything back. Checks, cut files, the export picture and the assistant's look always keep every layer. Opening another design shows every layer.
 - **2D stacked render** (canvas): a flat composite with drop shadows and material tints, in the style of Angel's `preview_stack.png`. It is the fast fallback for very dense pieces.
 - **Layer view**: one layer, flat, with the check overlay, islands, bridges and hidden regions shown. This is where clicking on islands and bridges happens.
