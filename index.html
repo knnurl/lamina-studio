@@ -205,6 +205,27 @@ button { font: inherit; color: inherit; }
 }
 .ctl input[type="color"] { width: 44px; height: 26px; padding: 0; border: 1px solid var(--rule); border-radius: 6px; background: none; }
 .ctl-toggle .ctl-head { gap: 8px; }
+.ctl-title { flex: 1; font-size: 13px; color: var(--ink); }
+.palette-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+.swatch {
+    display: grid;
+    gap: 3px;
+    padding: 4px;
+    background: var(--stage-b);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    color: var(--ink-2);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+}
+.swatch:hover { border-color: var(--ink-2); }
+.swatch[aria-checked="true"] { border-color: var(--acid); color: var(--ink); }
+.swatch-bar { height: 14px; border-radius: 3px; }
+.swatch-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.palette-stops { display: flex; flex-wrap: wrap; gap: 4px; }
+.ctl .palette-stops input[type="color"] { width: 28px; height: 24px; }
 .ctl-toggle input { accent-color: var(--acid); }
 .lock {
     background: none;
@@ -243,6 +264,60 @@ button { font: inherit; color: inherit; }
 .strip-item:hover { border-color: var(--ink-2); }
 .strip-item[aria-selected="true"] { border-color: var(--acid); color: var(--ink); box-shadow: var(--glow) color-mix(in srgb, var(--acid) 30%, transparent); }
 .strip-thumb { width: 44px; height: 44px; display: block; }
+.strip-cell { position: relative; flex: none; }
+.layer-strip.all .strip-item { border-color: color-mix(in srgb, var(--acid) 55%, var(--rule)); }
+.switch {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    background: none;
+    border: 0;
+    color: var(--ink-2);
+    font-size: 12px;
+    cursor: pointer;
+}
+.switch-knob {
+    position: relative;
+    width: 28px;
+    height: 16px;
+    border-radius: 8px;
+    background: var(--stage-b);
+    border: 1px solid var(--rule);
+}
+.switch-knob::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ink-2);
+    transition: left 0.15s;
+}
+.switch[aria-checked="true"] { color: var(--ink); }
+.switch[aria-checked="true"] .switch-knob { border-color: var(--acid); }
+.switch[aria-checked="true"] .switch-knob::after { left: 14px; background: var(--acid); }
+.strip-eye {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 50%;
+    color: var(--ink-2);
+    cursor: pointer;
+}
+.strip-eye:hover { color: var(--ink); border-color: var(--ink-2); }
+.strip-cell.off .strip-thumb { opacity: 0.2; }
+.strip-cell.off .strip-eye { color: var(--warn); border-color: var(--warn); }
 
 .motif {
     display: grid;
@@ -420,14 +495,13 @@ button { font: inherit; color: inherit; }
     .mark span { display: none; }
 }
 
-/* Exploded-view slider over the 3D view */
-.explode {
+/* Peel and explode sliders over the 3D and 2D views */
+.view-tools {
     position: absolute;
     right: 14px;
     bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    display: grid;
+    gap: 4px;
     padding: 6px 10px;
     background: color-mix(in srgb, var(--panel) 85%, transparent);
     border: 1px solid var(--rule);
@@ -435,8 +509,10 @@ button { font: inherit; color: inherit; }
     font-size: 12px;
     color: var(--ink-2);
 }
-.explode[hidden] { display: none; }
-.explode input { width: 140px; accent-color: var(--acid); }
+.view-tool { display: grid; grid-template-columns: 50px 140px 52px; align-items: center; gap: 8px; }
+.view-tools[hidden], .view-tool[hidden] { display: none; }
+.view-tool input { width: 140px; accent-color: var(--acid); }
+.view-tool-value { color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* Sheets view */
 .sheets-view { position: absolute; inset: 0; overflow: auto; padding: 16px; display: grid; gap: 18px; align-content: start; }
@@ -1675,7 +1751,21 @@ const SCHEMA = [
         label: 'Palette',
         type: 'select',
         tier: 'basic',
+        ui: 'palette', // drawn as swatches with the colours to edit (palette_control.js)
         options: null, // filled from kPalettes by the UI, which imports design.js
+    },
+    {
+        id: 'palette_spread',
+        scope: 'design',
+        panel: 'material',
+        label: 'Spread',
+        type: 'select',
+        tier: 'basic',
+        options: [
+            ['blend', 'Blend front to back'],
+            ['repeat', 'Repeat in turn'],
+        ],
+        desc: 'Blend runs the colours from the front layer to the back; repeat gives each layer the next colour, then starts again.',
     },
     {
         id: 'all_material',
@@ -3086,7 +3176,9 @@ const kMaterials = {
     },
 };
 
-// Finish palettes, front to back. Colours are interpolated across however many layers there are.
+// Finish palettes, front to back. Colours are blended across however many layers there are, or
+// repeated in turn (the design's palette_spread). A design can also carry its own palette
+// (palette "custom", colours in palette_custom).
 const kPalettes = {
     orb: { label: 'Orb', stops: ['#a7a9b0', '#ff4a2a', '#3a7bd5', '#e9e4da', '#c8321e', '#243a8f', '#14101c'] },
     acid: { label: 'Acid', stops: ['#c4f24a', '#8cc152', '#5e8f3a', '#5b2f80', '#331a4d', '#120a1c'] },
@@ -3094,7 +3186,23 @@ const kPalettes = {
     ice: { label: 'Ice', stops: ['#eef7ff', '#a9d4ff', '#5aa8f0', '#2f6fd0', '#243b8a', '#0d1230'] },
     walnut: { label: 'Walnut to birch', stops: ['#2a1d14', '#4a3424', '#78553a', '#a8814f', '#d9bf8f', '#efe3c6'] },
     mono: { label: 'Mono', stops: ['#f2f2f2', '#c8c8c8', '#9a9a9a', '#6c6c6c', '#404040', '#161616'] },
+    uv: { label: 'UV neon', stops: ['#f4ff3a', '#3dff8b', '#00e1ff', '#ff2bd6', '#8f2bff', '#170630'] },
+    sunset: { label: 'Psy sunset', stops: ['#ffe36e', '#ffa53d', '#ff5e5b', '#d6336c', '#7b2cbf', '#22053f'] },
+    aurora: { label: 'Aurora', stops: ['#c2fff1', '#45f0b3', '#22b8b0', '#3a7bff', '#7d3cf0', '#160a38'] },
+    vapor: { label: 'Vaporwave', stops: ['#ffd6f6', '#ff71ce', '#b967ff', '#01cdfe', '#05ffa1', '#1b1035'] },
+    toxic: { label: 'Toxic', stops: ['#eaff3b', '#a3ff12', '#2ee36f', '#0f9a77', '#124a5c', '#06141f'] },
+    spectrum: { label: 'Spectrum', stops: ['#ff3b3b', '#ff9f1c', '#ffe74c', '#3ddc84', '#2ec4ff', '#5b5bff', '#b04bff'] },
+    fire_ice: { label: 'Fire and ice', stops: ['#ffd166', '#ff6b35', '#d62828', '#3a0ca3', '#4cc9f0', '#e6fbff'] },
+    candy: { label: 'Candy', stops: ['#fff4fb', '#ffc2e2', '#ff8fc7', '#c77dff', '#7f5af0', '#2c1a5c'] },
+    deep_sea: { label: 'Deep sea', stops: ['#c9fff4', '#5ee6d0', '#1fb3c7', '#167a9e', '#103f6e', '#071633'] },
+    forest: { label: 'Forest', stops: ['#dff5a6', '#9ccc5a', '#5a9440', '#2f6230', '#1b3d27', '#0b1a12'] },
+    gold: { label: 'Gold and black', stops: ['#fff1b8', '#f2c94c', '#c9972b', '#8a6418', '#3d2c0c', '#0d0a05'] },
+    copper: { label: 'Copper and teal', stops: ['#f6c28b', '#d98e5b', '#b0613a', '#2a9d8f', '#1d6b63', '#0b2b2a'] },
 };
+
+// A palette of the design's own has this many colours.
+const kMinStops = 2;
+const kMaxStops = 8;
 
 const kSheetPresets = {
     '600x400': { label: '600 x 400 mm', w_mm: 600, h_mm: 400 },
@@ -3111,9 +3219,10 @@ function rgb_to_hex(rgb) {
     return '#' + rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('');
 }
 
-// Colour for layer k of n from a palette's stops, interpolated in RGB.
-function palette_colour(palette_id, k, n) {
-    const stops = kPalettes[palette_id].stops;
+// Colour for layer k of n from a list of colours: blended in RGB from the first at the front to
+// the last at the back, or, with spread "repeat", the colours in turn.
+function stops_colour(stops, k, n, spread = 'blend') {
+    if (spread === 'repeat') return stops[k % stops.length];
     if (n <= 1) return stops[0];
     const t = (k / (n - 1)) * (stops.length - 1);
     const i = Math.min(stops.length - 2, Math.floor(t));
@@ -3121,6 +3230,17 @@ function palette_colour(palette_id, k, n) {
     const a = hex_to_rgb(stops[i]);
     const b = hex_to_rgb(stops[i + 1]);
     return rgb_to_hex(a.map((c, j) => c + (b[j] - c) * f));
+}
+
+// Colour for layer k of n from a named palette, blended (an unknown name falls back to Orb).
+function palette_colour(palette_id, k, n) {
+    return stops_colour((kPalettes[palette_id] ?? kPalettes.orb).stops, k, n);
+}
+
+// The design's palette colours, front to back: its own when the palette is "custom".
+function palette_stops(design) {
+    if (design.palette === 'custom' && design.palette_custom?.length >= kMinStops) return design.palette_custom;
+    return (kPalettes[design.palette] ?? kPalettes.orb).stops;
 }
 
 function default_layer(k, n, palette_id = 'orb') {
@@ -3146,6 +3266,8 @@ function base_design(layer_count = 8) {
         name: 'Untitled',
         seed: 1,
         palette: 'orb',
+        palette_custom: null,
+        palette_spread: 'blend',
         materials: {},
         generator: { style: 'classic' },
         piece: {
@@ -3229,13 +3351,23 @@ function apply_photo(design, image) {
     return design;
 }
 
-// Applies a palette to every layer's finish colour.
-function apply_palette(design, palette_id) {
+// Applies a palette (by default the design's own choice again) to every layer's finish colour.
+function apply_palette(design, palette_id = design.palette) {
     design.palette = palette_id;
+    const stops = palette_stops(design);
     const n = design.layers.length;
     design.layers.forEach((layer, k) => {
-        layer.finish.colour = palette_colour(palette_id, k, n);
+        layer.finish.colour = stops_colour(stops, k, n, design.palette_spread);
     });
+}
+
+// Makes colours (front to back) the design's own palette and applies it. Keeps the valid
+// #rrggbb colours, at most kMaxStops; throws if fewer than kMinStops are left.
+function set_custom_palette(design, colours) {
+    const stops = colours.filter(c => /^#[0-9a-f]{6}$/i.test(String(c))).map(c => c.toLowerCase()).slice(0, kMaxStops);
+    if (stops.length < kMinStops) throw new Error(`a palette needs ${kMinStops} to ${kMaxStops} colours like #a1b2c3`);
+    design.palette_custom = stops;
+    apply_palette(design, 'custom');
 }
 
 // Sets the layer count. New layers are copies of the last patterned layer, inserted before the
@@ -3307,7 +3439,7 @@ function scale_motifs(design, factor) {
         }
     }
 }
-return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_photo, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
+return { kSchemaVersion, kMaterials, kPalettes, kMinStops, kMaxStops, kSheetPresets, stops_colour, palette_colour, palette_stops, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_photo, apply_palette, set_custom_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
 // src/pipeline/islands.js
 const __m_pipeline_islands_js = (function () {
@@ -6647,7 +6779,7 @@ return {  };
 })();
 })();
 </script>
-<script>// Lamina Studio bundle: src/main.js and 52 modules.
+<script>// Lamina Studio bundle: src/main.js and 53 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -89482,7 +89614,21 @@ const SCHEMA = [
         label: 'Palette',
         type: 'select',
         tier: 'basic',
+        ui: 'palette', // drawn as swatches with the colours to edit (palette_control.js)
         options: null, // filled from kPalettes by the UI, which imports design.js
+    },
+    {
+        id: 'palette_spread',
+        scope: 'design',
+        panel: 'material',
+        label: 'Spread',
+        type: 'select',
+        tier: 'basic',
+        options: [
+            ['blend', 'Blend front to back'],
+            ['repeat', 'Repeat in turn'],
+        ],
+        desc: 'Blend runs the colours from the front layer to the back; repeat gives each layer the next colour, then starts again.',
     },
     {
         id: 'all_material',
@@ -89735,7 +89881,9 @@ const kMaterials = {
     },
 };
 
-// Finish palettes, front to back. Colours are interpolated across however many layers there are.
+// Finish palettes, front to back. Colours are blended across however many layers there are, or
+// repeated in turn (the design's palette_spread). A design can also carry its own palette
+// (palette "custom", colours in palette_custom).
 const kPalettes = {
     orb: { label: 'Orb', stops: ['#a7a9b0', '#ff4a2a', '#3a7bd5', '#e9e4da', '#c8321e', '#243a8f', '#14101c'] },
     acid: { label: 'Acid', stops: ['#c4f24a', '#8cc152', '#5e8f3a', '#5b2f80', '#331a4d', '#120a1c'] },
@@ -89743,7 +89891,23 @@ const kPalettes = {
     ice: { label: 'Ice', stops: ['#eef7ff', '#a9d4ff', '#5aa8f0', '#2f6fd0', '#243b8a', '#0d1230'] },
     walnut: { label: 'Walnut to birch', stops: ['#2a1d14', '#4a3424', '#78553a', '#a8814f', '#d9bf8f', '#efe3c6'] },
     mono: { label: 'Mono', stops: ['#f2f2f2', '#c8c8c8', '#9a9a9a', '#6c6c6c', '#404040', '#161616'] },
+    uv: { label: 'UV neon', stops: ['#f4ff3a', '#3dff8b', '#00e1ff', '#ff2bd6', '#8f2bff', '#170630'] },
+    sunset: { label: 'Psy sunset', stops: ['#ffe36e', '#ffa53d', '#ff5e5b', '#d6336c', '#7b2cbf', '#22053f'] },
+    aurora: { label: 'Aurora', stops: ['#c2fff1', '#45f0b3', '#22b8b0', '#3a7bff', '#7d3cf0', '#160a38'] },
+    vapor: { label: 'Vaporwave', stops: ['#ffd6f6', '#ff71ce', '#b967ff', '#01cdfe', '#05ffa1', '#1b1035'] },
+    toxic: { label: 'Toxic', stops: ['#eaff3b', '#a3ff12', '#2ee36f', '#0f9a77', '#124a5c', '#06141f'] },
+    spectrum: { label: 'Spectrum', stops: ['#ff3b3b', '#ff9f1c', '#ffe74c', '#3ddc84', '#2ec4ff', '#5b5bff', '#b04bff'] },
+    fire_ice: { label: 'Fire and ice', stops: ['#ffd166', '#ff6b35', '#d62828', '#3a0ca3', '#4cc9f0', '#e6fbff'] },
+    candy: { label: 'Candy', stops: ['#fff4fb', '#ffc2e2', '#ff8fc7', '#c77dff', '#7f5af0', '#2c1a5c'] },
+    deep_sea: { label: 'Deep sea', stops: ['#c9fff4', '#5ee6d0', '#1fb3c7', '#167a9e', '#103f6e', '#071633'] },
+    forest: { label: 'Forest', stops: ['#dff5a6', '#9ccc5a', '#5a9440', '#2f6230', '#1b3d27', '#0b1a12'] },
+    gold: { label: 'Gold and black', stops: ['#fff1b8', '#f2c94c', '#c9972b', '#8a6418', '#3d2c0c', '#0d0a05'] },
+    copper: { label: 'Copper and teal', stops: ['#f6c28b', '#d98e5b', '#b0613a', '#2a9d8f', '#1d6b63', '#0b2b2a'] },
 };
+
+// A palette of the design's own has this many colours.
+const kMinStops = 2;
+const kMaxStops = 8;
 
 const kSheetPresets = {
     '600x400': { label: '600 x 400 mm', w_mm: 600, h_mm: 400 },
@@ -89760,9 +89924,10 @@ function rgb_to_hex(rgb) {
     return '#' + rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('');
 }
 
-// Colour for layer k of n from a palette's stops, interpolated in RGB.
-function palette_colour(palette_id, k, n) {
-    const stops = kPalettes[palette_id].stops;
+// Colour for layer k of n from a list of colours: blended in RGB from the first at the front to
+// the last at the back, or, with spread "repeat", the colours in turn.
+function stops_colour(stops, k, n, spread = 'blend') {
+    if (spread === 'repeat') return stops[k % stops.length];
     if (n <= 1) return stops[0];
     const t = (k / (n - 1)) * (stops.length - 1);
     const i = Math.min(stops.length - 2, Math.floor(t));
@@ -89770,6 +89935,17 @@ function palette_colour(palette_id, k, n) {
     const a = hex_to_rgb(stops[i]);
     const b = hex_to_rgb(stops[i + 1]);
     return rgb_to_hex(a.map((c, j) => c + (b[j] - c) * f));
+}
+
+// Colour for layer k of n from a named palette, blended (an unknown name falls back to Orb).
+function palette_colour(palette_id, k, n) {
+    return stops_colour((kPalettes[palette_id] ?? kPalettes.orb).stops, k, n);
+}
+
+// The design's palette colours, front to back: its own when the palette is "custom".
+function palette_stops(design) {
+    if (design.palette === 'custom' && design.palette_custom?.length >= kMinStops) return design.palette_custom;
+    return (kPalettes[design.palette] ?? kPalettes.orb).stops;
 }
 
 function default_layer(k, n, palette_id = 'orb') {
@@ -89795,6 +89971,8 @@ function base_design(layer_count = 8) {
         name: 'Untitled',
         seed: 1,
         palette: 'orb',
+        palette_custom: null,
+        palette_spread: 'blend',
         materials: {},
         generator: { style: 'classic' },
         piece: {
@@ -89878,13 +90056,23 @@ function apply_photo(design, image) {
     return design;
 }
 
-// Applies a palette to every layer's finish colour.
-function apply_palette(design, palette_id) {
+// Applies a palette (by default the design's own choice again) to every layer's finish colour.
+function apply_palette(design, palette_id = design.palette) {
     design.palette = palette_id;
+    const stops = palette_stops(design);
     const n = design.layers.length;
     design.layers.forEach((layer, k) => {
-        layer.finish.colour = palette_colour(palette_id, k, n);
+        layer.finish.colour = stops_colour(stops, k, n, design.palette_spread);
     });
+}
+
+// Makes colours (front to back) the design's own palette and applies it. Keeps the valid
+// #rrggbb colours, at most kMaxStops; throws if fewer than kMinStops are left.
+function set_custom_palette(design, colours) {
+    const stops = colours.filter(c => /^#[0-9a-f]{6}$/i.test(String(c))).map(c => c.toLowerCase()).slice(0, kMaxStops);
+    if (stops.length < kMinStops) throw new Error(`a palette needs ${kMinStops} to ${kMaxStops} colours like #a1b2c3`);
+    design.palette_custom = stops;
+    apply_palette(design, 'custom');
 }
 
 // Sets the layer count. New layers are copies of the last patterned layer, inserted before the
@@ -89956,7 +90144,7 @@ function scale_motifs(design, factor) {
         }
     }
 }
-return { kSchemaVersion, kMaterials, kPalettes, kSheetPresets, palette_colour, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_photo, apply_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
+return { kSchemaVersion, kMaterials, kPalettes, kMinStops, kMaxStops, kSheetPresets, stops_colour, palette_colour, palette_stops, default_layer, base_design, migrate, material_of, layer_thickness_mm, piece_radius_mm, apply_photo, apply_palette, set_custom_palette, set_layer_count, design_from_import, import_into_layer, reverse_layers, scale_motifs };
 })();
 // src/preview/three_stack.js
 const __m_preview_three_stack_js = (function () {
@@ -89972,6 +90160,7 @@ const { layer_thickness_mm, material_of } = __m_core_design_js;
 // - Backlit: a glowing panel in the light colour, cut to the piece's silhouette, sits behind the
 //   stack; translucent layers pick up the light, and the room light dims, so openings glow.
 // - Exploded: spreads the layers apart along z for reading the stack; the design is unchanged.
+// - Hidden layers (the strip's eye buttons and the peel slider) are left out of the view only.
 // Assumptions: paths in micrometres, outer boundaries have positive area and holes negative.
 
 
@@ -90062,6 +90251,7 @@ class StackPreview {
         this.stack_ = new Group();
         this.scene_.add(this.stack_);
         this.explode_ = 0;
+        this.hidden_ = new Set();
 
         this.controls_ = new OrbitControls(this.camera_, this.renderer_.domElement);
         this.controls_.addEventListener('change', () => this.render());
@@ -90098,7 +90288,7 @@ class StackPreview {
             if (key) next.set(key, geometry);
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
             const mesh = new Mesh(geometry, materials_for(design, layer));
-            mesh.userData = { base_z: z, from_back: built.length - 1 - k, cached: !!key };
+            mesh.userData = { base_z: z, from_back: built.length - 1 - k, cached: !!key, layer: k };
             this.stack_.add(mesh);
             z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
         }
@@ -90118,7 +90308,7 @@ class StackPreview {
                     new ShapeGeometry(to_shapes([outline])),
                     new MeshBasicMaterial({ color: new Color(design.piece.lighting.colour).multiplyScalar(1.6) }),
                 );
-                glow.userData = { base_z: -6, from_back: -1 };
+                glow.userData = { base_z: -6, from_back: -1, layer: -1 };
                 this.stack_.add(glow);
             }
         }
@@ -90141,10 +90331,18 @@ class StackPreview {
         this.render();
     }
 
+    // hidden: the indices of the layers to leave out of the view (front is 0).
+    set_hidden(hidden) {
+        this.hidden_ = new Set(hidden);
+        this.place_();
+        this.render();
+    }
+
     place_() {
         for (const mesh of this.stack_.children) {
-            const { base_z, from_back } = mesh.userData;
+            const { base_z, from_back, layer } = mesh.userData;
             mesh.position.z = base_z + this.explode_ * kExplodeMm * Math.max(0, from_back);
+            mesh.visible = !this.hidden_.has(layer);
         }
     }
 
@@ -90152,12 +90350,19 @@ class StackPreview {
         this.renderer_.render(this.scene_, this.camera_);
     }
 
-    // A PNG of the current view, for the export zip. Rendered and read in the same task, so the
-    // drawing buffer is still intact.
+    // A PNG of the current view with every layer shown, for the export zip and the assistant.
+    // Rendered and read in the same task, so the drawing buffer is still intact: toBlob copies the
+    // pixels when it is called, and the hidden layers go back before the next frame.
     capture_png() {
+        const hidden = this.hidden_;
+        this.hidden_ = new Set();
+        this.place_();
         this.render();
         return new Promise(resolve => {
             this.renderer_.domElement.toBlob(async blob => resolve(blob ? new Uint8Array(await blob.arrayBuffer()) : null), 'image/png');
+            this.hidden_ = hidden;
+            this.place_();
+            this.render();
         });
     }
 
@@ -91224,7 +91429,7 @@ const __m_core_actions_js = (function () {
 const { get_path, set_path } = __m_core_schema_js;
 const { kMaterials, kPalettes, kSheetPresets, set_layer_count, apply_palette, scale_motifs, piece_radius_mm, material_of } = __m_core_design_js;
 // Applies a schema control's value to a design, including the controls that are not a plain path
-// (layer count, palette, material for all layers, sheet size) and resizing, which also scales
+// (layer count, palette and its spread, material for all layers, sheet size) and resizing, which also scales
 // the pattern. Also supplies the option lists that come from the design tables.
 
 
@@ -91232,8 +91437,10 @@ const { kMaterials, kPalettes, kSheetPresets, set_layer_count, apply_palette, sc
 function options_for(entry, design) {
     if (entry.options) return typeof entry.options === 'function' ? entry.options(design) : entry.options;
     switch (entry.id) {
-        case 'palette':
-            return Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
+        case 'palette': {
+            const named = Object.entries(kPalettes).map(([id, p]) => [id, p.label]);
+            return design.palette_custom ? [...named, ['custom', 'Custom']] : named;
+        }
         case 'all_material':
         case 'material':
             return Object.keys({ ...kMaterials, ...design.materials }).map(id => [id, material_of(design, { material: id }).label]);
@@ -91267,6 +91474,10 @@ function write_param(entry, design, layer_index, value) {
             return;
         case 'palette':
             apply_palette(design, value);
+            return;
+        case 'palette_spread':
+            design.palette_spread = value;
+            apply_palette(design);
             return;
         case 'all_material':
             for (const layer of design.layers) layer.material = value;
@@ -91991,6 +92202,7 @@ const { kUmPerMm } = __m_core_units_js;
 // 2D stacked render (SPEC 10): every layer drawn flat, back to front, in its finish colour with a
 // soft drop shadow, in the style of the AngelShadowBox preview. The fast view for very dense
 // pieces. Backlit pieces get a glow in the light colour behind the back layer's silhouette.
+// Hidden layers (the strip's eye buttons and the peel slider) are left out.
 // Assumptions: paths in micrometres, y up.
 
 
@@ -92001,12 +92213,19 @@ class Render2D {
         this.canvas_.hidden = true;
         container.append(this.canvas_);
         this.data_ = null;
+        this.hidden_ = new Set();
         new ResizeObserver(() => this.draw_()).observe(container);
     }
 
     set_visible(on) {
         this.canvas_.hidden = !on;
         if (on) this.draw_();
+    }
+
+    // hidden: the indices of the layers to leave out (front is 0).
+    set_hidden(hidden) {
+        this.hidden_ = new Set(hidden);
+        if (!this.canvas_.hidden) this.draw_();
     }
 
     show(design, built) {
@@ -92059,6 +92278,7 @@ class Render2D {
             ctx.restore();
         }
         for (let k = built.length - 1; k >= 0; k--) {
+            if (this.hidden_.has(k)) continue;
             const path = trace(built[k].material);
             ctx.save();
             ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
@@ -92326,12 +92546,97 @@ function make_control(spec, on_change, state = {}) {
 }
 return { make_control };
 })();
+// src/ui/palette_control.js
+const __m_ui_palette_control_js = (function () {
+const { kPalettes, palette_stops, kMinStops, kMaxStops } = __m_core_design_js;
+const { el } = __m_ui_dom_js;
+// Palette picker for the Look step (SPEC 11): a swatch for every palette, front colour on the
+// left, then the current palette's colours, front to back, to change, add to, take from or
+// reverse. Any such change makes the design's own palette, "Custom", saved with the design.
+// refresh() updates in place, so a colour being picked keeps its focus.
+
+
+
+const gradient = stops => `linear-gradient(90deg, ${stops.join(', ')})`;
+
+// app: { design, set_palette_stops(colours, coalesce_key) }; pick(id) chooses a palette by name.
+function make_palette_control(app, pick) {
+    const grid = el('div', { class: 'palette-grid', role: 'radiogroup', 'aria-label': 'Palette' });
+    const stops_box = el('div', { class: 'palette-stops' });
+    const tool = (text, title) => el('button', { type: 'button', class: 'tool small', text, title, 'aria-label': title });
+    const add = tool('+', 'Add a colour at the back');
+    const remove = tool('−', 'Take away the back colour');
+    const reverse = tool('Reverse', 'Swap the colours front to back');
+    const row = el('div', { class: 'ctl ctl-palette' }, [
+        el('div', { class: 'ctl-head' }, [el('span', { class: 'ctl-title', text: 'Palette' })]),
+        grid,
+        el('div', { class: 'ctl-head' }, [el('span', { class: 'ctl-title', text: 'Colours, front to back' })]),
+        el('div', { class: 'palette-edit' }, [stops_box, add, remove, reverse]),
+    ]);
+
+    const stops = () => palette_stops(app.design);
+    add.addEventListener('click', () => app.set_palette_stops([...stops(), stops().at(-1)]));
+    remove.addEventListener('click', () => app.set_palette_stops(stops().slice(0, -1)));
+    reverse.addEventListener('click', () => app.set_palette_stops([...stops()].reverse()));
+
+    function swatch(id, label, colours) {
+        const bar = el('span', { class: 'swatch-bar' });
+        bar.style.background = gradient(colours);
+        const b = el('button', { type: 'button', class: 'swatch', role: 'radio', title: label, 'data-id': id }, [bar, el('span', { class: 'swatch-name', text: label })]);
+        b.addEventListener('click', () => pick(id));
+        return b;
+    }
+
+    let has_custom = null;
+    let custom_bar = null;
+    let inputs = [];
+    function refresh() {
+        const d = app.design;
+        if (!!d.palette_custom !== has_custom) {
+            has_custom = !!d.palette_custom;
+            grid.textContent = '';
+            for (const [id, p] of Object.entries(kPalettes)) grid.append(swatch(id, p.label, p.stops));
+            if (has_custom) {
+                const b = swatch('custom', 'Custom', d.palette_custom);
+                custom_bar = b.firstChild;
+                grid.append(b);
+            }
+        }
+        if (has_custom) custom_bar.style.background = gradient(d.palette_custom);
+        for (const b of grid.children) b.setAttribute('aria-checked', String(b.dataset.id === d.palette));
+
+        const colours = stops();
+        if (inputs.length !== colours.length) {
+            stops_box.textContent = '';
+            inputs = colours.map((_, i) => {
+                const input = el('input', { type: 'color', 'aria-label': `Palette colour ${i + 1}` });
+                input.addEventListener('input', () => {
+                    const next = [...stops()];
+                    next[i] = input.value;
+                    app.set_palette_stops(next, `palette_custom.${i}`);
+                });
+                stops_box.append(input);
+                return input;
+            });
+        }
+        inputs.forEach((input, i) => {
+            if (document.activeElement !== input) input.value = colours[i];
+        });
+        add.disabled = colours.length >= kMaxStops;
+        remove.disabled = colours.length <= kMinStops;
+    }
+
+    return { el: row, refresh };
+}
+return { make_palette_control };
+})();
 // src/ui/panels.js
 const __m_ui_panels_js = (function () {
 const { SCHEMA, kMotifTypes, kMotifParams } = __m_core_schema_js;
 const { kCurveTypes } = __m_sources_curves_js;
 const { options_for, read_param } = __m_core_actions_js;
 const { make_control } = __m_ui_controls_js;
+const { make_palette_control } = __m_ui_palette_control_js;
 const { el } = __m_ui_dom_js;
 const { panel_parts } = __m_ui_shell_js;
 // The step panel (SPEC 11): one step at a time, generated from the registry. Each step shows its
@@ -92346,17 +92651,18 @@ const { panel_parts } = __m_ui_shell_js;
 
 
 
+
 // Registry panels shown in each step, with the sub-heading over each group.
 const kGroups = {
     piece: [{ panel: 'piece' }],
     pattern: [{ panel: 'pattern' }],
     look: [
         { panel: 'material', heading: () => 'Every layer' },
-        { panel: 'layers', heading: k => `Layer ${k + 1}` },
+        { panel: 'layers', per_layer: true, heading: k => `Layer ${k + 1}` },
         { panel: 'light', heading: () => 'Light' },
     ],
     structure: [
-        { panel: 'structure', scope: 'layer', heading: k => `Layer ${k + 1}` },
+        { panel: 'structure', scope: 'layer', per_layer: true, heading: k => `Layer ${k + 1}` },
         { panel: 'structure', scope: 'design', heading: () => 'Dowels and spacers' },
     ],
     make: [{ panel: 'make' }],
@@ -92366,7 +92672,8 @@ const shown_if = (entry, design, layer) => !entry.show_if || entry.show_if(desig
 
 class Panels {
     // app: { design, ui: { step, layer, locks, more }, set_param, set_motif_param, add_motif,
-    //        remove_motif, convert_motif, set_layer_locked, set_seed, randomise, toggle_more }
+    //        remove_motif, convert_motif, set_layer_locked, set_seed, randomise, toggle_more,
+    //        set_palette_stops }
     // extras: { [step]: (container) => void } fills fixed content after a step's controls.
     constructor(app, extras = {}) {
         this.app_ = app;
@@ -92381,7 +92688,7 @@ class Panels {
         const layer = d.layers[k];
         const panels = kGroups[step].map(g => g.panel);
         const shown = SCHEMA.filter(e => panels.includes(e.panel) && shown_if(e, d, layer)).map(e => e.id);
-        const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(',')];
+        const parts = [step, k, d.layers.length, shown.join(','), [...more].sort().join(','), this.app_.ui.all_layers];
         if (step === 'pattern') parts.push(d.piece.depth_mode, layer.source.kind, (layer.source.motifs ?? []).map(m => m.type).join(','));
         if (step === 'make') parts.push(Object.keys(d.materials ?? {}).join(','));
         return parts.join('|');
@@ -92409,7 +92716,7 @@ class Panels {
             const basic = entries.filter(e => e.tier !== 'advanced');
             advanced.push(...entries.filter(e => e.tier === 'advanced'));
             if (!basic.length) continue;
-            if (group.heading) body.append(el('h3', { class: 'sub', text: group.heading(k) }));
+            if (group.heading) body.append(el('h3', { class: 'sub', text: group.per_layer && app.ui.all_layers ? `All layers (showing layer ${k + 1})` : group.heading(k) }));
             for (const entry of basic) body.append(this.control_(entry));
         }
         if (step === 'pattern') this.motif_editor_(body);
@@ -92423,6 +92730,12 @@ class Panels {
 
     control_(entry) {
         const app = this.app_;
+        if (entry.ui === 'palette') {
+            const control = make_palette_control(app, id => app.set_param(entry, id, false));
+            control.refresh();
+            this.refreshers_.push(control.refresh);
+            return control.el;
+        }
         const spec = entry.type === 'select' ? { ...entry, options: options_for(entry, app.design) } : entry;
         const state = entry.lockable ? { locked: () => app.ui.locks.has(entry.id), toggle_lock: () => app.toggle_lock(entry.id) } : {};
         const control = make_control(spec, (value, { coalesce }) => app.set_param(entry, value, coalesce), state);
@@ -92503,7 +92816,8 @@ class Panels {
             return;
         }
 
-        const keep = make_control({ type: 'toggle', label: 'Keep this layer when randomising' }, value => app.set_layer_locked(value));
+        if (app.ui.all_layers) body.append(el('p', { class: 'step-note', text: 'Openings are edited one layer at a time, even with All layers on.' }));
+        const keep = make_control({ type: 'toggle', label: app.ui.all_layers ? 'Keep every layer when randomising' : 'Keep this layer when randomising' }, value => app.set_layer_locked(value));
         body.append(keep.el);
         this.refreshers_.push(() => keep.refresh(app.design.layers[app.ui.layer].locked));
         keep.refresh(layer.locked);
@@ -92914,27 +93228,48 @@ return { build_calibrate_panel };
 const __m_ui_layer_strip_js = (function () {
 const { el } = __m_ui_dom_js;
 // Layer strip (SPEC 11): a thumbnail of every layer under the preview, front first. Clicking one
-// selects it for every per-layer control. A thumbnail redraws only when its layer's material or
-// colour changes, so dense lattices cost nothing on edits that leave them alone.
+// selects it for every per-layer control; the "All layers" switch makes those controls change
+// every layer at once, and marks every thumbnail. Each has an eye button that shows or hides the layer in
+// the 3D and 2D views (the view only: checks and cut files keep every layer), and "Show all"
+// appears while any layer is hidden. A thumbnail redraws only when its layer's material or colour
+// changes, so dense lattices cost nothing on edits that leave them alone.
 // Assumptions: built layers carry material (micrometres, y up) and material_key.
 
 
 const kSizePx = 44;
+const kEyeShape = '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/>';
+const kEye = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">${kEyeShape}<circle cx="12" cy="12" r="3" fill="currentColor"/></svg>`;
+const kEyeOff = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">${kEyeShape}<path d="M4 4l16 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`;
 
 class LayerStrip {
-    // on_select(k) is called with the clicked layer's index.
-    constructor(container, { on_select }) {
+    // on_select(k) is called with the clicked layer's index, on_toggle(k) with the index whose eye
+    // was clicked, on_show_all() by "Show all", and on_all_layers(on) by the "All layers" switch.
+    constructor(container, { on_select, on_toggle, on_show_all, on_all_layers }) {
         this.container_ = container;
         this.on_select_ = on_select;
+        this.on_toggle_ = on_toggle;
         this.items_ = [];
-        container.append(el('span', { class: 'strip-label', text: 'Layers' }));
+        this.show_all_ = el('button', { type: 'button', class: 'tool small', text: 'Show all', hidden: '' });
+        this.show_all_.addEventListener('click', () => on_show_all());
+        this.all_ = el('button', {
+            type: 'button',
+            class: 'switch',
+            role: 'switch',
+            'aria-checked': 'false',
+            title: 'On: changes to a layer\'s colour, material, gap, frame ring, structure and "Keep this layer" go to every layer',
+        }, [el('span', { class: 'switch-knob' }), el('span', { text: 'All layers' })]);
+        this.all_.addEventListener('click', () => on_all_layers(this.all_.getAttribute('aria-checked') !== 'true'));
+        container.append(el('span', { class: 'strip-label', text: 'Layers' }), this.all_, this.show_all_);
     }
 
-    // design and its built layers (unpacked), and the selected layer index.
-    show(design, layers, selected) {
+    // design and its built layers (unpacked), the selected layer index, the hidden indices, and
+    // whether edits go to every layer.
+    show(design, layers, selected, hidden = new Set(), all = false) {
+        this.all_.setAttribute('aria-checked', String(all));
+        this.container_.classList.toggle('all', all);
         const n = design.layers.length;
         while (this.items_.length < n) this.add_();
-        while (this.items_.length > n) this.items_.pop().button.remove();
+        while (this.items_.length > n) this.items_.pop().cell.remove();
         // One scale for every thumbnail: the box round all the layers' material, found again only
         // when some layer's material changed (a scan of every point of a dense stack).
         const keys = (layers ?? []).map(l => l.material_key).join('|');
@@ -92958,16 +93293,27 @@ class LayerStrip {
         }
         const { x0, y0, x1, y1 } = this.b_;
         const box = `${x0}|${y0}|${x1}|${y1}`;
+        let any_hidden = false;
         this.items_.forEach((item, k) => {
             const colour = design.layers[k].finish.colour;
             item.button.setAttribute('aria-selected', String(k === selected));
             item.button.title = `Layer ${k + 1}${k === 0 ? ', the front' : k === n - 1 ? ', the back' : ''}`;
+            const off = hidden.has(k);
+            any_hidden ||= off;
+            if (off !== item.off) {
+                item.off = off;
+                item.cell.classList.toggle('off', off);
+                item.eye.innerHTML = off ? kEyeOff : kEye;
+                item.eye.setAttribute('aria-pressed', String(!off));
+                item.eye.title = off ? `Show layer ${k + 1} in the preview` : `Hide layer ${k + 1} in the preview (it is still cut)`;
+            }
             const layer = layers?.[k];
             const key = layer ? `${layer.material_key}|${colour}|${box}` : null;
             if (!layer || key === item.key) return;
             item.key = key;
             this.draw_(item.canvas, layer.material, colour, { x0, y0, x1, y1 });
         });
+        this.show_all_.hidden = !any_hidden;
     }
 
     add_() {
@@ -92975,8 +93321,10 @@ class LayerStrip {
         const canvas = el('canvas', { class: 'strip-thumb', width: kSizePx, height: kSizePx });
         const button = el('button', { type: 'button', class: 'strip-item', role: 'option' }, [canvas, el('span', { text: `L${k + 1}` })]);
         button.addEventListener('click', () => this.on_select_(k));
-        this.container_.append(button);
-        this.items_.push({ button, canvas, key: null });
+        const eye = el('button', { type: 'button', class: 'strip-eye', 'aria-label': `Show layer ${k + 1}` });
+        eye.addEventListener('click', () => this.on_toggle_(k));
+        this.container_.append(el('div', { class: 'strip-cell', role: 'none' }, [button, eye]));
+        this.items_.push({ cell: button.parentElement, button, eye, canvas, key: null, off: null });
     }
 
     draw_(canvas, material, colour, b) {
@@ -93236,7 +93584,7 @@ const kStops = [
     { target: '#steps', text: 'Five steps take you from an outline to cut files. Work through them in order, or click any step to jump to it.' },
     { target: '#panel', text: 'Each step shows only what it needs. "More options" at the bottom of a step holds the rest.' },
     { target: '#stage', text: 'The preview follows the step: 3D while you design, the Layer view for structure, the Sheets to make. Drag to turn it; the tabs switch views by hand.' },
-    { target: '#layer-strip', text: 'Every layer, front first. Click one to edit it in the Pattern, Look and Structure steps.' },
+    { target: '#layer-strip', text: 'Every layer, front first. Click one to edit it in the Pattern, Look and Structure steps. The eye hides a layer in the preview, and All layers sends your changes to every layer.' },
     { target: '#panel-next', text: 'Next takes you to the following step. Nothing is locked, so go back any time.' },
     { target: '.status', text: 'The light turns amber for warnings and red for anything that would break when cut. The Make step lists each one with a box on the layer.' },
 ];
@@ -94171,6 +94519,7 @@ function design_summary(design) {
         seed: design.seed,
         style: design.generator?.style,
         palette: design.palette,
+        palette_spread: design.palette_spread,
         piece: { outline: p.outline, symmetry: p.symmetry, depth_mode: p.depth_mode, field, lighting: p.lighting },
         layers: design.layers.map((l, k) => ({
             layer: k + 1,
@@ -95263,7 +95612,7 @@ return { open_photo_flow };
 // src/ui/app.js
 const __m_ui_app_js = (function () {
 const { Store } = __m_core_store_js;
-const { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design, apply_palette, apply_photo } = __m_core_design_js;
+const { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design, apply_palette, apply_photo, set_custom_palette } = __m_core_design_js;
 const { preset_by_id } = __m_core_presets_js;
 const { generate_stack } = __m_core_generate_js;
 const { to_shape } = __m_sources_curves_js;
@@ -95415,6 +95764,11 @@ function start_app({ worker, preview, stage }) {
         locks: new Set(),
         more: new Set(Array.isArray(saved_more) ? saved_more : []),
         draw: { tool: 'select', width_mm: 3, filled: true },
+        // On: per-layer settings (and "Keep this layer") change every layer at once.
+        all_layers: false,
+        // Layers left out of the 3D and 2D views (the view only), and the peel slider's position.
+        hidden: new Set(),
+        peel: 0,
     };
     const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
@@ -95431,12 +95785,35 @@ function start_app({ worker, preview, stage }) {
     let sketch_bar;
     let sheets_timer = null;
 
-    // The exploded-view slider floats over the 3D view.
-    const explode = document.createElement('label');
-    explode.className = 'explode';
-    explode.innerHTML = '<span>Explode</span><input type="range" min="0" max="1" step="0.01" value="0" aria-label="Explode the stack">';
-    explode.querySelector('input').addEventListener('input', e => preview.set_explode?.(Number(e.target.value)));
-    stage.append(explode);
+    // View tools float over the 3D and 2D views: Peel hides the front layers one at a time, and
+    // Explode (3D only) spreads the stack. Neither changes the design.
+    const peel_input = el('input', { type: 'range', min: 0, max: 0, step: 1, value: 0, 'aria-label': 'Peel off the front layers' });
+    const peel_value = el('span', { class: 'view-tool-value' });
+    const peel_row = el('label', { class: 'view-tool', title: 'Hides the front layers one at a time, to see inside the stack. The cut files keep every layer.' }, [
+        el('span', { text: 'Peel' }),
+        peel_input,
+        peel_value,
+    ]);
+    peel_input.addEventListener('input', () => app.peel(Number(peel_input.value)));
+    const explode_input = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: 0, 'aria-label': 'Explode the stack' });
+    explode_input.addEventListener('input', () => preview.set_explode?.(Number(explode_input.value)));
+    const explode_row = el('label', { class: 'view-tool' }, [el('span', { text: 'Explode' }), explode_input, el('span')]);
+    const view_tools = el('div', { class: 'view-tools' }, [peel_row, explode_row]);
+    stage.append(view_tools);
+
+    // The hidden layers go to the 3D and 2D views; the strip and the peel slider follow in render_ui.
+    function show_hidden() {
+        preview.set_hidden?.(ui.hidden);
+        render2d.set_hidden(ui.hidden);
+    }
+
+    // A different design opens at its front layer with every layer shown.
+    function fresh_view() {
+        ui.layer = 0;
+        ui.hidden.clear();
+        ui.peel = 0;
+        show_hidden();
+    }
 
     // Sheets are laid out on demand, only while the Sheets view is open.
     function schedule_sheets() {
@@ -95497,7 +95874,13 @@ function start_app({ worker, preview, stage }) {
     }
 
     function render_ui() {
-        ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
+        const n = store.design.layers.length;
+        ui.layer = Math.min(ui.layer, n - 1);
+        for (const k of ui.hidden) if (k >= n) ui.hidden.delete(k);
+        ui.peel = Math.min(ui.peel, n - 1);
+        peel_input.max = String(n - 1);
+        peel_input.value = String(ui.peel);
+        peel_value.textContent = `from L${ui.peel + 1}`;
         show_step(ui.step);
         panels.render();
         header.refresh();
@@ -95505,7 +95888,7 @@ function start_app({ worker, preview, stage }) {
             tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
         }
         render_layer_view();
-        strip.show(store.design, state.built?.layers, ui.layer);
+        strip.show(store.design, state.built?.layers, ui.layer, ui.hidden, ui.all_layers);
     }
 
     // After the first piece opens, the tour is offered once, in a card over the preview.
@@ -95530,7 +95913,15 @@ function start_app({ worker, preview, stage }) {
             return store.design;
         },
         set_param(entry, value, coalesce) {
+            if (entry.scope === 'layer' && ui.all_layers) {
+                edit(d => d.layers.forEach((_, k) => write_param(entry, d, k, value)), coalesce ? `${entry.id}@all` : null);
+                return;
+            }
             edit(d => write_param(entry, d, ui.layer, value), coalesce ? `${entry.id}@${ui.layer}` : null);
+        },
+        set_all_layers(on) {
+            ui.all_layers = on;
+            render_ui();
         },
         set_motif_param(i, key, value, coalesce) {
             edit(d => {
@@ -95589,7 +95980,7 @@ function start_app({ worker, preview, stage }) {
                     set_status('ok', `Imported ${texts[0].name} onto layer ${ui.layer + 1}: ${size}.${extra ? ` ${extra}.` : ''}`);
                 } else {
                     const stem = texts[0].name.replace(/\.svg$/i, '').replace(/[-_ ]*(layer)?[-_ ]*\d+$/i, '') || 'Imported';
-                    ui.layer = 0;
+                    fresh_view();
                     store.replace(with_library(design_from_import(result, stem)));
                     set_status('ok', `Imported ${n} layers (front first): ${size}.${extra ? ` ${extra}.` : ''}`);
                 }
@@ -95597,13 +95988,41 @@ function start_app({ worker, preview, stage }) {
                 set_status('bad', `Import failed: ${err.message}`);
             }
         },
+        // The design's own palette colours, front to back; a colour drag coalesces by its key.
+        set_palette_stops(colours, coalesce_key = null) {
+            edit(d => set_custom_palette(d, colours), coalesce_key);
+        },
         set_layer_locked(value) {
             edit(d => {
-                current(d).locked = value;
+                for (const layer of ui.all_layers ? d.layers : [current(d)]) layer.locked = value;
             });
         },
         select_layer(k) {
             ui.layer = k;
+            render_ui();
+        },
+        // Shows or hides layer k in the 3D and 2D views.
+        toggle_layer_shown(k) {
+            if (ui.hidden.has(k)) ui.hidden.delete(k);
+            else ui.hidden.add(k);
+            show_hidden();
+            render_ui();
+        },
+        // Hides the front p layers and shows the ones the slider passed back over; layers hidden by
+        // their eye buttons further back stay hidden.
+        peel(p) {
+            for (let k = 0; k < Math.max(p, ui.peel); k++) {
+                if (k < p) ui.hidden.add(k);
+                else ui.hidden.delete(k);
+            }
+            ui.peel = p;
+            show_hidden();
+            render_ui();
+        },
+        show_all_layers() {
+            ui.hidden.clear();
+            ui.peel = 0;
+            show_hidden();
             render_ui();
         },
         // A step opens the view it needs; the view tabs still switch by hand.
@@ -95704,7 +96123,7 @@ function start_app({ worker, preview, stage }) {
         },
         // From the start screen: a blank piece of that kind, then the assistant designs it.
         describe(text, kind) {
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(blank_design(kind)));
             start.hide();
             app.set_step('pattern');
@@ -95726,7 +96145,7 @@ function start_app({ worker, preview, stage }) {
             // Light at the front to dark at the back, as the bands preview showed it.
             apply_palette(d, 'mono');
             state.photo = r.photo;
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(apply_photo(d, r.raster)));
             start.hide();
             app.set_step('pattern');
@@ -95750,7 +96169,7 @@ function start_app({ worker, preview, stage }) {
             offer_tour();
         },
         start_blank(kind) {
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(blank_design(kind)));
             start.hide();
             app.set_step('piece');
@@ -95763,7 +96182,8 @@ function start_app({ worker, preview, stage }) {
         set_view(view) {
             ui.view = view;
             preview.set_visible(view === '3d');
-            explode.hidden = view !== '3d';
+            view_tools.hidden = view !== '3d' && view !== '2d';
+            explode_row.hidden = view !== '3d';
             render2d.set_visible(view === '2d');
             layer_view.set_visible(view === 'layer');
             sketch_bar.set_visible(view === 'layer');
@@ -95854,7 +96274,7 @@ function start_app({ worker, preview, stage }) {
             set_status('ok', `Saved ${material.label}: kerf ${material.kerf_mm} mm. Checks and cut files now use it.`);
         },
         load_preset(id) {
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(preset_by_id(id)));
         },
         undo: () => store.undo(),
@@ -95868,7 +96288,7 @@ function start_app({ worker, preview, stage }) {
             file.text()
                 .then(text => {
                     const design = migrate(JSON.parse(text));
-                    ui.layer = 0;
+                    fresh_view();
                     store.replace(design);
                 })
                 .catch(err => set_status('bad', `Could not open ${file.name}: ${err.message}`));
@@ -95964,7 +96384,12 @@ function start_app({ worker, preview, stage }) {
     for (const b of document.querySelectorAll('[data-step-go]')) b.addEventListener('click', () => app.set_step(b.dataset.stepGo));
     panel_parts().back.addEventListener('click', () => app.go_step(-1));
     panel_parts().next.addEventListener('click', () => app.go_step(1));
-    strip = new LayerStrip(document.getElementById('layer-strip'), { on_select: k => app.select_layer(k) });
+    strip = new LayerStrip(document.getElementById('layer-strip'), {
+        on_select: k => app.select_layer(k),
+        on_toggle: k => app.toggle_layer_shown(k),
+        on_show_all: () => app.show_all_layers(),
+        on_all_layers: on => app.set_all_layers(on),
+    });
     tour = new Tour(document.getElementById('tour'));
     const svg_input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
     svg_input.addEventListener('change', () => {
@@ -96029,7 +96454,7 @@ function start_app({ worker, preview, stage }) {
             preview.show(design, state.built.layers);
             render2d.show(design, state.built.layers);
             render_layer_view();
-            strip.show(store.design, state.built.layers, ui.layer);
+            strip.show(store.design, state.built.layers, ui.layer, ui.hidden, ui.all_layers);
             schedule_sheets();
             render_status();
             clearTimeout(check_timer);

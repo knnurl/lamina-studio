@@ -128,6 +128,7 @@ The design is one JSON document, the single source of truth. Every output is a p
 {
   "app": "lamina", "schema": 1,
   "name": "Orb 01", "seed": 12345,
+  "palette": "orb|...|custom", "palette_custom": null, "palette_spread": "blend|repeat",
   "piece": {
     "outline": { "kind": "circle|rect|arch|polygon|custom",
                  "w_mm": 300, "h_mm": 300, "sides": 8, "corner_r_mm": 0,
@@ -171,6 +172,7 @@ The design is one JSON document, the single source of truth. Every output is a p
 - `null` on a material-dependent value means "use the material preset".
 - `overrides` hold the hand edits, keyed by stable island IDs (section 6.6) so a re-run of a generator keeps them where it can: island policies, and dragged bridges as preferred angles in degrees from the island's centre (`bridge_angles`).
 - Cell paint lives on the lattice motif itself (`cells`, keyed by grid cell ID), so it survives re-rolling the lattice's seed.
+- `palette` names one of 18 palettes, or `custom` for the design's own colours in `palette_custom` (2 to 8, front to back). `palette_spread` blends the colours from the front layer to the back, or repeats them in turn. Choosing a palette sets every layer's finish colour; a layer's colour can then be changed on its own.
 - The `schema` version is bumped with a migration function. Old files always open.
 
 ### 5.1 Material presets
@@ -416,6 +418,7 @@ The test card and the calculator share one set of ladders.
   - Orbit and tilt.
   - Backlit mode adds an emissive plane, with a glow pass through the openings.
   - An exploded slider separates the layers along Z.
+- **Layer visibility (3D and 2D, the view only):** an eye button on each strip thumbnail shows or hides that layer, a Peel slider hides the front layers one at a time, and "Show all" brings everything back. Checks, cut files, the export picture and the assistant's look always keep every layer. Opening another design shows every layer.
 - **2D stacked render** (canvas): a flat composite with drop shadows and material tints, in the style of Angel's `preview_stack.png`. It is the fast fallback for very dense pieces.
 - **Layer view**: one layer, flat, with the check overlay, islands, bridges and hidden regions shown. This is where clicking on islands and bridges happens.
 - **Sheets view**: the packed sheets as they will be exported.
@@ -427,11 +430,13 @@ The test card and the calculator share one set of ladders.
   - **Five steps** in decision order. Each has a one-line guide, Back and Next buttons, and opens the view it needs:
     - Piece: outline, size, layers and symmetry. Opens 3D.
     - Pattern: style, Randomise and seed, depth mode, and the selected layer's openings or artwork. Opens 3D.
-    - Look: palette, material, colour, gap and frame ring of the selected layer, and light. Opens 3D.
+    - Look: palette (swatches, the palette's colours to edit, add to, take from or reverse, and the spread), material, colour, gap and frame ring of the selected layer, and light. Opens 3D.
     - Structure: islands, bridges, dowels and spacers. Opens the Layer view.
     - Make: sheet, checks, export and calibration. Opens the Sheets view.
   - Any step can be clicked at any time; nothing is locked. The view tabs (3D, 2D, Layer, Sheets) stay available, and a step change resets them to that step's view.
   - **A layer strip** under the preview shows a thumbnail of every layer, front first. Clicking one selects it for every per-layer control.
+    - **All layers switch:** while it is on, the per-layer controls (colour, material, gap, frame ring, island policy, bridges) and "Keep this layer" change every layer at once, as one undo step. Every thumbnail is marked and the heading reads "All layers". Openings stay per layer.
+    - Each thumbnail's eye button shows or hides the layer in the preview (section 10).
   - A status bar with the check light, chips and cut length.
 - **Start screen:** "What are you making?" with four kinds:
   - round wall piece;
@@ -1004,3 +1009,6 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Dowel search skips the windows after one miss | Saves windows that cannot succeed on art with no shared outer band; the mandala's build time measured the same before and after |
 | 2026-11-07 | The assistant runs on Gemini by default; Claude stays as an option | Owner's call: one free Gemini key covers the assistant and pictures, where Claude API use is billed separately from a Claude plan |
 | 2026-11-07 | Gemini Flash is the default model; Pro is labelled as needing billing | The owner's first request on Pro with a free key failed at once with a quota of 0; Flash works on free keys |
+| 2026-11-07 | Layer visibility is view state, not part of the design | Owner asked for per-layer on and off and a layer-by-layer slider. Hiding a layer is for looking into the stack; saving it would risk a design that previews without a layer it still cuts |
+| 2026-11-07 | Twelve more palettes, picked from swatches, plus the design's own palette and a spread | Owner asked for more colour presets and customisation. Editing any colour makes a Custom palette, so the named palettes stay fixed and an old design opens unchanged |
+| 2026-11-07 | An All layers switch applies per-layer control changes to every layer; openings stay per layer | Owner asked for a switch that applies changes to all layers. Layers usually carry different openings, so copying a motif edit across them has no clear meaning |

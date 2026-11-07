@@ -7,7 +7,7 @@ const kStops = [
     { target: '#steps', text: 'Five steps take you from an outline to cut files. Work through them in order, or click any step to jump to it.' },
     { target: '#panel', text: 'Each step shows only what it needs. "More options" at the bottom of a step holds the rest.' },
     { target: '#stage', text: 'The preview follows the step: 3D while you design, the Layer view for structure, the Sheets to make. Drag to turn it; the tabs switch views by hand.' },
-    { target: '#layer-strip', text: 'Every layer, front first. Click one to edit it in the Pattern, Look and Structure steps.' },
+    { target: '#layer-strip', text: 'Every layer, front first. Click one to edit it in the Pattern, Look and Structure steps. The eye hides a layer in the preview, and All layers sends your changes to every layer.' },
     { target: '#panel-next', text: 'Next takes you to the following step. Nothing is locked, so go back any time.' },
     { target: '.status', text: 'The light turns amber for warnings and red for anything that would break when cut. The Make step lists each one with a box on the layer.' },
 ];
