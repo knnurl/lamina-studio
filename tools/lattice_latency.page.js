@@ -1,18 +1,17 @@
 // Browser slider latency on the dense Lattice orb (docs/PERF.md, M2). Not a module: evaluated in
 // the page by
 //   node tools/shot.js out.png --timeout=120000 --eval-file=tools/lattice_latency.page.js
-// Loads the Lattice orb preset, then nudges the first opening slider 7 times, 3.5 s apart so the
+// Opens the Lattice orb from the start screen, then nudges the first opening slider 7 times, 3.5 s apart so the
 // slow checks finish between samples. Each sample runs from the input event to the next status
 // update; the main thread's long tasks during it are listed too. Returns the samples and median.
 (async () => {
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const q = s => document.querySelector(s);
   const status = q('#status-text');
-  const presets = q('select.tool-select');
-  presets.value = 'lattice';
-  presets.dispatchEvent(new Event('change'));
+  await wait(1500);
+  [...document.querySelectorAll('.preset')].find(b => b.textContent.includes('Lattice orb')).click();
   await wait(4000);
-  q('.step[data-step=pattern]').open = true;
+  q('.tour-offer .btn.ghost')?.click();
   await wait(300);
   const long = [];
   new PerformanceObserver(list => {
