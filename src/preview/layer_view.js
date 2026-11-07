@@ -8,6 +8,9 @@
 // Assumptions: paths in micrometres, y up; the canvas works in mm; shape nodes in local mm.
 import { kUmPerMm } from '../core/units.js';
 import { flatten_shape, move_anchor, move_handle, nearest_on_shape, split_segment, delete_node } from '../geom/bezier.js';
+import { to_domain, all_copies } from '../geom/sketch.js';
+
+const kCloseLoopPx = 10; // a pen stroke ending this near its start closes
 
 const kNodePx = 7; // pick radius for nodes and handles
 const r2 = v => Math.round(v * 100) / 100;
@@ -42,7 +45,9 @@ export class LayerView {
     //   on_bridge_reset(bridge)          an Alt-click on a bridge
     //   on_shape_edit(motif, nodes, drag) new nodes for the shape motif at index motif; drag is
     //                                    an ID shared by every move of one drag (one undo step)
-    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset, on_shape_edit }) {
+    //   on_sketch({ points, closed })    a finished stroke, in world micrometres
+    //   on_erase(point, tol)             an eraser click, with the pick radius in micrometres
+    constructor(container, { on_island_click, on_cell_click, on_bridge_drag, on_bridge_reset, on_shape_edit, on_sketch, on_erase }) {
         this.container_ = container;
         this.canvas_ = document.createElement('canvas');
         this.canvas_.className = 'layer-canvas';
@@ -66,17 +71,35 @@ export class LayerView {
         this.on_bridge_drag_ = on_bridge_drag;
         this.on_bridge_reset_ = on_bridge_reset;
         this.on_shape_edit_ = on_shape_edit;
+        this.on_sketch_ = on_sketch;
+        this.on_erase_ = on_erase;
         this.guide_ = null; // { from, to } in micrometres while a bridge is dragged
         this.drags_ = 0;
+        this.tool_ = 'select'; // or pen, line, circle, rect, erase
+        this.draft_ = null; // the stroke being drawn, in world micrometres
+        window.addEventListener('keydown', e => {
+            if (!this.draft_) return;
+            if (e.key === 'Escape') this.draft_ = null;
+            if (e.key === 'Enter' && this.draft_?.tool === 'line') this.finish_line_(false);
+            this.draw_();
+        });
 
         let drag = null;
         this.canvas_.addEventListener('pointerdown', e => {
+            if (this.tool_ !== 'select') {
+                if (this.view_) this.sketch_down_(e);
+                return;
+            }
             const node = this.node_at_(e.offsetX, e.offsetY);
             const bridge = node ? null : this.bridge_at_(e.offsetX, e.offsetY);
             drag = { x: e.offsetX, y: e.offsetY, x0: e.offsetX, y0: e.offsetY, moved: false, node, bridge, alt: e.altKey, id: ++this.drags_ };
             this.canvas_.setPointerCapture(e.pointerId);
         });
         this.canvas_.addEventListener('pointermove', e => {
+            if (this.draft_ && this.view_) {
+                this.sketch_move_(e);
+                return;
+            }
             if (!drag || !this.view_) return;
             const dx = e.offsetX - drag.x;
             const dy = e.offsetY - drag.y;
@@ -104,6 +127,10 @@ export class LayerView {
             }
         });
         this.canvas_.addEventListener('pointerup', e => {
+            if (this.tool_ !== 'select') {
+                this.sketch_up_(e);
+                return;
+            }
             if (drag?.bridge && drag.moved && this.guide_) {
                 const { from, to } = this.guide_;
                 this.on_bridge_drag_?.(drag.bridge, (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI);
@@ -129,6 +156,11 @@ export class LayerView {
             { passive: false },
         );
         this.canvas_.addEventListener('dblclick', e => {
+            if (this.tool_ === 'line') {
+                this.finish_line_(false);
+                return;
+            }
+            if (this.tool_ !== 'select') return;
             // On a node: delete it. On a shape's outline: add a node there. Elsewhere: refit.
             const node = this.node_at_(e.offsetX, e.offsetY);
             if (node?.which === 'anchor') {
@@ -146,6 +178,81 @@ export class LayerView {
             this.draw_();
         });
         new ResizeObserver(() => this.draw_()).observe(container);
+    }
+
+    // The drawing tool: select (the default editing), pen, line, circle, rect or erase.
+    set_tool(tool) {
+        this.tool_ = tool;
+        this.draft_ = null;
+        this.canvas_.dataset.tool = tool;
+        this.draw_();
+    }
+
+    sketch_down_(e) {
+        const p = this.to_world_(e.offsetX, e.offsetY);
+        this.canvas_.setPointerCapture(e.pointerId);
+        if (this.tool_ === 'erase') {
+            this.on_erase_?.(p, (8 / this.view_.scale) * kUmPerMm);
+            return;
+        }
+        if (this.tool_ === 'pen') this.draft_ = { tool: 'pen', points: [p], down: true };
+        else if (this.tool_ === 'circle' || this.tool_ === 'rect') this.draft_ = { tool: this.tool_, start: p, end: p, down: true };
+        else if (this.tool_ === 'line') {
+            if (!this.draft_) this.draft_ = { tool: 'line', points: [p, p] };
+            else {
+                const first = this.to_screen_(this.draft_.points[0]);
+                // Clicking the first point again closes the shape.
+                if (this.draft_.points.length > 3 && Math.hypot(first.x - e.offsetX, first.y - e.offsetY) < kCloseLoopPx) {
+                    this.finish_line_(true);
+                    return;
+                }
+                this.draft_.points.splice(-1, 1, p, p);
+            }
+        }
+        this.draw_();
+    }
+
+    sketch_move_(e) {
+        const d = this.draft_;
+        const p = this.to_world_(e.offsetX, e.offsetY);
+        if (d.tool === 'pen' && d.down) {
+            const last = this.to_screen_(d.points[d.points.length - 1]);
+            if (Math.hypot(last.x - e.offsetX, last.y - e.offsetY) > 1.5) d.points.push(p);
+        } else if ((d.tool === 'circle' || d.tool === 'rect') && d.down) d.end = p;
+        else if (d.tool === 'line') d.points[d.points.length - 1] = p;
+        this.draw_();
+    }
+
+    sketch_up_() {
+        const d = this.draft_;
+        if (!d || !d.down) return;
+        if (d.tool === 'pen') {
+            const a = this.to_screen_(d.points[0]);
+            const b = this.to_screen_(d.points[d.points.length - 1]);
+            const closed = d.points.length > 8 && Math.hypot(a.x - b.x, a.y - b.y) < kCloseLoopPx;
+            if (d.points.length > 1) this.on_sketch_?.({ points: d.points, closed });
+        } else {
+            const r = Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y);
+            if (r * (this.view_.scale / kUmPerMm) > 3) {
+                const points =
+                    d.tool === 'circle'
+                        ? Array.from({ length: 48 }, (_, i) => ({ x: d.start.x + r * Math.cos((i / 48) * 2 * Math.PI), y: d.start.y + r * Math.sin((i / 48) * 2 * Math.PI) }))
+                        : [d.start, { x: d.end.x, y: d.start.y }, d.end, { x: d.start.x, y: d.end.y }];
+                this.on_sketch_?.({ points, closed: true });
+            }
+        }
+        this.draft_ = null;
+        this.draw_();
+    }
+
+    finish_line_(closed) {
+        const d = this.draft_;
+        this.draft_ = null;
+        if (d?.tool === 'line') {
+            const points = d.points.slice(0, -1); // the last point follows the pointer
+            if (points.length >= 2) this.on_sketch_?.({ points, closed: closed && points.length >= 3 });
+        }
+        this.draw_();
     }
 
     set_visible(on) {
@@ -392,6 +499,33 @@ export class LayerView {
                 ctx.fillRect(a.x - 4, a.y - 4, 8, 8);
                 ctx.strokeRect(a.x - 4, a.y - 4, 8, 8);
             }
+        }
+
+        if (this.draft_) {
+            const d = this.draft_;
+            let pts = d.points;
+            let closed = false;
+            if (d.tool === 'circle' || d.tool === 'rect') {
+                const r = Math.hypot(d.end.x - d.start.x, d.end.y - d.start.y);
+                pts = d.tool === 'circle' ? Array.from({ length: 48 }, (_, i) => ({ x: d.start.x + r * Math.cos((i / 48) * 2 * Math.PI), y: d.start.y + r * Math.sin((i / 48) * 2 * Math.PI) })) : [d.start, { x: d.end.x, y: d.start.y }, d.end, { x: d.start.x, y: d.end.y }];
+                closed = true;
+            }
+            const copies = this.data_.sym ? all_copies(to_domain(pts, this.data_.sym), this.data_.sym) : [pts];
+            ctx.lineWidth = Math.max(1.5, (this.data_.stroke_mm ?? 2) * v.scale);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            copies.forEach((copy, i) => {
+                ctx.strokeStyle = i === 0 ? 'rgba(70, 180, 255, 0.85)' : 'rgba(70, 180, 255, 0.4)';
+                ctx.beginPath();
+                copy.forEach((q, j) => {
+                    const sp = this.to_screen_(q);
+                    if (j) ctx.lineTo(sp.x, sp.y);
+                    else ctx.moveTo(sp.x, sp.y);
+                });
+                if (closed) ctx.closePath();
+                ctx.stroke();
+            });
+            ctx.lineCap = 'butt';
         }
 
         for (const c of checks) {

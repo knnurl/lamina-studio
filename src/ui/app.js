@@ -24,6 +24,8 @@ import { LayerStrip } from './layer_strip.js';
 import { StartScreen } from './start_screen.js';
 import { Tour } from './tour.js';
 import { AssistantPanel } from './assistant_panel.js';
+import { SketchBar } from './sketch_bar.js';
+import { to_domain, simplify_line, chaikin, stroke_distance } from '../geom/sketch.js';
 import { save_bytes, el } from './dom.js';
 
 const kDesignKey = 'lamina-design';
@@ -121,6 +123,7 @@ export function start_app({ worker, preview, stage }) {
         view: '3d',
         locks: new Set(),
         more: new Set(Array.isArray(saved_more) ? saved_more : []),
+        draw: { tool: 'select', width_mm: 3, filled: true },
     };
     const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
@@ -134,6 +137,7 @@ export function start_app({ worker, preview, stage }) {
     let start;
     let tour;
     let assistant;
+    let sketch_bar;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -175,6 +179,8 @@ export function start_app({ worker, preview, stage }) {
             hole_d_mm: state.built.registration.hole_d_mm,
             drilled: k > 0 || d.registration.through_front,
             shapes: shapes_of(store.design, k),
+            sym: store.design.piece.symmetry,
+            stroke_mm: ui.draw.width_mm,
         });
     }
 
@@ -325,6 +331,80 @@ export function start_app({ worker, preview, stage }) {
             storage_set(kMoreKey, JSON.stringify([...ui.more].filter(k => !k.startsWith('motif:'))));
             render_ui();
         },
+        // Sketching (SPEC M4.5): strokes go back into the fundamental domain by the copy they were
+        // drawn on, onto the chosen layer's sketch motif, so the symmetry mirrors them.
+        add_stroke({ points, closed }) {
+            const k = ui.layer;
+            const d = store.design;
+            if (d.piece.depth_mode === 'field') {
+                set_status('warn', 'Sketches cut in per-layer mode. In the Pattern step, set "Layers come from" to each layer its own openings.');
+                return;
+            }
+            if (d.layers[k].source.kind !== 'primitive') {
+                set_status('warn', `Layer ${k + 1} holds imported artwork; sketch on another layer.`);
+                return;
+            }
+            let mm = to_domain(points, d.piece.symmetry).map(p => ({ x: p.x / 1000, y: p.y / 1000 }));
+            if (mm.length > 4) mm = simplify_line(mm, 0.15);
+            const stroke = { closed, fill: closed && ui.draw.filled, width_mm: ui.draw.width_mm, points: mm.map(p => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100]) };
+            edit(dd => {
+                const motifs = dd.layers[k].source.motifs;
+                let sketch = motifs.find(m => m.type === 'sketch');
+                if (!sketch) {
+                    sketch = { type: 'sketch', strokes: [] };
+                    motifs.push(sketch);
+                }
+                sketch.strokes.push(stroke);
+            });
+        },
+        erase_stroke(p, tol_um) {
+            const k = ui.layer;
+            const d = store.design;
+            const motifs = d.layers[k].source.motifs ?? [];
+            const i = motifs.findIndex(m => m.type === 'sketch');
+            if (i < 0) return;
+            const q = to_domain([p], d.piece.symmetry)[0];
+            const qm = { x: q.x / 1000, y: q.y / 1000 };
+            let best = -1;
+            let best_d = Infinity;
+            motifs[i].strokes.forEach((s, j) => {
+                const dist = stroke_distance(qm, s.points.map(([x, y]) => ({ x, y })), s.closed) - s.width_mm / 2;
+                if (dist < best_d) {
+                    best_d = dist;
+                    best = j;
+                }
+            });
+            if (best < 0 || best_d > tol_um / 1000) return;
+            edit(dd => {
+                const sketch = dd.layers[k].source.motifs[i];
+                sketch.strokes.splice(best, 1);
+                if (!sketch.strokes.length) dd.layers[k].source.motifs.splice(i, 1);
+            });
+        },
+        smooth_sketch() {
+            const k = ui.layer;
+            const i = (store.design.layers[k].source.motifs ?? []).findIndex(m => m.type === 'sketch');
+            if (i < 0) return set_status('ok', `No sketch on layer ${k + 1} yet.`);
+            edit(dd => {
+                for (const s of dd.layers[k].source.motifs[i].strokes) {
+                    if (s.points.length <= 4) continue; // circles are smooth; rectangles keep their corners
+                    const pts = simplify_line(chaikin(s.points.map(([x, y]) => ({ x, y })), s.closed, 2), 0.1);
+                    s.points = pts.map(p => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100]);
+                }
+            });
+        },
+        cleanup_sketch() {
+            const k = ui.layer;
+            if (!(store.design.layers[k].source.motifs ?? []).some(m => m.type === 'sketch')) return set_status('ok', `No sketch on layer ${k + 1} yet.`);
+            assistant.set_open(true);
+            assistant.send(`Clean up my sketch on layer ${k + 1}. Look at layer ${k + 1} first. Keep what I drew, but turn the rough strokes into clean shapes: curve or shape motifs, windows, petals, or artwork with draw_artwork. Then remove the sketch motif and check the design.`);
+        },
+        start_drawing() {
+            app.set_view('layer');
+            sketch_bar.set_tool('pen');
+            ui.draw.tool = 'pen';
+            layer_view.set_tool('pen');
+        },
         get assistant_open() {
             return !!assistant?.open;
         },
@@ -366,6 +446,7 @@ export function start_app({ worker, preview, stage }) {
             explode.hidden = view !== '3d';
             render2d.set_visible(view === '2d');
             layer_view.set_visible(view === 'layer');
+            sketch_bar.set_visible(view === 'layer');
             sheets_view.set_visible(view === 'sheets');
             if (view === 'sheets') {
                 sheets_view.show_message('Laying out the sheets...');
@@ -482,6 +563,23 @@ export function start_app({ worker, preview, stage }) {
         on_bridge_drag: (bridge, angle_deg) => app.drag_bridge(bridge, angle_deg),
         on_bridge_reset: bridge => app.reset_bridges(bridge),
         on_shape_edit: (i, nodes, drag) => app.edit_shape(i, nodes, drag),
+        on_sketch: stroke => app.add_stroke(stroke),
+        on_erase: (p, tol) => app.erase_stroke(p, tol),
+    });
+    sketch_bar = new SketchBar(stage, {
+        tool: t => {
+            ui.draw.tool = t;
+            layer_view.set_tool(t);
+        },
+        width: mm => {
+            ui.draw.width_mm = mm;
+            render_layer_view();
+        },
+        filled: on => {
+            ui.draw.filled = on;
+        },
+        smooth: () => app.smooth_sketch(),
+        cleanup: () => app.cleanup_sketch(),
     });
     render2d = new Render2D(stage);
     sheets_view = new SheetsView(stage);

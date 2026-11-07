@@ -179,6 +179,20 @@ export class Panels {
             }
             card.append(el('div', { class: 'motif-head' }, [...head, remove]));
             if (motif.type === 'shape') card.append(el('p', { class: 'step-note', text: 'Drag its nodes and handles in the Layer view. Double-click the outline to add a node, a node to delete it.' }));
+            if (motif.type === 'sketch') {
+                card.append(el('p', { class: 'step-note', text: `${motif.strokes.length} ${motif.strokes.length === 1 ? 'stroke' : 'strokes'}, drawn in the Layer view and mirrored round the piece.` }));
+                const row = el('div', { class: 'add-row' });
+                for (const [text, fn] of [
+                    ['Draw more', () => app.start_drawing()],
+                    ['Smooth', () => app.smooth_sketch()],
+                    ['Clean up with AI', () => app.cleanup_sketch()],
+                ]) {
+                    const b = el('button', { type: 'button', class: 'btn ghost small', text });
+                    b.addEventListener('click', fn);
+                    row.append(b);
+                }
+                card.append(row);
+            }
             const params = kMotifTypes[motif.type].params;
             const add = key => {
                 const p = kMotifParams[key];
@@ -199,9 +213,12 @@ export class Panels {
 
         const type = el('select', { 'aria-label': 'Opening type' });
         // Artwork arrives from SVG (the assistant, or logo import in M5), not from an empty card.
-        for (const [id, t] of Object.entries(kMotifTypes)) if (id !== 'art') type.append(el('option', { value: id, text: t.label }));
+        for (const [id, t] of Object.entries(kMotifTypes)) if (id !== 'art' && id !== 'sketch') type.append(el('option', { value: id, text: t.label }));
         const add = el('button', { type: 'button', class: 'btn ghost', text: 'Add openings' });
         add.addEventListener('click', () => app.add_motif(type.value));
         body.append(el('div', { class: 'add-row' }, [type, add]));
+        const draw = el('button', { type: 'button', class: 'btn ghost', text: 'Draw on this layer' });
+        draw.addEventListener('click', () => app.start_drawing());
+        body.append(draw);
     }
 }
