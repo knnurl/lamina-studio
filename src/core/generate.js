@@ -28,7 +28,79 @@ const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
 export const kStyles = {
     classic: kTypes,
     lattice: ['lattice', 'fret', 'lattice', 'window'],
+    circuit: ['circuit'],
 };
+
+// The share of the piece one copy of the fundamental domain covers.
+function domain_share(sym) {
+    switch (sym.kind) {
+        case 'mirror_x':
+            return 1 / 2;
+        case 'mirror_xy':
+            return 1 / 4;
+        case 'rot':
+        case 'dihedral':
+            return 1 / (rotation_order(sym) * (sym.kind === 'dihedral' ? 2 : 1));
+        default:
+            return 1;
+    }
+}
+
+// Circuit style (M3): every patterned layer carries one circuit over the area inside its frame
+// ring, with its own seed, so the traces behind show through the slots in front. Strands, gaps and
+// ends are shared through the stack, traces thin out towards the back, and the front layer may be
+// bars over the slotted layers behind. The back layer stays solid.
+function generate_circuit(design, seed, lock_n) {
+    const rng = rng_for(seed, 'circuit-stack');
+    const sym = design.piece.symmetry;
+    if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([4, 6, 6, 8, 8, 12]);
+    const o = design.piece.outline;
+    const ring0 = design.layers[0].frame_ring_mm;
+    const strands = rng.pick([1, 2, 2, 3, 3, 4]);
+    const strand_mm = r1(rng.range(1.8, 2.6));
+    const gap_mm = r1(rng.range(1.7, 2.4));
+    const terminal = rng.pick(['mix', 'mix', 'drop', 'bulb', 'ring', 'via']);
+    const straight = r2(rng.range(0.55, 0.85));
+    const front_bars = rng.chance(0.4);
+    const density = rng.range(0.35, 0.6);
+    const reach = rng.range(0.5, 0.9);
+    const ring_step = rng.range(0, 1.5);
+    const round = o.kind === 'circle' || o.kind === 'polygon';
+    const pitch_mm = strands * strand_mm + strands * gap_mm;
+    const count = design.layers.length;
+    const patterned = count > 1 ? count - 1 : 1;
+    design.layers.forEach((layer, k) => {
+        if (layer.locked || layer.source.kind !== 'primitive') return; // imported artwork is kept
+        layer.frame_ring_mm = r1(ring0 + k * ring_step);
+        if (k >= patterned) {
+            layer.source.motifs = [];
+            return;
+        }
+        const depth = patterned > 1 ? k / (patterned - 1) : 0;
+        const w = r1(o.w_mm - 2 * layer.frame_ring_mm);
+        const h = r1((round ? o.w_mm : o.h_mm) - 2 * layer.frame_ring_mm);
+        const starts = ((2 * w + 2 * h) * domain_share(sym)) / pitch_mm;
+        layer.source.motifs = [
+            {
+                type: 'circuit',
+                polarity: k === 0 && front_bars ? 'bars' : 'slots',
+                area_w_mm: w,
+                area_h_mm: h,
+                reach_mm: round ? r1(w / 2) : 0,
+                r0_mm: round ? r1(w * 0.09) : 0,
+                strands,
+                strand_mm,
+                gap_mm,
+                traces: Math.max(2, Math.round(starts * density * (1 - 0.4 * depth))),
+                length: Math.max(4, Math.round((reach * Math.max(w, h)) / pitch_mm)),
+                straight,
+                terminal,
+                seed: rng_for(seed, 'circuit', k).int(0, 9999),
+            },
+        ];
+    });
+    design.seed = seed >>> 0;
+}
 
 // Fret tile sizes in grid units (width, height), as in sources/lattice.js.
 const kFretTiles = { greek: [5, 5], double: [6, 5], tfret: [6, 6] };
@@ -149,6 +221,7 @@ function band_motif(band, n, depth, k, sym) {
 // Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
 // symmetry repeat count; options.types overrides the motif types of the design's style.
 export function generate_stack(design, seed, { lock_n = false, types = null } = {}) {
+    if (!types && design.generator?.style === 'circuit') return generate_circuit(design, seed, lock_n);
     types = types ?? kStyles[design.generator?.style] ?? kTypes;
     const rng = rng_for(seed, 'stack');
     const sym = design.piece.symmetry;

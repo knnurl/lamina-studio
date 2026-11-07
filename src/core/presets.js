@@ -33,6 +33,20 @@ export const kPresets = [
             }),
     },
     {
+        id: 'circuit',
+        name: 'Circuit panel',
+        make: () =>
+            preset('Circuit panel', {
+                layers: 6,
+                outline: { kind: 'rect', w_mm: 380, h_mm: 280 },
+                symmetry: { kind: 'mirror_xy' },
+                palette: 'acid',
+                seed: 7, // from a rendered sweep of seeds 1 to 8: bars in front, the richest routing
+                frame_ring_mm: 12, // room for the dowels in the ring: a bars front layer shares little else
+                style: 'circuit',
+            }),
+    },
+    {
         id: 'orb',
         name: 'Orb',
         make: () =>
