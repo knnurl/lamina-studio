@@ -6,6 +6,7 @@
 // Assumptions: geometry in micrometres, origin at the symmetry centre.
 import { offset, subtract, intersect_paths, area_mm2, path_area_um2, union_fill } from '../geom/clip.js';
 import { from_flat } from '../geom/pack.js';
+import { field_material, field_level } from '../sources/field.js';
 import { outline_paths } from '../geom/outline.js';
 import { layer_openings } from '../sources/motifs.js';
 import { mm_to_um } from '../core/units.js';
@@ -31,6 +32,25 @@ export function compose_layer(design, k) {
     }
     const ring_um = mm_to_um(layer.frame_ring_mm ?? 0);
     const inner = ring_um > 0 ? offset(outline, -ring_um) : outline;
+    if (design.piece.depth_mode === 'field') {
+        // Field mode (SPEC 6.7): the layer is the field below its level, plus its frame ring.
+        const level = field_level(design.piece, k, design.layers.length);
+        const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+        for (const p of outline.flat()) {
+            b.x0 = Math.min(b.x0, p.x);
+            b.y0 = Math.min(b.y0, p.y);
+            b.x1 = Math.max(b.x1, p.x);
+            b.y1 = Math.max(b.y1, p.y);
+        }
+        const fm = field_material(design.piece, level, b);
+        if (fm === null) return { outline, inner, material: outline };
+        // A morphological opening at half the minimum web removes the necks a field makes at
+        // its saddle points: the laser would cut them away anyway (they would fail G-02).
+        const half = mm_to_um(material_of(design, layer).min_web_mm / 2);
+        const opened = offset(offset(fm, -half, 'miter'), half, 'miter');
+        const ring = ring_um > 0 ? subtract(outline, inner) : [];
+        return { outline, inner, material: drop_crumbs(union_fill([...intersect_paths(opened, outline), ...ring], false)) };
+    }
     const openings = layer_openings(layer, design.piece.symmetry);
     const cut = openings.length && inner.length ? intersect_paths(openings, inner) : [];
     const material = cut.length ? drop_crumbs(subtract(outline, cut)) : outline;
@@ -73,13 +93,15 @@ const short_key = text => `${hash_str(text).toString(36)}.${text.length}`;
 // Every layer, front first, with islands resolved, then the stack-level stages: locators for
 // glue-on islands are scored on the layer behind, and registration adds dowel holes, engraved IDs
 // and spacers. Returns layers, registration, the fast checks and the time taken.
-// Each layer carries cache_key, which changes whenever its final geometry can change.
+// Each layer carries cache_key, which changes whenever its final geometry can change, and
+// material_key, which changes only when its cut material can (its geometry, the dowel holes).
 export function build_design(design) {
     const t0 = performance.now();
     const shape_key = JSON.stringify([design.piece.outline, design.piece.symmetry]);
     const layers = design.layers.map((layer, k) => {
         const bridge_w_mm = layer.bridge?.w_mm ?? material_of(design, layer).min_bridge_mm;
-        const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm]));
+        const field = design.piece.depth_mode === 'field' ? [design.piece.field, k, design.layers.length] : null;
+        const key = short_key(shape_key + JSON.stringify([layer.id, layer.source, layer.frame_ring_mm, layer.island_policy, layer.bridge, layer.overrides, bridge_w_mm, field]));
         const geo = cached(layer_cache, key, () => {
             const { outline, material: raw } = compose_layer(design, k);
             return { ...resolve_islands(raw, layer, bridge_w_mm), solid_mm2: area_mm2(outline) };
@@ -92,10 +114,12 @@ export function build_design(design) {
     // hole_d_mm follows the measured dowel clearance of the material, so it is part of the key.
     const reg_key = short_key(layers.map(l => l.key).join('|') + JSON.stringify(design.registration) + hole_d_mm(design));
     const geo = cached(reg_cache, reg_key, () => register_geometry(design, layers));
+    const holes_key = JSON.stringify([geo.dowels, geo.r_hole, design.registration.through_front]);
     layers.forEach((l, k) => {
         l.material = geo.materials[k];
         l.ids = geo.ids[k];
         l.cache_key = `${l.key}/${reg_key}`;
+        l.material_key = short_key(`${l.key}|${holes_key}|${k > 0}`);
     });
     const spacing = spacer_layout(design, geo.dowels, geo.r_hole);
     const registration = { dowels: geo.dowels, hole_d_mm: geo.hole_d_mm, spacers: spacing.spacers, warnings: [...geo.warnings, ...spacing.warnings] };
