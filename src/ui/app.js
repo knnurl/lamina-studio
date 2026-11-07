@@ -3,10 +3,11 @@
 // rebuilt in the worker, latest wins, and shown; the slow checks follow, debounced. One step is on
 // screen at a time and opens the view it needs (SPEC 11); a start screen and a tour guide newcomers.
 import { Store } from '../core/store.js';
-import { migrate, piece_radius_mm, design_from_import, import_into_layer, reverse_layers, material_of, base_design } from '../core/design.js';
+import { migrate, design_from_import, import_into_layer, reverse_layers, material_of, base_design } from '../core/design.js';
 import { preset_by_id } from '../core/presets.js';
 import { generate_stack } from '../core/generate.js';
 import { to_shape } from '../sources/curves.js';
+import { new_motif } from '../core/motif_defaults.js';
 import { write_param } from '../core/actions.js';
 import { unpack_paths } from '../geom/pack.js';
 import { check_level } from '../core/check_level.js';
@@ -22,6 +23,7 @@ import { set_status, kSteps, show_step, panel_parts } from './shell.js';
 import { LayerStrip } from './layer_strip.js';
 import { StartScreen } from './start_screen.js';
 import { Tour } from './tour.js';
+import { AssistantPanel } from './assistant_panel.js';
 import { save_bytes, el } from './dom.js';
 
 const kDesignKey = 'lamina-design';
@@ -64,46 +66,6 @@ function restore_design() {
         return raw ? migrate(JSON.parse(raw)) : null;
     } catch {
         return null;
-    }
-}
-
-// Sensible starting values for new openings, relative to the space inside the frame ring.
-function new_motif(type, design, layer) {
-    const r = Math.max(10, piece_radius_mm(design.piece) - layer.frame_ring_mm);
-    const v = x => Math.round(x * r * 10) / 10;
-    switch (type) {
-        case 'disc':
-            return { type, d_mm: v(0.6) };
-        case 'window':
-            return { type, r_mm: v(0.55), size_mm: v(0.14), sides: 4, rot_deg: 0, mult: 1, angle_deg: 0 };
-        case 'petal':
-            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 };
-        case 'ring':
-            return { type, r_mm: v(0.78), w_mm: v(0.06), tie_mm: 3, mult: 1, angle_deg: 0 };
-        case 'ray':
-            return { type, r0_mm: v(0.3), r1_mm: v(0.9), w0_mm: 0, w1_mm: v(0.08), mult: 1, angle_deg: 0 };
-        case 'lattice':
-            return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
-        case 'fret':
-            return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
-        case 'scroll': {
-            // Not symmetric: off the mirror lines under a kaleidoscope.
-            const sym = design.piece.symmetry;
-            const angle_deg = sym.kind === 'dihedral' ? Math.round(900 / Math.max(1, sym.n)) / 10 : 0;
-            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.08), turns: 1.25, mult: 1, angle_deg };
-        }
-        case 'ruyi':
-            return { type, r_mm: v(0.6), length_mm: v(0.2), width_mm: v(0.16), mult: 1, angle_deg: 0 };
-        case 'ogee':
-            return { type, r_mm: v(0.6), length_mm: v(0.24), width_mm: v(0.12), mult: 1, angle_deg: 0 };
-        case 'lotus':
-            return { type, r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.16), mult: 1, angle_deg: 0 };
-        case 'shape':
-            return to_shape({ type: 'petal', r_mm: v(0.6), length_mm: v(0.22), width_mm: v(0.09), mult: 1, angle_deg: 0 });
-        case 'circuit':
-            return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
-        default:
-            throw new Error(`unknown opening type "${type}"`);
     }
 }
 
@@ -171,6 +133,7 @@ export function start_app({ worker, preview, stage }) {
     let strip;
     let start;
     let tour;
+    let assistant;
     let sheets_timer = null;
 
     // The exploded-view slider floats over the 3D view.
@@ -361,6 +324,21 @@ export function start_app({ worker, preview, stage }) {
             else ui.more.add(key);
             storage_set(kMoreKey, JSON.stringify([...ui.more].filter(k => !k.startsWith('motif:'))));
             render_ui();
+        },
+        get assistant_open() {
+            return !!assistant?.open;
+        },
+        toggle_assistant() {
+            assistant.set_open(!assistant.open);
+        },
+        // From the start screen: a blank piece of that kind, then the assistant designs it.
+        describe(text, kind) {
+            ui.layer = 0;
+            store.replace(with_library(blank_design(kind)));
+            start.hide();
+            app.set_step('pattern');
+            assistant.set_open(true);
+            assistant.send(text);
         },
         show_start() {
             start.show({ continue_name: store.design.name });
@@ -590,7 +568,25 @@ export function start_app({ worker, preview, stage }) {
             storage_set(kTourKey, '1');
             tour.start();
         },
+        describe: (text, kind) => app.describe(text, kind),
     });
+    // The assistant's tools work on the studio through this context (SPEC M4.5).
+    assistant = new AssistantPanel(
+        document.querySelector('.view'),
+        {
+            design: () => store.design,
+            replace: design => store.replace(design),
+            build: async design => (await worker.call('build', design)).layers.map(unpack_layer),
+            check: async design => (await worker.call('check', design)).checks,
+            import_svg: text => worker.call('import_svg', { files: [{ name: 'artwork.svg', text }] }),
+            capture_3d: async () => {
+                // The 3D view shows the latest design once its build lands.
+                for (let i = 0; i < 40 && state.built_for !== store.design; i++) await new Promise(r => setTimeout(r, 100));
+                return preview.capture_png ? await preview.capture_png().catch(() => null) : null;
+            },
+        },
+        { on_open: () => header.refresh() },
+    );
 
     // Builds run latest-wins; the slow checks follow once edits pause.
     let busy = false;

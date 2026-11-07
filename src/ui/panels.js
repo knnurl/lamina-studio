@@ -198,7 +198,8 @@ export class Panels {
         });
 
         const type = el('select', { 'aria-label': 'Opening type' });
-        for (const [id, t] of Object.entries(kMotifTypes)) type.append(el('option', { value: id, text: t.label }));
+        // Artwork arrives from SVG (the assistant, or logo import in M5), not from an empty card.
+        for (const [id, t] of Object.entries(kMotifTypes)) if (id !== 'art') type.append(el('option', { value: id, text: t.label }));
         const add = el('button', { type: 'button', class: 'btn ghost', text: 'Add openings' });
         add.addEventListener('click', () => app.add_motif(type.value));
         body.append(el('div', { class: 'add-row' }, [type, add]));

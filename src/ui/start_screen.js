@@ -81,7 +81,7 @@ export function draw_stack(canvas, design, layers) {
 
 export class StartScreen {
     // actions: { build(design) -> Promise<layers>, open_preset(id), start_blank(kind), close(),
-    //            open_file(), import_svg(), tour() }
+    //            open_file(), import_svg(), tour(), describe(text, kind) }
     constructor(root, actions) {
         this.root_ = root;
         this.actions_ = actions;
@@ -143,6 +143,20 @@ export class StartScreen {
         }
 
         const kind = kKinds.find(k => k.id === this.kind_);
+        // Describe it: the assistant builds the piece from words, starting from this kind's blank.
+        const words = el('textarea', { class: 'describe-input', rows: 2, placeholder: `Or describe your ${kind.title.toLowerCase()} and the assistant will design it. For example: a 10-layer lotus mandala with a key-fret border, deep blue to gold.`, 'aria-label': 'Describe the piece' });
+        const go = el('button', { type: 'button', class: 'btn', text: 'Design it' });
+        const describe = () => {
+            if (words.value.trim()) a.describe(words.value.trim(), kind);
+        };
+        go.addEventListener('click', describe);
+        words.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                describe();
+            }
+        });
+        const describe_row = kind.blank ? el('div', { class: 'describe-row' }, [words, go]) : null;
         const gallery = el('div', { class: 'gallery' });
         for (const id of kind.presets) gallery.append(this.preset_card_(id));
         if (kind.blank) {
@@ -163,7 +177,7 @@ export class StartScreen {
         svg.addEventListener('click', () => a.import_svg());
         foot.append(tour, svg, el('span', { text: 'A preset opens at the Pattern step; a blank start at the Piece step.' }));
 
-        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, el('h3', { class: 'sub', text: 'Start from one of these' }), ...(note ? [note] : []), gallery, foot]);
+        const inner = el('div', { class: 'start-inner' }, [top, el('h2', { text: 'What are you making?' }), kinds, ...(describe_row ? [describe_row] : []), el('h3', { class: 'sub', text: 'Or start from one of these' }), ...(note ? [note] : []), gallery, foot]);
         root.append(inner);
     }
 
