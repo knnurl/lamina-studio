@@ -6,6 +6,7 @@
 // - Backlit: a glowing panel in the light colour, cut to the piece's silhouette, sits behind the
 //   stack; translucent layers pick up the light, and the room light dims, so openings glow.
 // - Exploded: spreads the layers apart along z for reading the stack; the design is unchanged.
+// - Hidden layers (the strip's eye buttons and the peel slider) are left out of the view only.
 // Assumptions: paths in micrometres, outer boundaries have positive area and holes negative.
 import {
     WebGLRenderer,
@@ -113,6 +114,7 @@ export class StackPreview {
         this.stack_ = new Group();
         this.scene_.add(this.stack_);
         this.explode_ = 0;
+        this.hidden_ = new Set();
 
         this.controls_ = new OrbitControls(this.camera_, this.renderer_.domElement);
         this.controls_.addEventListener('change', () => this.render());
@@ -149,7 +151,7 @@ export class StackPreview {
             if (key) next.set(key, geometry);
             radius_mm = Math.max(radius_mm, geometry.boundingSphere.radius);
             const mesh = new Mesh(geometry, materials_for(design, layer));
-            mesh.userData = { base_z: z, from_back: built.length - 1 - k, cached: !!key };
+            mesh.userData = { base_z: z, from_back: built.length - 1 - k, cached: !!key, layer: k };
             this.stack_.add(mesh);
             z += thickness_mm + (k > 0 ? design.layers[k - 1].gap_mm : 0);
         }
@@ -169,7 +171,7 @@ export class StackPreview {
                     new ShapeGeometry(to_shapes([outline])),
                     new MeshBasicMaterial({ color: new Color(design.piece.lighting.colour).multiplyScalar(1.6) }),
                 );
-                glow.userData = { base_z: -6, from_back: -1 };
+                glow.userData = { base_z: -6, from_back: -1, layer: -1 };
                 this.stack_.add(glow);
             }
         }
@@ -192,10 +194,18 @@ export class StackPreview {
         this.render();
     }
 
+    // hidden: the indices of the layers to leave out of the view (front is 0).
+    set_hidden(hidden) {
+        this.hidden_ = new Set(hidden);
+        this.place_();
+        this.render();
+    }
+
     place_() {
         for (const mesh of this.stack_.children) {
-            const { base_z, from_back } = mesh.userData;
+            const { base_z, from_back, layer } = mesh.userData;
             mesh.position.z = base_z + this.explode_ * kExplodeMm * Math.max(0, from_back);
+            mesh.visible = !this.hidden_.has(layer);
         }
     }
 
@@ -203,12 +213,19 @@ export class StackPreview {
         this.renderer_.render(this.scene_, this.camera_);
     }
 
-    // A PNG of the current view, for the export zip. Rendered and read in the same task, so the
-    // drawing buffer is still intact.
+    // A PNG of the current view with every layer shown, for the export zip and the assistant.
+    // Rendered and read in the same task, so the drawing buffer is still intact: toBlob copies the
+    // pixels when it is called, and the hidden layers go back before the next frame.
     capture_png() {
+        const hidden = this.hidden_;
+        this.hidden_ = new Set();
+        this.place_();
         this.render();
         return new Promise(resolve => {
             this.renderer_.domElement.toBlob(async blob => resolve(blob ? new Uint8Array(await blob.arrayBuffer()) : null), 'image/png');
+            this.hidden_ = hidden;
+            this.place_();
+            this.render();
         });
     }
 

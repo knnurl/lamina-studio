@@ -1,6 +1,7 @@
 // 2D stacked render (SPEC 10): every layer drawn flat, back to front, in its finish colour with a
 // soft drop shadow, in the style of the AngelShadowBox preview. The fast view for very dense
 // pieces. Backlit pieces get a glow in the light colour behind the back layer's silhouette.
+// Hidden layers (the strip's eye buttons and the peel slider) are left out.
 // Assumptions: paths in micrometres, y up.
 import { kUmPerMm } from '../core/units.js';
 
@@ -11,12 +12,19 @@ export class Render2D {
         this.canvas_.hidden = true;
         container.append(this.canvas_);
         this.data_ = null;
+        this.hidden_ = new Set();
         new ResizeObserver(() => this.draw_()).observe(container);
     }
 
     set_visible(on) {
         this.canvas_.hidden = !on;
         if (on) this.draw_();
+    }
+
+    // hidden: the indices of the layers to leave out (front is 0).
+    set_hidden(hidden) {
+        this.hidden_ = new Set(hidden);
+        if (!this.canvas_.hidden) this.draw_();
     }
 
     show(design, built) {
@@ -69,6 +77,7 @@ export class Render2D {
             ctx.restore();
         }
         for (let k = built.length - 1; k >= 0; k--) {
+            if (this.hidden_.has(k)) continue;
             const path = trace(built[k].material);
             ctx.save();
             ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';

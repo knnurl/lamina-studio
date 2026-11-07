@@ -125,6 +125,9 @@ export function start_app({ worker, preview, stage }) {
         locks: new Set(),
         more: new Set(Array.isArray(saved_more) ? saved_more : []),
         draw: { tool: 'select', width_mm: 3, filled: true },
+        // Layers left out of the 3D and 2D views (the view only), and the peel slider's position.
+        hidden: new Set(),
+        peel: 0,
     };
     const state = { built: null, built_for: null, checks: [], checks_for: null };
     let panels;
@@ -141,12 +144,35 @@ export function start_app({ worker, preview, stage }) {
     let sketch_bar;
     let sheets_timer = null;
 
-    // The exploded-view slider floats over the 3D view.
-    const explode = document.createElement('label');
-    explode.className = 'explode';
-    explode.innerHTML = '<span>Explode</span><input type="range" min="0" max="1" step="0.01" value="0" aria-label="Explode the stack">';
-    explode.querySelector('input').addEventListener('input', e => preview.set_explode?.(Number(e.target.value)));
-    stage.append(explode);
+    // View tools float over the 3D and 2D views: Peel hides the front layers one at a time, and
+    // Explode (3D only) spreads the stack. Neither changes the design.
+    const peel_input = el('input', { type: 'range', min: 0, max: 0, step: 1, value: 0, 'aria-label': 'Peel off the front layers' });
+    const peel_value = el('span', { class: 'view-tool-value' });
+    const peel_row = el('label', { class: 'view-tool', title: 'Hides the front layers one at a time, to see inside the stack. The cut files keep every layer.' }, [
+        el('span', { text: 'Peel' }),
+        peel_input,
+        peel_value,
+    ]);
+    peel_input.addEventListener('input', () => app.peel(Number(peel_input.value)));
+    const explode_input = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: 0, 'aria-label': 'Explode the stack' });
+    explode_input.addEventListener('input', () => preview.set_explode?.(Number(explode_input.value)));
+    const explode_row = el('label', { class: 'view-tool' }, [el('span', { text: 'Explode' }), explode_input, el('span')]);
+    const view_tools = el('div', { class: 'view-tools' }, [peel_row, explode_row]);
+    stage.append(view_tools);
+
+    // The hidden layers go to the 3D and 2D views; the strip and the peel slider follow in render_ui.
+    function show_hidden() {
+        preview.set_hidden?.(ui.hidden);
+        render2d.set_hidden(ui.hidden);
+    }
+
+    // A different design opens at its front layer with every layer shown.
+    function fresh_view() {
+        ui.layer = 0;
+        ui.hidden.clear();
+        ui.peel = 0;
+        show_hidden();
+    }
 
     // Sheets are laid out on demand, only while the Sheets view is open.
     function schedule_sheets() {
@@ -207,7 +233,13 @@ export function start_app({ worker, preview, stage }) {
     }
 
     function render_ui() {
-        ui.layer = Math.min(ui.layer, store.design.layers.length - 1);
+        const n = store.design.layers.length;
+        ui.layer = Math.min(ui.layer, n - 1);
+        for (const k of ui.hidden) if (k >= n) ui.hidden.delete(k);
+        ui.peel = Math.min(ui.peel, n - 1);
+        peel_input.max = String(n - 1);
+        peel_input.value = String(ui.peel);
+        peel_value.textContent = `from L${ui.peel + 1}`;
         show_step(ui.step);
         panels.render();
         header.refresh();
@@ -215,7 +247,7 @@ export function start_app({ worker, preview, stage }) {
             tab.setAttribute('aria-selected', String(tab.dataset.view === ui.view));
         }
         render_layer_view();
-        strip.show(store.design, state.built?.layers, ui.layer);
+        strip.show(store.design, state.built?.layers, ui.layer, ui.hidden);
     }
 
     // After the first piece opens, the tour is offered once, in a card over the preview.
@@ -299,7 +331,7 @@ export function start_app({ worker, preview, stage }) {
                     set_status('ok', `Imported ${texts[0].name} onto layer ${ui.layer + 1}: ${size}.${extra ? ` ${extra}.` : ''}`);
                 } else {
                     const stem = texts[0].name.replace(/\.svg$/i, '').replace(/[-_ ]*(layer)?[-_ ]*\d+$/i, '') || 'Imported';
-                    ui.layer = 0;
+                    fresh_view();
                     store.replace(with_library(design_from_import(result, stem)));
                     set_status('ok', `Imported ${n} layers (front first): ${size}.${extra ? ` ${extra}.` : ''}`);
                 }
@@ -314,6 +346,30 @@ export function start_app({ worker, preview, stage }) {
         },
         select_layer(k) {
             ui.layer = k;
+            render_ui();
+        },
+        // Shows or hides layer k in the 3D and 2D views.
+        toggle_layer_shown(k) {
+            if (ui.hidden.has(k)) ui.hidden.delete(k);
+            else ui.hidden.add(k);
+            show_hidden();
+            render_ui();
+        },
+        // Hides the front p layers and shows the ones the slider passed back over; layers hidden by
+        // their eye buttons further back stay hidden.
+        peel(p) {
+            for (let k = 0; k < Math.max(p, ui.peel); k++) {
+                if (k < p) ui.hidden.add(k);
+                else ui.hidden.delete(k);
+            }
+            ui.peel = p;
+            show_hidden();
+            render_ui();
+        },
+        show_all_layers() {
+            ui.hidden.clear();
+            ui.peel = 0;
+            show_hidden();
             render_ui();
         },
         // A step opens the view it needs; the view tabs still switch by hand.
@@ -414,7 +470,7 @@ export function start_app({ worker, preview, stage }) {
         },
         // From the start screen: a blank piece of that kind, then the assistant designs it.
         describe(text, kind) {
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(blank_design(kind)));
             start.hide();
             app.set_step('pattern');
@@ -436,7 +492,7 @@ export function start_app({ worker, preview, stage }) {
             // Light at the front to dark at the back, as the bands preview showed it.
             apply_palette(d, 'mono');
             state.photo = r.photo;
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(apply_photo(d, r.raster)));
             start.hide();
             app.set_step('pattern');
@@ -460,7 +516,7 @@ export function start_app({ worker, preview, stage }) {
             offer_tour();
         },
         start_blank(kind) {
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(blank_design(kind)));
             start.hide();
             app.set_step('piece');
@@ -473,7 +529,8 @@ export function start_app({ worker, preview, stage }) {
         set_view(view) {
             ui.view = view;
             preview.set_visible(view === '3d');
-            explode.hidden = view !== '3d';
+            view_tools.hidden = view !== '3d' && view !== '2d';
+            explode_row.hidden = view !== '3d';
             render2d.set_visible(view === '2d');
             layer_view.set_visible(view === 'layer');
             sketch_bar.set_visible(view === 'layer');
@@ -564,7 +621,7 @@ export function start_app({ worker, preview, stage }) {
             set_status('ok', `Saved ${material.label}: kerf ${material.kerf_mm} mm. Checks and cut files now use it.`);
         },
         load_preset(id) {
-            ui.layer = 0;
+            fresh_view();
             store.replace(with_library(preset_by_id(id)));
         },
         undo: () => store.undo(),
@@ -578,7 +635,7 @@ export function start_app({ worker, preview, stage }) {
             file.text()
                 .then(text => {
                     const design = migrate(JSON.parse(text));
-                    ui.layer = 0;
+                    fresh_view();
                     store.replace(design);
                 })
                 .catch(err => set_status('bad', `Could not open ${file.name}: ${err.message}`));
@@ -674,7 +731,11 @@ export function start_app({ worker, preview, stage }) {
     for (const b of document.querySelectorAll('[data-step-go]')) b.addEventListener('click', () => app.set_step(b.dataset.stepGo));
     panel_parts().back.addEventListener('click', () => app.go_step(-1));
     panel_parts().next.addEventListener('click', () => app.go_step(1));
-    strip = new LayerStrip(document.getElementById('layer-strip'), { on_select: k => app.select_layer(k) });
+    strip = new LayerStrip(document.getElementById('layer-strip'), {
+        on_select: k => app.select_layer(k),
+        on_toggle: k => app.toggle_layer_shown(k),
+        on_show_all: () => app.show_all_layers(),
+    });
     tour = new Tour(document.getElementById('tour'));
     const svg_input = el('input', { type: 'file', accept: '.svg,image/svg+xml', multiple: '', hidden: '' });
     svg_input.addEventListener('change', () => {
@@ -739,7 +800,7 @@ export function start_app({ worker, preview, stage }) {
             preview.show(design, state.built.layers);
             render2d.show(design, state.built.layers);
             render_layer_view();
-            strip.show(store.design, state.built.layers, ui.layer);
+            strip.show(store.design, state.built.layers, ui.layer, ui.hidden);
             schedule_sheets();
             render_status();
             clearTimeout(check_timer);
