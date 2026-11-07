@@ -15,7 +15,7 @@ export function load_settings() {
     return {
         claude_key: saved.claude_key ?? '',
         gemini_key: saved.gemini_key ?? '',
-        model: saved.model ?? 'claude-opus-5-5',
+        model: saved.model ?? 'gemini-flash-latest',
         effort: saved.effort ?? 'high',
         remember: saved.remember ?? false,
     };

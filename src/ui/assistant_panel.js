@@ -1,11 +1,13 @@
 // Assistant panel (SPEC M4.5): a drawer beside the preview with the conversation, a message box,
 // Stop, and settings for the user's own keys, model and effort. Every change the assistant makes
 // is an undo step in the studio.
+// The model runs on Gemini or Claude, whichever the chosen model belongs to.
 // Testing seam: when globalThis.__lamina_ai_stand_in is set (only by test scripts) it is used in
 // place of the SDK client: { client, is_api_error, explain }.
 import { el } from './dom.js';
-import { Assistant, kModels, kEfforts } from '../ai/agent.js';
-import { claude_client } from '../ai/sdk.js';
+import { Assistant, kModels as kClaudeModels, kEfforts } from '../ai/agent.js';
+import { GeminiAssistant, kGeminiModels, is_gemini_model } from '../ai/gemini_agent.js';
+import { claude_client, gemini_client } from '../ai/sdk.js';
 import { system_prompt, tools } from '../ai/prompt.js';
 import { design_summary } from '../ai/ops.js';
 import { make_tool_runner } from '../ai/run_tools.js';
@@ -19,6 +21,9 @@ const kToolWords = {
     make_picture: 'Asking Gemini for a picture',
     trace_picture: 'Tracing the picture into layers',
 };
+const kModels = { ...kGeminiModels, ...kClaudeModels };
+const key_for = s => (is_gemini_model(s.model) ? s.gemini_key : s.claude_key);
+const engine = s => (is_gemini_model(s.model) ? 'Gemini' : 'Claude');
 
 export class AssistantPanel {
     // ctx: the tool context (see ai/run_tools.js) minus pictures, add_picture and gemini_key,
@@ -71,7 +76,7 @@ export class AssistantPanel {
         this.root_.append(title, this.settings_box_, this.log_, foot);
         container.append(this.root_);
         this.refresh_chip_();
-        if (!this.settings_.claude_key) this.note_setup_();
+        if (!key_for(this.settings_)) this.note_setup_();
     }
 
     get open() {
@@ -97,7 +102,7 @@ export class AssistantPanel {
 
     note_setup_() {
         const card = el('div', { class: 'msg setup' }, [
-            el('p', { text: 'The assistant designs and edits pieces for you, draws artwork, and traces pictures into layers. It needs your own Claude API key; a Gemini key adds pictures from a description. Keys stay in this browser.' }),
+            el('p', { text: 'The assistant designs and edits pieces for you, draws artwork, makes pictures and traces them into layers. It needs your own Gemini API key, free from aistudio.google.com (or a Claude key for the Claude models). Keys stay in this browser.' }),
         ]);
         const go = el('button', { type: 'button', class: 'btn', text: 'Add keys' });
         go.addEventListener('click', () => this.show_settings_(true));
@@ -113,8 +118,8 @@ export class AssistantPanel {
         const box = this.settings_box_;
         box.textContent = '';
         const field = (label, input, note) => el('label', { class: 'cal-field' }, [el('span', { text: label }), input, ...(note ? [el('small', { text: note })] : [])]);
-        const claude = el('input', { type: 'password', value: s.claude_key, autocomplete: 'off', placeholder: 'sk-ant-...' });
-        const gemini = el('input', { type: 'password', value: s.gemini_key, autocomplete: 'off', placeholder: 'optional' });
+        const claude = el('input', { type: 'password', value: s.claude_key, autocomplete: 'off', placeholder: 'optional, sk-ant-...' });
+        const gemini = el('input', { type: 'password', value: s.gemini_key, autocomplete: 'off', placeholder: 'AIza...' });
         const model = el('select');
         for (const [id, label] of Object.entries(kModels)) model.append(el('option', { value: id, text: label }));
         model.value = s.model;
@@ -130,7 +135,8 @@ export class AssistantPanel {
             this.assistant_ = null; // rebuilt with the new settings on the next message
             this.refresh_chip_();
             this.show_settings_(false);
-            this.add_('note', `Saved. ${this.settings_.claude_key ? 'Ready.' : 'Add a Claude key to start.'}${this.settings_.gemini_key ? ' Pictures from a description are on.' : ''}`);
+            const s2 = this.settings_;
+            this.add_('note', `Saved. ${key_for(s2) ? 'Ready.' : `Add a ${engine(s2)} key to start, or pick a model for the key you have.`}${s2.gemini_key ? ' Pictures from a description are on.' : ''}`);
         });
         const forget = el('button', { type: 'button', class: 'btn ghost', text: 'Forget keys' });
         forget.addEventListener('click', () => {
@@ -140,8 +146,8 @@ export class AssistantPanel {
             this.add_('note', 'Keys forgotten in this browser.');
         });
         box.append(
-            field('Claude API key', claude, 'From console.anthropic.com. Calls go from this page straight to Anthropic, billed to your key.'),
-            field('Gemini API key', gemini, 'Optional, from aistudio.google.com: pictures from a description.'),
+            field('Gemini API key', gemini, 'From aistudio.google.com (Get API key). Runs the Gemini models and makes pictures from a description. Calls go from this page straight to Google.'),
+            field('Claude API key', claude, 'Optional, from platform.claude.com, for the Claude models. Billed to your key, separately from any Claude plan.'),
             field('Model', model),
             field('Effort', effort),
             el('label', { class: 'ctl-toggle' }, [remember, el('span', { text: ' Remember keys on this device (otherwise only until the tab closes)' })]),
@@ -162,7 +168,8 @@ export class AssistantPanel {
 
     async assistant_for_() {
         if (this.assistant_) return this.assistant_;
-        const sdk = globalThis.__lamina_ai_stand_in ?? (await claude_client(this.settings_.claude_key));
+        const gemini = is_gemini_model(this.settings_.model);
+        const sdk = globalThis.__lamina_ai_stand_in ?? (gemini ? await gemini_client(this.settings_.gemini_key) : await claude_client(this.settings_.claude_key));
         this.explain_ = sdk.explain ?? (err => err?.message ?? String(err));
         const ctx = {
             ...this.ctx_,
@@ -175,7 +182,7 @@ export class AssistantPanel {
                 return id;
             },
         };
-        this.assistant_ = new Assistant({
+        this.assistant_ = new (gemini ? GeminiAssistant : Assistant)({
             client: sdk.client,
             is_api_error: sdk.is_api_error,
             model: this.settings_.model,
@@ -235,10 +242,10 @@ export class AssistantPanel {
     async send(text) {
         text = String(text ?? '').trim();
         if (!text || this.running_) return;
-        if (!this.settings_.claude_key && !globalThis.__lamina_ai_stand_in) {
+        if (!key_for(this.settings_) && !globalThis.__lamina_ai_stand_in) {
             this.set_open(true);
             this.show_settings_(true);
-            this.add_('note', 'Add your Claude API key first.');
+            this.add_('note', `Add your ${engine(this.settings_)} API key first, or pick a model for the key you have.`);
             return;
         }
         this.input_.value = '';
@@ -258,7 +265,7 @@ export class AssistantPanel {
             content.push({ type: 'text', text: `The design as it is now: ${JSON.stringify(design_summary(this.ctx_.design()))}` });
             const r = await assistant.send(content, { signal: this.running_.signal });
             if (r.reason === 'stopped') this.add_('note', 'Stopped. Changes made so far stay; undo them in the top bar.');
-            else if (r.reason === 'refused') this.add_('note bad', `Claude declined this request${r.detail ? `: ${r.detail}` : ''}. Try wording it differently.`);
+            else if (r.reason === 'refused') this.add_('note bad', `${engine(this.settings_)} declined this request${r.detail ? `: ${r.detail}` : ''}. Try wording it differently.`);
             else if (r.reason === 'round_cap') this.add_('note', 'That took many steps, so the assistant paused. Say "carry on" to continue.');
         } catch (err) {
             this.add_('note bad', this.explain_ ? this.explain_(err) : err.message);

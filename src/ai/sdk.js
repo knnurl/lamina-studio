@@ -1,6 +1,6 @@
 // The AI SDKs (SPEC 14), loaded on first use from jsDelivr at pinned versions, so the page works
-// without them and without keys. Each user brings their own keys, so the Anthropic client runs in
-// the browser with dangerouslyAllowBrowser.
+// without them and without keys. Each user brings their own keys, so the clients run in the
+// browser (the Anthropic one with dangerouslyAllowBrowser).
 const kAnthropicUrl = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
 const kGenAiUrl = 'https://cdn.jsdelivr.net/npm/@google/genai@2.31.0/+esm';
 export const kPictureModel = 'gemini-nano-banana-2.1';
@@ -23,6 +23,25 @@ export async function claude_client(api_key) {
             if (err instanceof Anthropic.APIConnectionError) return 'Could not reach Claude. Check the internet connection.';
             if (err instanceof Anthropic.APIError) return `Claude returned an error (${err.status}): ${err.message}`;
             return err?.message ?? String(err);
+        },
+    };
+}
+
+// { client, is_api_error, explain } for the user's Gemini key: the assistant's other engine.
+export async function gemini_client(api_key) {
+    genai_module ??= await import(kGenAiUrl);
+    const { GoogleGenAI, ApiError } = genai_module;
+    return {
+        client: new GoogleGenAI({ apiKey: api_key }),
+        is_api_error: err => err instanceof ApiError,
+        explain(err) {
+            if (!(err instanceof ApiError)) return err instanceof TypeError ? 'Could not reach Gemini. Check the internet connection.' : (err?.message ?? String(err));
+            const s = err.status;
+            if (s === 401 || s === 403 || (s === 400 && /api key/i.test(err.message))) return 'The Gemini key was not accepted. Check it in the assistant settings.';
+            if (s === 404) return 'Your Gemini key cannot use this model. Pick another in the assistant settings.';
+            if (s === 429) return 'The Gemini key has hit its limit: free keys allow a few requests a minute and a daily total. Wait a minute, pick Gemini Flash, or turn on billing in AI Studio.';
+            if (s >= 500) return 'Gemini is busy. Wait a minute and try again.';
+            return `Gemini returned an error (${s}): ${err.message}`;
         },
     };
 }

@@ -18,7 +18,7 @@ export function build_header(app) {
         if (file.files[0]) app.open(file.files[0]);
         file.value = '';
     });
-    const assistant = button('✦ Assistant', 'Design and edit by conversation (your own Claude key)', () => app.toggle_assistant(), 'btn ghost assistant-toggle');
+    const assistant = button('✦ Assistant', 'Design and edit by conversation (your own Gemini or Claude key)', () => app.toggle_assistant(), 'btn ghost assistant-toggle');
     right.append(
         assistant,
         undo,

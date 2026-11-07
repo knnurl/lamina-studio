@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { apply_ops, clean_motif, design_summary } from '../src/ai/ops.js';
 import { system_prompt, tools, invalid_input } from '../src/ai/prompt.js';
 import { Assistant, kMaxRounds } from '../src/ai/agent.js';
+import { GeminiAssistant, to_parts, is_gemini_model } from '../src/ai/gemini_agent.js';
 import { preset_by_id } from '../src/core/presets.js';
 import { build_design } from '../src/pipeline/compose.js';
 import { SCHEMA, kMotifTypes } from '../src/core/schema.js';
@@ -210,4 +211,108 @@ test('the loop refuses bad inputs, stops on a refusal, and caps the rounds', asy
     ctl.abort();
     const a6 = new Assistant({ client: stand_in([]), model: 'm', effort: 'high', system: 's', tools: tools(), run_tool: async () => ({ content: '' }) });
     assert.equal((await a6.send('go', { signal: ctl.signal })).reason, 'stopped');
+});
+
+// A stand-in Gemini client: each call to generateContent() returns the next scripted response.
+function gemini_stand_in(script) {
+    const calls = [];
+    return {
+        calls,
+        models: {
+            async generateContent(params) {
+                calls.push(structuredClone({ ...params, config: { ...params.config, abortSignal: undefined } }));
+                const next = script.shift();
+                if (next instanceof Error) throw next;
+                return next;
+            },
+        },
+    };
+}
+const reply = (parts, finishReason = 'STOP', extra = {}) => ({ candidates: [{ content: { role: 'model', parts }, finishReason }], ...extra });
+const call = (id, name, args) => ({ functionCall: { id, name, args } });
+
+test('Gemini: the loop runs tools, answers every call in one turn, and keeps the model turns as they came', async () => {
+    const client = gemini_stand_in([
+        reply([{ text: 'Building the base stack.', thought: true }, { ...call('a', 'check_design', {}), thoughtSignature: 'sig-1' }, call('b', 'look', { view: 'front' })], 'STOP', { usageMetadata: { promptTokenCount: 100, cachedContentTokenCount: 40, candidatesTokenCount: 5, thoughtsTokenCount: 7 } }),
+        reply([{ text: 'Done: a lotus mandala.' }]),
+    ]);
+    const events = [];
+    const ran = [];
+    const a = new GeminiAssistant({
+        client,
+        model: 'gemini-pro-latest',
+        effort: 'medium',
+        system: system_prompt(),
+        tools: tools(),
+        run_tool: async (name, input) => {
+            ran.push(name);
+            return { content: name === 'look' ? [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }, { type: 'text', text: 'a picture' }] : 'no problems' };
+        },
+        on_event: e => events.push(e),
+    });
+    const r = await a.send([{ type: 'text', text: 'a lotus mandala' }]);
+    assert.equal(r.reason, 'done');
+    assert.deepEqual(ran, ['check_design', 'look']);
+    // The model's turn goes back verbatim, thought signature and all.
+    assert.equal(a.contents[1].role, 'model');
+    assert.equal(a.contents[1].parts[1].thoughtSignature, 'sig-1');
+    // Both results in one user turn, matched by id; the picture rides inside its function response.
+    const results = a.contents[2];
+    assert.equal(results.role, 'user');
+    assert.deepEqual(results.parts.map(p => p.functionResponse.id), ['a', 'b']);
+    assert.deepEqual(results.parts[0].functionResponse.response, { output: 'no problems' });
+    assert.deepEqual(results.parts[1].functionResponse.parts, [{ inlineData: { mimeType: 'image/png', data: 'AAAA' } }]);
+    assert.ok(events.some(e => e.type === 'status' && e.text === 'Building the base stack.'), 'thoughts show as progress');
+    assert.ok(events.some(e => e.type === 'text' && /lotus/.test(e.text)));
+    assert.deepEqual(events.find(e => e.type === 'usage').usage, { input_tokens: 60, cache_read_input_tokens: 40, output_tokens: 12 });
+    // The request: the same system prompt and tools, as JSON Schema declarations.
+    const p = client.calls[0];
+    assert.equal(p.model, 'gemini-pro-latest');
+    assert.equal(p.config.systemInstruction, system_prompt());
+    const decls = p.config.tools[0].functionDeclarations;
+    assert.deepEqual(decls.map(d => d.name), tools().map(t => t.name));
+    assert.ok(decls.every(d => d.parametersJsonSchema?.type === 'object' && !('eager_input_streaming' in d)));
+    assert.deepEqual(p.config.thinkingConfig, { thinkingLevel: 'LOW', includeThoughts: true });
+    assert.equal(client.calls[1].contents.length, 3, 'the history grows by whole turns');
+    assert.ok(is_gemini_model('gemini-flash-latest') && !is_gemini_model('claude-opus-5-5'));
+});
+
+test('Gemini: bad inputs are not run, blocks end the turn, malformed calls are asked again, rounds are capped', async () => {
+    const mk = (script, run_tool = async () => ({ content: 'ok' })) => new GeminiAssistant({ client: gemini_stand_in(script), model: 'gemini-flash-latest', effort: 'high', system: 's', tools: tools(), run_tool });
+    // A bad input gets an error response and is not run.
+    let ran = 0;
+    const a1 = mk([reply([call('x', 'look', { view: 'sideways' })]), reply([{ text: 'ok' }])], async () => ((ran += 1), { content: '' }));
+    await a1.send('go');
+    assert.equal(ran, 0);
+    assert.match(a1.contents[2].parts[0].functionResponse.response.error, /Not run: view must be one of/);
+
+    // A safety block keeps nothing of the reply.
+    const a2 = mk([{ candidates: [{ finishReason: 'SAFETY' }] }]);
+    assert.equal((await a2.send('go')).reason, 'refused');
+    assert.equal(a2.contents.length, 1, 'only the user turn stays');
+    const a2b = mk([{ promptFeedback: { blockReason: 'OTHER', blockReasonMessage: 'blocked' } }]);
+    assert.deepEqual(await a2b.send('go'), { reason: 'refused', detail: 'blocked' });
+
+    // A malformed function call is asked again, and the retry is not added to the history.
+    const a3 = mk([{ candidates: [{ finishReason: 'MALFORMED_FUNCTION_CALL' }] }, reply([{ text: 'fine' }])]);
+    assert.equal((await a3.send('go')).reason, 'done');
+    assert.equal(a3.contents.length, 2);
+
+    // Input cut off at the token limit is never run.
+    let ran4 = 0;
+    const a4 = mk([reply([call('t', 'draw_artwork', { layer: 1, svg: '<svg', as: 'openings' })], 'MAX_TOKENS'), reply([])], async () => ((ran4 += 1), { content: '' }));
+    await a4.send('go');
+    assert.equal(ran4, 0);
+    assert.match(a4.contents[2].parts[0].functionResponse.response.error, /cut off/);
+
+    // A model that never stops calling tools ends at the round cap; API errors are thrown.
+    const endless = Array.from({ length: kMaxRounds + 2 }, (_, i) => reply([call(`r${i}`, 'check_design', {})]));
+    assert.equal((await mk(endless).send('go')).reason, 'round_cap');
+    await assert.rejects(mk([Object.assign(new Error('quota'), { status: 429 })]).send('go'), /quota/);
+    const ctl = new AbortController();
+    ctl.abort();
+    assert.equal((await mk([]).send('go', { signal: ctl.signal })).reason, 'stopped');
+
+    // The panel's message content (text and pictures) as Gemini parts.
+    assert.deepEqual(to_parts([{ type: 'text', text: 'hi' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QQ' } }]), [{ text: 'hi' }, { inlineData: { mimeType: 'image/jpeg', data: 'QQ' } }]);
 });
