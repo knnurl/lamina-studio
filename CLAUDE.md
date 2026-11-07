@@ -21,7 +21,7 @@ When trade-offs conflict, follow this order and state which priority drove the d
 
 ## Current milestone
 
-M3, circuit (SPEC section 15). The owner approved M2, M3 and M4 on 2026-11-07; M2 (lattice) is done. M1's physical proof still waits on the owner's test card cut and a 4-layer test piece. M5 and later start only when the owner says so. Don't build ahead of the approved milestones.
+M4, radial mandala (SPEC section 15). The owner approved M2, M3 and M4 on 2026-11-07; M2 (lattice) and M3 (circuit) are done. M1's physical proof still waits on the owner's test card cut and a 4-layer test piece. M5 and later start only when the owner says so. Don't build ahead of the approved milestones.
 
 ## Commands
 

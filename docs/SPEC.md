@@ -306,7 +306,7 @@ Randomise with checks: Randomise tries up to 10 variations and keeps the first w
 ### 8.3 M3: circuit and pipe routing
 - Traces on square plus 45-degree routing with parallel offset strands, rounded joins, and terminals (drop, bulb, ring pad, via dot).
 - Mirror symmetry is the default.
-- Routing uses a seeded grid router that avoids collisions and keeps trace spacing at or above min web.
+- Routing uses a seeded grid router that avoids collisions. Trace spacing is at least the strand gap, which the generator keeps at or above the plywood min web (1.7 mm or more; acrylic's 2 mm can give W-01 warnings).
 
 ### 8.4 M4: radial mandala
 - Petals, arcs, rosettes, scroll and ruyi cloud motifs as parametric curves in n-fold symmetry, layered as rings.
@@ -693,10 +693,33 @@ Design decisions (2026-11-07):
   - Each trace is a bundle of parallel strands. Terminals are a drop, a bulb, a ring pad or a via.
 - **Polarity:** "bars" makes traces material over an opening, and each trace starts at material, so there are no islands. "Slots" cuts traces as openings in solid material, which looks strong when backlit.
 
+As built (2026-11-07):
+- **Area:** a centred rectangle (width, height), optionally limited to a circle ("round limit"), with an inner keep-out radius. The keep-out is solid in slots and open in bars, because nothing could hold a bar there.
+- **Lanes:** the cell pitch is the bundle width plus the strand gap. Cells of different traces are at least two cells apart, and a trace's own cells likewise apart except for neighbours along it. So centrelines are at least 1.41 pitches apart, which leaves at least one strand gap between bundles. Cells keep half a pitch from the domain's edges, so a trace never meets its own mirrored or rotated copy.
+- **Walk:** traces start at the area's edge, pointing inwards, in seeded order. Each runs straight or turns 45 degrees, after at least two cells straight, with a straightness weight. A trace stops at its target length, drawn from the upper half of "longest trace", or when blocked. Traces under three cells are dropped.
+- **Anchoring:** each trace's first segment runs back out of the area to at least a quarter pitch past its edge, so a bar is held by the frame or the material round the area.
+- **Ends:** drop, bulb and ring pad need the next cell ahead free and room from the domain's edges; otherwise the trace ends in a via, which fits its own lane. In slots, a ring pad keeps a tie on its far side.
+- **Generator style:** one circuit per patterned layer over the area inside its frame ring, each with its own seed. Strands, gap, ends and straightness are shared through the stack, traces thin out towards the back, and the front layer is bars 40% of the time. The back layer stays solid.
+
 Done when:
-- [ ] A MO:DEM-style rectangular panel preset builds with no fatal finding in both polarities.
-- [ ] Randomise in the circuit style keeps that true.
-- [ ] Tests cover routing determinism, clearance and connectivity.
+- [x] A MO:DEM-style rectangular panel preset builds with no fatal finding in both polarities.
+- [x] Randomise in the circuit style keeps that true.
+- [x] Tests cover routing determinism, clearance and connectivity.
+
+**Progress:**
+- 2026-11-07, M3 done.
+  - **Circuit panel preset:** 380 x 280 mm, 6 layers, mirror both ways, acid palette, seed 7 from a rendered sweep of seeds 1 to 8. All eight seeds build with no fatal finding and no islands.
+    - The preset's frame ring is 12 mm, not 10. With a bars front layer the ring is the only material all layers share, and 10 mm left room for only 2 of 3 dowels (W-05).
+    - Measured in Node: cold build 54 ms, slow checks 34 ms, slider change 26 ms (median of 5). In headless Edge the status shows 100 to 140 ms of geometry.
+  - **Coverage:** every layer as slots and every layer as bars both build with no fatal finding. So do six circuit-style seeds, and circles (kaleidoscope 8), arches (mirror) and hexagons (rotate 6). Some show W-01 or W-05 warnings, none fatal.
+  - **Found and fixed:** bars traces were cut free (46 islands on one test panel), because each anchor stub ended a fraction of a pitch short of the area's edge. Stubs now run to at least a quarter pitch past it.
+  - **Tests:** `circuit.test.js`:
+    - routing determinism;
+    - cell clearance between traces and within a trace, and centreline separation of at least 1.41 pitches, under five symmetries and three seeds;
+    - one piece in both polarities with every kind of end under five symmetries;
+    - the keep-out;
+    - the preset in both polarities, and three circuit-style seeds.
+    123 tests pass. The circuit preset joined the goldens; every existing golden is unchanged.
 
 ### M4: radial mandala
 Curve motifs in rings, and vector node editing.
@@ -800,4 +823,7 @@ LED strip paths in the gaps, and a pixel layout export in Psyight's rig format `
 | 2026-11-07 | Island IDs include the box size | Concentric rings shared IDs, so their bridges and policies mixed |
 | 2026-11-07 | Lattice orb seed 6 | The densest of a rendered sweep and the closest to the orb reference, still inside the 400 ms slider target |
 | 2026-11-07 | The 3D preview keeps extruded geometry per layer, keyed by its material | Browser slider latency on the Lattice orb: 460 ms median down to 223 ms |
+| 2026-11-07 | Circuit lanes: pitch = bundle + gap, traces two cells apart, half a pitch from domain edges | Gives at least one strand gap between bundles, including a trace and its own copies, with no geometric search |
+| 2026-11-07 | Circuit keep-out is solid in slots and open in bars | An open keep-out in slots is fine, but a solid one in bars would be an island holding nothing |
+| 2026-11-07 | Circuit panel frame ring 12 mm | With a bars front, the ring is the only material all layers share; 10 mm fitted only 2 of 3 dowels |
 | 2026-11-07 | Dowel search skips the windows after one miss | Saves windows that cannot succeed on art with no shared outer band; the mandala's build time measured the same before and after |

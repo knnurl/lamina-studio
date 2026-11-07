@@ -445,7 +445,7 @@ button { font: inherit; color: inherit; }
 <div class="app">
   <header class="top">
     <h1 class="mark">Lamina <span>layered laser art studio</span></h1>
-    <span class="chip" title="Current milestone">M2 in progress</span>
+    <span class="chip" title="Current milestone">M4 in progress</span>
     <div class="tools" id="tools-left"></div>
     <div class="spacer"></div>
     <div class="tools" id="tools-right"></div>
@@ -463,7 +463,7 @@ button { font: inherit; color: inherit; }
     <span id="status-text">Starting</span>
   </footer>
 </div>
-<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 29 modules.
+<script type="text/plain" id="lamina-worker-src">// Lamina Studio bundle: src/worker/geometry_worker.js and 30 modules.
 // Built by tools/build.js from src/. Do not edit.
 (function () {
 "use strict";
@@ -1037,6 +1037,11 @@ const kMotifTypes = {
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
     lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
     fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
+    circuit: {
+        label: 'Circuit traces',
+        params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
+        replicated: true,
+    },
 };
 
 // scales: the value is a length that follows the piece when it is resized. Structural widths
@@ -1064,6 +1069,23 @@ const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
+    area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
+    area_h_mm: { label: 'Area height', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
+    reach_mm: { label: 'Round limit (0 is none)', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'advanced' },
+    strands: { label: 'Strands', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
+    strand_mm: { label: 'Strand width', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    gap_mm: { label: 'Strand gap', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    traces: { label: 'Traces', min: 1, max: 200, step: 1, unit: '', scales: false, tier: 'basic' },
+    length: { label: 'Longest trace', min: 3, max: 120, step: 1, unit: 'cells', scales: false, tier: 'basic' },
+    straight: { label: 'Straightness', min: 0, max: 1, step: 0.05, unit: '', scales: false, tier: 'advanced' },
+    terminal: {
+        label: 'Ends',
+        type: 'select',
+        options: [['mix', 'Mixed'], ['drop', 'Drops'], ['bulb', 'Bulbs'], ['ring', 'Ring pads'], ['via', 'Vias']],
+        scales: false,
+        tier: 'basic',
+    },
 };
 
 const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
@@ -1160,6 +1182,7 @@ const SCHEMA = [
         options: [
             ['classic', 'Openings'],
             ['lattice', 'Lattice and key fret'],
+            ['circuit', 'Circuit traces'],
         ],
         tier: 'basic',
         desc: 'What Randomise and the seed arrows build.',
@@ -1884,16 +1907,309 @@ function fret_openings(m, sym) {
 }
 return { make_grid, maze_walls, lattice_openings, lattice_cell_at, kFretPatterns, fret_openings };
 })();
+// src/sources/circuit.js
+const __m_sources_circuit_js = (function () {
+const { stroke, union_all, subtract, intersect_paths, circle_path, rect_path, circle_segments } = __m_geom_clip_js;
+const { fundamental_domain } = __m_geom_symmetry_js;
+const { rng_for } = __m_core_rng_js;
+const { mm_to_um } = __m_core_units_js;
+// Circuit motif (SPEC 8.3, M3): traces routed on a square grid with 45-degree moves inside the
+// symmetry's fundamental domain, then replicated by the symmetry engine.
+// - Each trace starts at the edge of its area and walks as a seeded path: it prefers straight
+//   runs, turns 45 degrees at a time, keeps one clear cell from every other trace and from its
+//   own earlier cells, keeps half a cell from the domain's edges, and ends in a terminal.
+// - A trace is a bundle of parallel strands. Terminals: drop, bulb, ring pad, via.
+// - Polarity 'bars': the area is opened and the traces stay as material, each joined to the
+//   material outside the area where it starts, so nothing is cut free. 'slots': the traces are
+//   cut from solid material; they never touch one another or a copy of themselves, and a ring pad
+//   keeps a tie, so no material is enclosed.
+// Clearance: cells of different traces are at least two cells apart (Chebyshev), so centrelines
+// are at least 1.41 lane pitches apart, and the pitch is the bundle width plus the strand gap.
+// Assumptions: micrometres, origin at the symmetry centre, symmetry phase applied by replicate().
+
+
+
+
+
+const TAU = 2 * Math.PI;
+const kDirs = [
+    [1, 0],
+    [1, 1],
+    [0, 1],
+    [-1, 1],
+    [-1, 0],
+    [-1, -1],
+    [0, -1],
+    [1, -1],
+];
+const kMinRun = 2; // cells in a straight line before a trace may turn again
+const kMinCells = 3; // shorter traces are dropped
+const kTerminals = ['drop', 'bulb', 'ring', 'via'];
+
+// Distance from p to the nearest edge of the fundamental domain (Infinity when it has none).
+// For a wedge, the distance to each edge's whole line: never more than the true distance.
+function edge_distance(p, sym, dom) {
+    switch (sym.kind) {
+        case 'mirror_x':
+            return p.x;
+        case 'mirror_xy':
+            return Math.min(p.x, p.y);
+        case 'rot':
+        case 'dihedral': {
+            if (dom.a1 - dom.a0 >= TAU - 1e-9) return Infinity;
+            const d0 = -Math.sin(dom.a0) * p.x + Math.cos(dom.a0) * p.y;
+            const d1 = Math.sin(dom.a1) * p.x - Math.cos(dom.a1) * p.y;
+            return Math.min(d0, d1);
+        }
+        default:
+            return Infinity;
+    }
+}
+
+// Lane geometry in micrometres: strand count, strand width, gap, bundle width and pitch.
+function circuit_lanes(m) {
+    const n = Math.max(1, Math.min(6, Math.round(m.strands ?? 1)));
+    const s = mm_to_um(Math.max(0.3, m.strand_mm ?? 2));
+    const g = mm_to_um(Math.max(0.3, m.gap_mm ?? 2));
+    const b = n * s + (n - 1) * g;
+    return { n, s, g, b, p: b + g };
+}
+
+// The routed traces of a circuit motif, in the fundamental domain:
+// { lanes, traces: [{ cells: [[i, j]], points: [{x, y}] (stub first), dir, terminal, centre, r }] }.
+// Cell (i, j) is centred on ((i + 0.5) p, (j + 0.5) p).
+function circuit_routes(m, sym) {
+    const lanes = circuit_lanes(m);
+    const { p, b, g } = lanes;
+    const dom = fundamental_domain(sym);
+    const W = mm_to_um(m.area_w_mm) / 2;
+    const H = mm_to_um(m.area_h_mm) / 2;
+    const R1 = m.reach_mm > 0 ? mm_to_um(m.reach_mm) : Infinity;
+    const R0 = mm_to_um(Math.max(0, m.r0_mm ?? 0));
+    const slots = (m.polarity ?? 'slots') === 'slots';
+    const rng = rng_for(m.seed ?? 1, 'circuit');
+    const centre = (i, j) => ({ x: (i + 0.5) * p, y: (j + 0.5) * p });
+    const in_area = c => Math.abs(c.x) <= W - p / 2 && Math.abs(c.y) <= H - p / 2 && Math.hypot(c.x, c.y) <= R1 - p / 2;
+    const clear_of_edges = (c, margin) => dom.contains(c) && edge_distance(c, sym, dom) >= margin;
+    const key = (i, j) => (i + 32768) * 65536 + (j + 32768);
+
+    const span = Math.ceil(Math.min(Math.max(W, H), R1) / p) + 1;
+    const allowed = new Set();
+    for (let i = -span; i <= span; i++) {
+        for (let j = -span; j <= span; j++) {
+            const c = centre(i, j);
+            if (in_area(c) && Math.hypot(c.x, c.y) >= R0 + p / 2 && clear_of_edges(c, p / 2)) allowed.add(key(i, j));
+        }
+    }
+
+    // Starts: a cell and an inward direction whose outward neighbour lies outside the area (the
+    // material round it), clear of the domain's edges. In slots, also from the inner keep-out,
+    // which is solid; in bars it is open, so nothing could hold a trace there.
+    const starts = [];
+    for (let i = -span; i <= span; i++) {
+        for (let j = -span; j <= span; j++) {
+            if (!allowed.has(key(i, j))) continue;
+            for (const d of [0, 2, 4, 6]) {
+                const o = centre(i - kDirs[d][0], j - kDirs[d][1]);
+                if (!clear_of_edges(o, p / 2)) continue;
+                const outside = !in_area(o);
+                const from_centre = slots && R0 > 0 && in_area(o) && Math.hypot(o.x, o.y) < R0 + p / 2;
+                if (outside || from_centre) starts.push({ i, j, d });
+            }
+        }
+    }
+    // Seeded shuffle.
+    for (let k = starts.length - 1; k > 0; k--) {
+        const r = rng.int(0, k);
+        [starts[k], starts[r]] = [starts[r], starts[k]];
+    }
+
+    const occ = new Map(); // cell -> trace index
+    const enterable = (i, j, t, last) => {
+        if (!allowed.has(key(i, j))) return false;
+        for (let di = -1; di <= 1; di++) {
+            for (let dj = -1; dj <= 1; dj++) {
+                const o = occ.get(key(i + di, j + dj));
+                if (o === undefined) continue;
+                if (o !== t || !last || last[0] !== i + di || last[1] !== j + dj) return false;
+            }
+        }
+        return true;
+    };
+
+    const want = Math.max(1, Math.round(m.traces ?? 12));
+    const longest = Math.max(kMinCells, Math.round(m.length ?? 16));
+    const straight = Math.max(0, Math.min(1, m.straight ?? 0.7));
+    const traces = [];
+    for (const st of starts) {
+        if (traces.length >= want) break;
+        const t = traces.length;
+        if (!enterable(st.i, st.j, t, null)) continue;
+        const cells = [[st.i, st.j]];
+        occ.set(key(st.i, st.j), t);
+        let dir = st.d;
+        let run = 1;
+        const target = rng.int(Math.max(kMinCells, Math.ceil(longest / 2)), longest);
+        while (cells.length < target) {
+            const last = cells[cells.length - 1];
+            const turn = run >= kMinRun;
+            // A weighted draw picks the first choice; the others follow as fallbacks.
+            const choices = [dir, (dir + 1) % 8, (dir + 7) % 8];
+            const weights = [straight, turn ? (1 - straight) / 2 : 0, turn ? (1 - straight) / 2 : 0];
+            let x = rng.next() * (weights[0] + weights[1] + weights[2]);
+            let first = 0;
+            while (first < 2 && x >= weights[first]) x -= weights[first++];
+            const order = [choices[first], ...choices.filter((_, k) => k !== first)];
+            let moved = false;
+            for (const d of order) {
+                const ni = last[0] + kDirs[d][0];
+                const nj = last[1] + kDirs[d][1];
+                if (!enterable(ni, nj, t, last)) continue;
+                cells.push([ni, nj]);
+                occ.set(key(ni, nj), t);
+                run = d === dir ? run + 1 : 1;
+                dir = d;
+                moved = true;
+                break;
+            }
+            if (!moved) break;
+        }
+        if (cells.length < kMinCells) {
+            for (const [i, j] of cells) occ.delete(key(i, j));
+            continue;
+        }
+
+        // Terminal: drop, bulb and ring need the cell ahead free and room from the domain's
+        // edges; otherwise the trace ends in a via, which fits its own lane.
+        const [ei, ej] = cells[cells.length - 1];
+        const e = centre(ei, ej);
+        const u = { x: kDirs[dir][0] / Math.hypot(...kDirs[dir]), y: kDirs[dir][1] / Math.hypot(...kDirs[dir]) };
+        let terminal = m.terminal && m.terminal !== 'mix' ? m.terminal : rng.pick(kTerminals);
+        const r_big = b / 2 + 0.25 * p;
+        const lead = { drop: 0.9 * r_big, bulb: 0.5 * r_big, ring: r_big - lanes.s / 2 }[terminal];
+        let tc = e;
+        let r = b / 2;
+        if (terminal !== 'via') {
+            const ai = ei + kDirs[dir][0];
+            const aj = ej + kDirs[dir][1];
+            const c = { x: e.x + u.x * lead, y: e.y + u.y * lead };
+            if (enterable(ai, aj, t, [ei, ej]) && clear_of_edges(c, r_big + g / 2)) {
+                occ.set(key(ai, aj), t);
+                tc = c;
+                r = r_big;
+            } else {
+                terminal = 'via';
+            }
+        }
+        // The stub runs back out of the area, at least a quarter pitch past its edge, so a bar is
+        // anchored in the material round the area (cell centres sit on the pitch grid, not on it).
+        const sd = kDirs[st.d];
+        const c0 = centre(st.i, st.j);
+        const past = q => Math.abs(q.x) > W + p / 4 || Math.abs(q.y) > H + p / 4 || Math.hypot(q.x, q.y) > R1 + p / 4;
+        let reach = p;
+        if (!in_area({ x: c0.x - sd[0] * p, y: c0.y - sd[1] * p })) {
+            while (!past({ x: c0.x - sd[0] * reach, y: c0.y - sd[1] * reach }) && reach < 4 * p) reach += p / 4;
+        }
+        const stub = { x: c0.x - sd[0] * reach, y: c0.y - sd[1] * reach };
+        traces.push({ cells, points: [stub, ...cells.map(([i, j]) => centre(i, j))], dir: u, terminal, centre: tc, r });
+    }
+    return { lanes, traces };
+}
+
+// A polyline offset sideways by o (left of travel positive), mitred at the 45-degree turns.
+function offset_line(pts, o) {
+    const out = [];
+    const n = pts.length;
+    const unit = (a, b) => {
+        const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+    };
+    for (let i = 0; i < n; i++) {
+        const d1 = i > 0 ? unit(pts[i - 1], pts[i]) : unit(pts[0], pts[1]);
+        const d2 = i < n - 1 ? unit(pts[i], pts[i + 1]) : d1;
+        const n1 = { x: -d1.y, y: d1.x };
+        const mx = n1.x - d2.y;
+        const my = n1.y + d2.x;
+        const ml = Math.hypot(mx, my) || 1;
+        const scale = 1 / ((mx / ml) * n1.x + (my / ml) * n1.y);
+        out.push({ x: Math.round(pts[i].x + (mx / ml) * o * scale), y: Math.round(pts[i].y + (my / ml) * o * scale) });
+    }
+    return out;
+}
+
+// The terminal's outline (a drop, bulb, ring pad or via); in slots a ring pad keeps a tie.
+function terminal_paths(tr, lanes, slots) {
+    const { b, s } = lanes;
+    const c = tr.centre;
+    const r = tr.r;
+    const u = tr.dir;
+    const nrm = { x: -u.y, y: u.x };
+    const e = tr.points[tr.points.length - 1];
+    const pt = (q, a, k) => ({ x: Math.round(q.x + a.x * k), y: Math.round(q.y + a.y * k) });
+    switch (tr.terminal) {
+        case 'drop':
+            // A disc ahead of the trace, joined to the bundle's end by a taper.
+            return union_all([circle_path(c.x, c.y, r), [pt(e, nrm, -b / 2), pt(c, nrm, -r), pt(c, nrm, r), pt(e, nrm, b / 2)]]);
+        case 'ring': {
+            const hole = r - Math.max(s, 1200);
+            const ring = [circle_path(c.x, c.y, r), circle_path(c.x, c.y, hole).reverse()];
+            if (!slots) return ring;
+            // The tie on the far side keeps the pad's centre joined to the panel.
+            const a = pt(c, u, hole - 200);
+            const z = pt(c, u, r + 400);
+            const half = Math.max(s, 1500) / 2;
+            return subtract(ring, [[pt(a, nrm, -half), pt(z, nrm, -half), pt(z, nrm, half), pt(a, nrm, half)]]);
+        }
+        default:
+            return [circle_path(c.x, c.y, r)];
+    }
+}
+
+// The domain as a polygon (null when it is the whole plane), reaching radius R.
+function domain_polygon(dom, R) {
+    if (dom.a1 - dom.a0 >= TAU - 1e-9) return null;
+    const n = Math.max(2, Math.ceil(((dom.a1 - dom.a0) / TAU) * circle_segments(R, 200)));
+    const out = [{ x: 0, y: 0 }];
+    for (let k = 0; k <= n; k++) {
+        const a = dom.a0 + ((dom.a1 - dom.a0) * k) / n;
+        out.push({ x: Math.round(R * Math.cos(a)), y: Math.round(R * Math.sin(a)) });
+    }
+    return out;
+}
+
+// Openings of a circuit motif in the fundamental domain.
+function circuit_openings(m, sym) {
+    const { lanes, traces } = circuit_routes(m, sym);
+    const slots = (m.polarity ?? 'slots') === 'slots';
+    const strands = [];
+    for (const tr of traces) {
+        for (let k = 0; k < lanes.n; k++) strands.push(offset_line(tr.points, (k - (lanes.n - 1) / 2) * (lanes.s + lanes.g)));
+    }
+    const shapes = [...(strands.length ? stroke(strands, lanes.s, 'butt', 'miter') : []), ...traces.flatMap(tr => terminal_paths(tr, lanes, slots))];
+    if (slots) return shapes.length ? union_all(shapes) : [];
+    // Bars: the area (clipped to the domain) minus the traces.
+    const W = mm_to_um(m.area_w_mm) / 2;
+    const H = mm_to_um(m.area_h_mm) / 2;
+    let area = [rect_path(-W, -H, W, H)];
+    if (m.reach_mm > 0) area = intersect_paths(area, [circle_path(0, 0, mm_to_um(m.reach_mm))]);
+    const dom_poly = domain_polygon(fundamental_domain(sym), Math.hypot(W, H) + lanes.p);
+    if (dom_poly) area = intersect_paths(area, [dom_poly]);
+    return shapes.length ? subtract(area, union_all(shapes)) : area;
+}
+return { kTerminals, circuit_lanes, circuit_routes, circuit_openings };
+})();
 // src/sources/motifs.js
 const __m_sources_motifs_js = (function () {
 const { circle_path, regular_polygon_path, circle_segments, union_all } = __m_geom_clip_js;
 const { rotate_path, replicate, rotation_order } = __m_geom_symmetry_js;
 const { kMotifTypes } = __m_core_schema_js;
 const { lattice_openings, fret_openings } = __m_sources_lattice_js;
+const { circuit_openings } = __m_sources_circuit_js;
 const { mm_to_um } = __m_core_units_js;
 // Primitive motifs (SPEC 8.1): the openings a layer cuts, before symmetry. Each motif is drawn once
 // on the +x axis; "copies per repeat" spreads copies across one symmetry wedge, then the symmetry
 // engine fills the circle. Returns paths in micrometres, counter-clockwise.
+
 
 
 
@@ -1991,6 +2307,7 @@ function motif_openings(m, sym) {
     // Lattices and frets are built in the fundamental domain, then replicated.
     if (m.type === 'lattice') return replicate(lattice_openings(m, sym), sym);
     if (m.type === 'fret') return replicate(fret_openings(m, sym), sym);
+    if (m.type === 'circuit') return replicate(circuit_openings(m, sym), sym);
     const mult = Math.max(1, Math.round(m.mult ?? 1));
     const wedge = (2 * Math.PI) / rotation_order(sym);
     const base = base_paths(m, wedge / mult);
@@ -4146,7 +4463,79 @@ const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
 const kStyles = {
     classic: kTypes,
     lattice: ['lattice', 'fret', 'lattice', 'window'],
+    circuit: ['circuit'],
 };
+
+// The share of the piece one copy of the fundamental domain covers.
+function domain_share(sym) {
+    switch (sym.kind) {
+        case 'mirror_x':
+            return 1 / 2;
+        case 'mirror_xy':
+            return 1 / 4;
+        case 'rot':
+        case 'dihedral':
+            return 1 / (rotation_order(sym) * (sym.kind === 'dihedral' ? 2 : 1));
+        default:
+            return 1;
+    }
+}
+
+// Circuit style (M3): every patterned layer carries one circuit over the area inside its frame
+// ring, with its own seed, so the traces behind show through the slots in front. Strands, gaps and
+// ends are shared through the stack, traces thin out towards the back, and the front layer may be
+// bars over the slotted layers behind. The back layer stays solid.
+function generate_circuit(design, seed, lock_n) {
+    const rng = rng_for(seed, 'circuit-stack');
+    const sym = design.piece.symmetry;
+    if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([4, 6, 6, 8, 8, 12]);
+    const o = design.piece.outline;
+    const ring0 = design.layers[0].frame_ring_mm;
+    const strands = rng.pick([1, 2, 2, 3, 3, 4]);
+    const strand_mm = r1(rng.range(1.8, 2.6));
+    const gap_mm = r1(rng.range(1.7, 2.4));
+    const terminal = rng.pick(['mix', 'mix', 'drop', 'bulb', 'ring', 'via']);
+    const straight = r2(rng.range(0.55, 0.85));
+    const front_bars = rng.chance(0.4);
+    const density = rng.range(0.35, 0.6);
+    const reach = rng.range(0.5, 0.9);
+    const ring_step = rng.range(0, 1.5);
+    const round = o.kind === 'circle' || o.kind === 'polygon';
+    const pitch_mm = strands * strand_mm + strands * gap_mm;
+    const count = design.layers.length;
+    const patterned = count > 1 ? count - 1 : 1;
+    design.layers.forEach((layer, k) => {
+        if (layer.locked || layer.source.kind !== 'primitive') return; // imported artwork is kept
+        layer.frame_ring_mm = r1(ring0 + k * ring_step);
+        if (k >= patterned) {
+            layer.source.motifs = [];
+            return;
+        }
+        const depth = patterned > 1 ? k / (patterned - 1) : 0;
+        const w = r1(o.w_mm - 2 * layer.frame_ring_mm);
+        const h = r1((round ? o.w_mm : o.h_mm) - 2 * layer.frame_ring_mm);
+        const starts = ((2 * w + 2 * h) * domain_share(sym)) / pitch_mm;
+        layer.source.motifs = [
+            {
+                type: 'circuit',
+                polarity: k === 0 && front_bars ? 'bars' : 'slots',
+                area_w_mm: w,
+                area_h_mm: h,
+                reach_mm: round ? r1(w / 2) : 0,
+                r0_mm: round ? r1(w * 0.09) : 0,
+                strands,
+                strand_mm,
+                gap_mm,
+                traces: Math.max(2, Math.round(starts * density * (1 - 0.4 * depth))),
+                length: Math.max(4, Math.round((reach * Math.max(w, h)) / pitch_mm)),
+                straight,
+                terminal,
+                seed: rng_for(seed, 'circuit', k).int(0, 9999),
+            },
+        ];
+    });
+    design.seed = seed >>> 0;
+}
 
 // Fret tile sizes in grid units (width, height), as in sources/lattice.js.
 const kFretTiles = { greek: [5, 5], double: [6, 5], tfret: [6, 6] };
@@ -4267,6 +4656,7 @@ function band_motif(band, n, depth, k, sym) {
 // Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
 // symmetry repeat count; options.types overrides the motif types of the design's style.
 function generate_stack(design, seed, { lock_n = false, types = null } = {}) {
+    if (!types && design.generator?.style === 'circuit') return generate_circuit(design, seed, lock_n);
     types = types ?? kStyles[design.generator?.style] ?? kTypes;
     const rng = rng_for(seed, 'stack');
     const sym = design.piece.symmetry;
@@ -87987,6 +88377,11 @@ const kMotifTypes = {
     ray: { label: 'Rays', params: ['r0_mm', 'r1_mm', 'w0_mm', 'w1_mm', 'mult', 'angle_deg'], replicated: true },
     lattice: { label: 'Lattice', params: ['grid', 'r0_mm', 'r1_mm', 'cell_mm', 'bar_mm', 'openness', 'seed'], replicated: true },
     fret: { label: 'Key fret band', params: ['pattern', 'r_mm', 'w_mm', 'bar_mm', 'tiles'], replicated: true },
+    circuit: {
+        label: 'Circuit traces',
+        params: ['polarity', 'area_w_mm', 'area_h_mm', 'reach_mm', 'r0_mm', 'strands', 'strand_mm', 'gap_mm', 'traces', 'length', 'straight', 'terminal', 'seed'],
+        replicated: true,
+    },
 };
 
 // scales: the value is a length that follows the piece when it is resized. Structural widths
@@ -88014,6 +88409,23 @@ const kMotifParams = {
     seed: { label: 'Variation', min: 0, max: 9999, step: 1, unit: '', scales: false, tier: 'basic' },
     pattern: { label: 'Pattern', type: 'select', options: [['greek', 'Greek key'], ['double', 'Double key'], ['tfret', 'T fret']], scales: false, tier: 'basic' },
     tiles: { label: 'Repeats per wedge', min: 1, max: 24, step: 1, unit: '', scales: false, tier: 'basic' },
+    polarity: { label: 'Traces are', type: 'select', options: [['slots', 'Cut as slots'], ['bars', 'Left as bars']], scales: false, tier: 'basic' },
+    area_w_mm: { label: 'Area width', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
+    area_h_mm: { label: 'Area height', min: 10, max: 1200, step: 1, unit: 'mm', scales: true, tier: 'basic' },
+    reach_mm: { label: 'Round limit (0 is none)', min: 0, max: 600, step: 0.5, unit: 'mm', scales: true, tier: 'advanced' },
+    strands: { label: 'Strands', min: 1, max: 6, step: 1, unit: '', scales: false, tier: 'basic' },
+    strand_mm: { label: 'Strand width', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    gap_mm: { label: 'Strand gap', min: 0.5, max: 12, step: 0.1, unit: 'mm', scales: false, tier: 'basic' },
+    traces: { label: 'Traces', min: 1, max: 200, step: 1, unit: '', scales: false, tier: 'basic' },
+    length: { label: 'Longest trace', min: 3, max: 120, step: 1, unit: 'cells', scales: false, tier: 'basic' },
+    straight: { label: 'Straightness', min: 0, max: 1, step: 0.05, unit: '', scales: false, tier: 'advanced' },
+    terminal: {
+        label: 'Ends',
+        type: 'select',
+        options: [['mix', 'Mixed'], ['drop', 'Drops'], ['bulb', 'Bulbs'], ['ring', 'Ring pads'], ['via', 'Vias']],
+        scales: false,
+        tier: 'basic',
+    },
 };
 
 const kind_is = (...kinds) => d => kinds.includes(d.piece.outline.kind);
@@ -88110,6 +88522,7 @@ const SCHEMA = [
         options: [
             ['classic', 'Openings'],
             ['lattice', 'Lattice and key fret'],
+            ['circuit', 'Circuit traces'],
         ],
         tier: 'basic',
         desc: 'What Randomise and the seed arrows build.',
@@ -89218,7 +89631,79 @@ const kTypes = ['window', 'window', 'petal', 'ring', 'ray'];
 const kStyles = {
     classic: kTypes,
     lattice: ['lattice', 'fret', 'lattice', 'window'],
+    circuit: ['circuit'],
 };
+
+// The share of the piece one copy of the fundamental domain covers.
+function domain_share(sym) {
+    switch (sym.kind) {
+        case 'mirror_x':
+            return 1 / 2;
+        case 'mirror_xy':
+            return 1 / 4;
+        case 'rot':
+        case 'dihedral':
+            return 1 / (rotation_order(sym) * (sym.kind === 'dihedral' ? 2 : 1));
+        default:
+            return 1;
+    }
+}
+
+// Circuit style (M3): every patterned layer carries one circuit over the area inside its frame
+// ring, with its own seed, so the traces behind show through the slots in front. Strands, gaps and
+// ends are shared through the stack, traces thin out towards the back, and the front layer may be
+// bars over the slotted layers behind. The back layer stays solid.
+function generate_circuit(design, seed, lock_n) {
+    const rng = rng_for(seed, 'circuit-stack');
+    const sym = design.piece.symmetry;
+    if (!lock_n && (sym.kind === 'rot' || sym.kind === 'dihedral')) sym.n = rng.pick([4, 6, 6, 8, 8, 12]);
+    const o = design.piece.outline;
+    const ring0 = design.layers[0].frame_ring_mm;
+    const strands = rng.pick([1, 2, 2, 3, 3, 4]);
+    const strand_mm = r1(rng.range(1.8, 2.6));
+    const gap_mm = r1(rng.range(1.7, 2.4));
+    const terminal = rng.pick(['mix', 'mix', 'drop', 'bulb', 'ring', 'via']);
+    const straight = r2(rng.range(0.55, 0.85));
+    const front_bars = rng.chance(0.4);
+    const density = rng.range(0.35, 0.6);
+    const reach = rng.range(0.5, 0.9);
+    const ring_step = rng.range(0, 1.5);
+    const round = o.kind === 'circle' || o.kind === 'polygon';
+    const pitch_mm = strands * strand_mm + strands * gap_mm;
+    const count = design.layers.length;
+    const patterned = count > 1 ? count - 1 : 1;
+    design.layers.forEach((layer, k) => {
+        if (layer.locked || layer.source.kind !== 'primitive') return; // imported artwork is kept
+        layer.frame_ring_mm = r1(ring0 + k * ring_step);
+        if (k >= patterned) {
+            layer.source.motifs = [];
+            return;
+        }
+        const depth = patterned > 1 ? k / (patterned - 1) : 0;
+        const w = r1(o.w_mm - 2 * layer.frame_ring_mm);
+        const h = r1((round ? o.w_mm : o.h_mm) - 2 * layer.frame_ring_mm);
+        const starts = ((2 * w + 2 * h) * domain_share(sym)) / pitch_mm;
+        layer.source.motifs = [
+            {
+                type: 'circuit',
+                polarity: k === 0 && front_bars ? 'bars' : 'slots',
+                area_w_mm: w,
+                area_h_mm: h,
+                reach_mm: round ? r1(w / 2) : 0,
+                r0_mm: round ? r1(w * 0.09) : 0,
+                strands,
+                strand_mm,
+                gap_mm,
+                traces: Math.max(2, Math.round(starts * density * (1 - 0.4 * depth))),
+                length: Math.max(4, Math.round((reach * Math.max(w, h)) / pitch_mm)),
+                straight,
+                terminal,
+                seed: rng_for(seed, 'circuit', k).int(0, 9999),
+            },
+        ];
+    });
+    design.seed = seed >>> 0;
+}
 
 // Fret tile sizes in grid units (width, height), as in sources/lattice.js.
 const kFretTiles = { greek: [5, 5], double: [6, 5], tfret: [6, 6] };
@@ -89339,6 +89824,7 @@ function band_motif(band, n, depth, k, sym) {
 // Fills every unlocked layer of a draft design with a generated pattern. options.lock_n keeps the
 // symmetry repeat count; options.types overrides the motif types of the design's style.
 function generate_stack(design, seed, { lock_n = false, types = null } = {}) {
+    if (!types && design.generator?.style === 'circuit') return generate_circuit(design, seed, lock_n);
     types = types ?? kStyles[design.generator?.style] ?? kTypes;
     const rng = rng_for(seed, 'stack');
     const sym = design.piece.symmetry;
@@ -89405,6 +89891,20 @@ const kPresets = [
                 palette: 'orb',
                 seed: 6, // from a rendered sweep of seeds 1 to 8: the densest, closest to the orb
                 style: 'lattice',
+            }),
+    },
+    {
+        id: 'circuit',
+        name: 'Circuit panel',
+        make: () =>
+            preset('Circuit panel', {
+                layers: 6,
+                outline: { kind: 'rect', w_mm: 380, h_mm: 280 },
+                symmetry: { kind: 'mirror_xy' },
+                palette: 'acid',
+                seed: 7, // from a rendered sweep of seeds 1 to 8: bars in front, the richest routing
+                frame_ring_mm: 12, // room for the dowels in the ring: a bars front layer shares little else
+                style: 'circuit',
             }),
     },
     {
@@ -90878,6 +91378,8 @@ function new_motif(type, design, layer) {
             return { type, grid: 'polar', r0_mm: v(0.35), r1_mm: v(0.95), cell_mm: v(0.08), bar_mm: 2.2, openness: 0.4, seed: 1, cells: {} };
         case 'fret':
             return { type, pattern: 'double', r_mm: v(0.8), w_mm: v(0.14), bar_mm: 2, tiles: 3 };
+        case 'circuit':
+            return { type, polarity: 'slots', area_w_mm: v(2), area_h_mm: v(2), reach_mm: v(1), r0_mm: v(0.2), strands: 2, strand_mm: 2, gap_mm: 2, traces: 16, length: 18, straight: 0.7, terminal: 'mix', seed: 1 };
         default:
             throw new Error(`unknown opening type "${type}"`);
     }

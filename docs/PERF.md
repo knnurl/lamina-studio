@@ -17,6 +17,7 @@ The bench re-run on 2026-11-07 is slower on the 20-layer case than on 2026-11-06
 | Dense lattice slider change, Lattice orb, 12 layers, 290 mm (M2, 2026-11-07) | under 400 ms | 186 ms median | `node tools/bench.js` |
 | The same in the browser: worker round trip and 3D render (M2, 2026-11-07) | under 400 ms | 223 ms median of 7 (range 194 to 312), checks idle between samples | `node tools/shot.js out.png --timeout=120000 --eval-file=tools/lattice_latency.page.js` |
 | Field slider change, 12 layers, 290 mm, rings: every layer rebuilds (M2) | none | 723 ms median; about 1.1 s in the browser | `node tools/bench.js` |
+| Circuit panel, 6 layers, 380 x 280 mm (M3): cold build, slow checks, slider change | none | 54 ms, 34 ms, 26 ms (median of 5, Node) | a Node script: `build_design` and `slow_checks` on the preset, then +1 trace on layer 3 |
 | 3D preview frame rate, 20 layers | at least 30 fps | not measured: headless Edge has no GPU | owner, on the laptop's GPU |
 
 ## Imported artwork
